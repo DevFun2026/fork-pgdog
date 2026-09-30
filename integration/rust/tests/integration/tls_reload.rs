@@ -146,7 +146,20 @@ struct ConfigGuard {
 impl ConfigGuard {
     fn new() -> Result<Self, std::io::Error> {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let config_path = manifest_dir.join("../pgdog.toml").canonicalize()?;
+        // Match the directory used by scripts/verify-pgdog when a test port
+        // override requires a separate local configuration.
+        let config_dir = match std::env::var_os("PGDOG_TEST_CONFIG_DIR") {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if path.is_absolute() {
+                    path
+                } else {
+                    manifest_dir.join("../..").join(path)
+                }
+            }
+            None => manifest_dir.join(".."),
+        };
+        let config_path = config_dir.join("pgdog.toml").canonicalize()?;
         let original = fs::read_to_string(&config_path)?;
         let pid_path = manifest_dir.join("../pgdog.pid").canonicalize()?;
         let pid_contents = fs::read_to_string(pid_path)?;

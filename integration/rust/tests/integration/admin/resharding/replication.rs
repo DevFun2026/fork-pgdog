@@ -125,7 +125,14 @@ async fn test_stop_task() {
         prepare_replication(&admin, &direct).await;
         let task_id = start_replication(&admin, None).await;
 
-        let slots = test_slot_names(&direct).await;
+        // The parent task enters "replicating" before its child creates the
+        // source slot. Wait for that observable resource before stopping it.
+        let slots = poll("the source replication slot", || async {
+            fail_if_task_errored(&admin, task_id).await;
+            let slots = test_slot_names(&direct).await;
+            (!slots.is_empty()).then_some(slots)
+        })
+        .await;
         assert_eq!(
             slots.len(),
             1,

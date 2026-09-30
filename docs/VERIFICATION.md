@@ -7,6 +7,8 @@
 - PostgreSQL and Toxiproxy must be dedicated test instances. Upstream
   `integration/setup.sh` drops test databases and roles. Never point it at a
   shared or production database. Tests use synthetic credentials `pgdog`.
+  Recreate fixtures before each full run: integration tests intentionally leave
+  schema changes that can invalidate the next unit-test run.
 - Use `bash integration/ci/install-deps.sh` and
   `bash integration/ci/setup.sh --with-toxi` only on disposable Ubuntu runners.
 - For macOS, a Docker PostgreSQL instance can expose only `127.0.0.1:5432`.
@@ -99,3 +101,8 @@ Environment-dependent tests now re-execute the exact test with variables supplie
 at child startup, checking that exactly one test passed. Tests no longer mutate
 the process environment while Tokio/other threads may read it. Ignored external
 Azure/live-environment tests retain their explicit ignored status.
+
+TLS reload integration tests honor `PGDOG_TEST_CONFIG_DIR`, matching the PgDog
+process started by the gate. The replication stop test waits for the source slot
+with the existing bounded poll helper: the parent task reports "replicating"
+before its child has created that slot. The exact one-slot assertion remains.
