@@ -128,3 +128,21 @@ completed segment to be recycled: a live phase record legitimately retains its
 identity dependencies. Rotation support is compiled only for tests. The client-ID
 fixture still holds and checks 500 clients, with at most 32 concurrent connection
 handshakes to fit macOS's observed listen backlog of 128.
+
+
+## CI trigger policy and regression checks
+
+GitHub validation workflows run on pull requests or manual dispatch only.
+Publishing and benchmark follow-up workflows require manual dispatch. GitLab
+runs only for merge-request or manual web pipelines. Pushes do not trigger CI.
+
+Auto-primary success fixtures use the same one-second checkout budget as the
+other PostgreSQL fixtures. The former 50 ms override also bounded real database
+connection startup and intermittently expired under Linux coverage. The explicit
+no-primary timeout test retains its 10 ms budget and timeout assertion.
+
+Native AGY terminal responses may contain repeated result JSON objects with
+`toolAction`/`toolSummary` display strings. The parser requires every object to
+agree with the strict `structured_output`, rejecting conflicts, extra fields,
+trailing prose and malformed output. Native login review remains explicitly
+approved and bound to its package; a parsed old review does not approve new code.

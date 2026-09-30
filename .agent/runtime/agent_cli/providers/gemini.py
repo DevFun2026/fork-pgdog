@@ -95,8 +95,24 @@ class GeminiAdapter:
                     or payload.get("error") or "structured_output" not in payload):
                 return ProviderResult.invalid(self.provider, raw, "agy did not return successful schema output")
             structured = payload["structured_output"]
-            if "response" in payload and json.loads(payload["response"]) != structured:
-                return ProviderResult.invalid(self.provider, raw, "agy output fields disagree")
+            if "response" in payload:
+                response = payload["response"]
+                if not isinstance(response, str) or not response.strip():
+                    return ProviderResult.invalid(self.provider, raw, "agy response is empty or invalid")
+                # Native AGY may concatenate repeated terminal objects, including
+                # display metadata. Every object must agree with the strict result.
+                decoder = json.JSONDecoder()
+                remaining = response.strip()
+                while remaining:
+                    item, end = decoder.raw_decode(remaining)
+                    if (not isinstance(item, dict)
+                            or set(item) - {"verdict", "findings", "toolAction", "toolSummary"}
+                            or any(not isinstance(item[key], str)
+                                   for key in ("toolAction", "toolSummary") if key in item)
+                            or {key: value for key, value in item.items()
+                                if key not in {"toolAction", "toolSummary"}} != structured):
+                        return ProviderResult.invalid(self.provider, raw, "agy output fields disagree")
+                    remaining = remaining[end:].strip()
         except (json.JSONDecodeError, TypeError):
             return ProviderResult.invalid(self.provider, raw)
         try:
