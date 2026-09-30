@@ -15,7 +15,7 @@ on:
 
 jobs:
   image:
-    if: github.event.pull_request.head.repo.full_name != github.repository
+    if: github.repository == 'pgdogdev/pgdog' && github.event.pull_request.head.repo.full_name != github.repository
     # This initial runner is to assemble the docker image for this PR for the Bencher runner. It doesn't run any tests itself.
     # Bencher's runners do not have outside network access; requires us to have everything ready-to-go.
     runs-on: blacksmith-4vcpu-ubuntu-2404

@@ -1,6 +1,7 @@
 name: Agent quality
 
 on:
+  pull_request:
   push:
     branches: [main]
 

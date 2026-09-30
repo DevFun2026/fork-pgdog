@@ -33,3 +33,15 @@ id = "review-calls-adapters"
 source = "review-engine"
 target = "provider-adapters"
 label = "runs approved packages inside an OS read sandbox"
+
+[[relationships]]
+id = "client-proxy"
+source = "sql-client"
+target = "pgdog-proxy"
+label = "authenticates and sends PostgreSQL protocol messages"
+
+[[relationships]]
+id = "proxy-database"
+source = "pgdog-proxy"
+target = "postgresql"
+label = "opens backend connections and forwards queries"

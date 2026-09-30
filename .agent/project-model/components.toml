@@ -1,7 +1,7 @@
-title = "Project AI Template"
-purpose = "A technology-agnostic, evidence-first workflow shared by Claude, Gemini via Antigravity CLI (agy), and Codex coding agents."
-data_categories = ["configuration", "evidence-metadata", "memory-record", "project-source", "review-package"]
-sensitive_categories = ["project-source", "review-package"]
+title = "PgDog fork and verification workflow"
+purpose = "PgDog PostgreSQL proxy source import with reproducible Rust verification and provider-independent review governance. EKS and Vault deployment are future work."
+data_categories = ["configuration", "evidence-metadata", "memory-record", "project-source", "review-package", "sql-query", "database-credentials", "query-results"]
+sensitive_categories = ["project-source", "review-package", "sql-query", "database-credentials", "query-results"]
 
 [[components]]
 id = "canonical-core"
@@ -51,3 +51,24 @@ name = "Agent Runtime"
 kind = "python-cli"
 responsibility = "Runs configuration, evidence, workflow, documentation, review, security, and release commands."
 trust_boundary = "local-repository"
+
+[[components]]
+id = "pgdog-proxy"
+name = "PgDog Proxy"
+kind = "rust-service"
+responsibility = "Implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import."
+trust_boundary = "proxy-process"
+
+[[components]]
+id = "postgresql"
+name = "PostgreSQL"
+kind = "database"
+responsibility = "Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup."
+trust_boundary = "database-process"
+
+[[components]]
+id = "sql-client"
+name = "PostgreSQL Client"
+kind = "client"
+responsibility = "Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data."
+trust_boundary = "client-process"

@@ -1,0 +1,78 @@
+# Verification for the PgDog fork
+
+## Environment
+
+- Rust follows `rust-toolchain.toml` (1.96, rustfmt, clippy); Cargo uses `--locked`.
+- Python 3.11+, PostgreSQL 18 client/server, Toxiproxy 2.12.0 and nextest 0.9.78.
+- PostgreSQL and Toxiproxy must be dedicated test instances. Upstream
+  `integration/setup.sh` drops test databases and roles. Never point it at a
+  shared or production database. Tests use synthetic credentials `pgdog`.
+- Use `bash integration/ci/install-deps.sh` and
+  `bash integration/ci/setup.sh --with-toxi` only on disposable Ubuntu runners.
+- For macOS, a Docker PostgreSQL instance can expose only `127.0.0.1:5432`.
+  Tests also resolve `localhost`; ensure both IPv4 and IPv6 loopback reach the
+  same test instance. Prepare Toxiproxy ports 5435–5438, API port 8474.
+  If a port is occupied, use a local config copy and set
+  `PGDOG_TEST_CONFIG_DIR` to its directory. Do not stop unrelated services.
+- On this workstation, `SDKROOT` needed to refer to the SDK inside Xcode;
+  the CommandLineTools macOS 27 SDK was incompatible with the selected linker.
+  An inherited obsolete `LDFLAGS` was removed for the build process only.
+
+## Commands
+
+```sh
+./scripts/agent verify quick --timeout 3600 --json
+./scripts/agent verify review --timeout 3600 --json
+./scripts/agent verify merge --timeout 3600 --json
+```
+
+`quick` runs format, workspace Clippy with warnings denied, and focused library
+unit/doc tests. `review` runs lint, `scripts/verify-pgdog full`, and workspace build.
+The full script checks agent-runtime tests/adapters/docs/skills/notices, Rust
+unit/doc tests and Rust PostgreSQL client integration tests. A test failure is
+retained while other independent test phases continue. It needs prepared database
+fixtures and builds/starts a local PgDog process for client integration tests.
+`merge` additionally requires current documentation and independent review
+artifacts bound to the exact trusted default branch, HEAD and working-tree digest.
+
+The upstream CI matrix separately runs other language clients, TLS, COPY,
+resharding, schema sync, network faults and load balancing. Its results must be
+reported separately; local Rust tests do not establish that matrix passed.
+
+## Security scanners
+
+Install `cargo-deny 0.20.2` and Semgrep (`1.178.0` used for the initial run) on PATH:
+
+```sh
+./scripts/agent release run-scanner --scanner dependency --timeout 600
+./scripts/agent release run-scanner --scanner license --timeout 600
+./scripts/agent release run-scanner --scanner sast --timeout 600
+```
+
+`deny.toml` records an explicit SPDX allowlist, with no advisory exceptions.
+Missing license metadata fails the scan. Semgrep's community `p/rust` rules are
+fetched at run time, with metrics disabled: scanner reports are evidence for that
+run, not a pinned/reproducible ruleset or comprehensive security clearance.
+A finding is a review candidate; unsafe Rust matches are not automatically
+confirmed exploitable vulnerabilities. Rule coverage and exclusions appear in logs.
+Container/IaC scanners remain outside the approved standard profile's required
+scanner list. EKS/Vault connectivity and production audit guarantees are untested.
+
+## Independent review and release
+
+```sh
+./scripts/agent doctor --providers --json
+./scripts/agent review --author-provider codex --reviewer-provider claude \
+  --requirements docs/plans/2026-09-30-pgdog-quality-gates.md
+```
+
+A reviewer capability probe does not send repository content. Actual review needs
+fresh passing `review` command evidence and user approval of the exact manifest.
+The initial import is approximately 9.3 MB of diff, exceeding the current 500 KB
+and 64,000 estimated-token limits. Do not switch the trusted base to an intermediate
+commit, truncate the import, or auto-approve a manifest. A separately approved
+large-import review procedure is needed if the full import cannot fit.
+
+Release adds smoke/security gates and a detached security-approval signature from
+an independent signer trusted in the base revision. `allowed_signers` is still a
+template with no enrolled signer. No production release is authorized by this setup.

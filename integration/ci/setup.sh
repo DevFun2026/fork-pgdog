@@ -36,7 +36,8 @@ for arg in "$@"; do
     esac
 done
 
-sudo pg_ctlcluster "$PSQL_VERSION" main start
+sudo pg_ctlcluster "$PSQL_VERSION" main status >/dev/null 2>&1 \
+    || sudo pg_ctlcluster "$PSQL_VERSION" main start
 
 USER_NAME="$(id -un)"
 sudo -u postgres createuser --superuser --login "$USER_NAME"

@@ -1,7 +1,7 @@
 [[environments]]
 id = "github-actions"
 name = "GitHub Actions"
-description = "Linux merge gate plus macOS and Linux runtime tests; provider secrets are restricted to protected jobs."
+description = "GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required."
 
 [[environments]]
 id = "gitlab-ci"

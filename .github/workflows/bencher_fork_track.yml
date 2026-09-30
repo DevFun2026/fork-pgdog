@@ -16,7 +16,7 @@ env:
 jobs:
   image:
     # Download image from previous workflow (2-step). Push image to bencher.
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name != github.repository
+    if: github.repository == 'pgdogdev/pgdog' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name != github.repository
     permissions:
       actions: read
     runs-on: blacksmith-4vcpu-ubuntu-2404

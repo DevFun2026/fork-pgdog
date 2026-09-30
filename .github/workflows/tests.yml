@@ -2,15 +2,19 @@ name: tests
 on:
   push:
     branches:
+      - main
       - main-ent
   pull_request:
     types: [opened, synchronize, reopened]
   merge_group:
     types: [checks_requested]
 
+permissions:
+  contents: read
+
 jobs:
   tests:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
@@ -36,7 +40,7 @@ jobs:
         run: cargo test --doc
       # Requires CODECOV_TOKEN secret for upload
       - uses: codecov/codecov-action@v4
-        if: ${{ github.event_name != 'merge_group' }}
+        if: ${{ github.repository == 'pgdogdev/pgdog' && github.event_name != 'merge_group' }}
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:

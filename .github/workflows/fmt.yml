@@ -15,9 +15,12 @@ on:
       - "**/*.rs"
       - "integration/**"
 
+permissions:
+  contents: read
+
 jobs:
   fmt:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - name: Install CI deps

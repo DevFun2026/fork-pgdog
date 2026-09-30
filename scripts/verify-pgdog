@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run the repository's deterministic merge test suite against prepared fixtures.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ "${1:-}" != "full" ]]; then
+    echo 'Usage: bash scripts/verify-pgdog full' >&2
+    exit 2
+fi
+# Never create/drop databases here. Bootstrap only an isolated test database.
+command -v pg_isready >/dev/null
+pg_isready -h 127.0.0.1 -p 5432 -U pgdog -d pgdog
+failed=0
+run_check() {
+    local status=0
+    "$@" || status=$?
+    if [[ "$status" != 0 ]]; then
+        echo "FAILED ($status): $*" >&2
+        failed=1
+    fi
+}
+run_check env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.agent/runtime python3 -m unittest discover -s .agent/tests -v
+run_check ./scripts/agent adapters check
+run_check ./scripts/agent docs check
+run_check ./scripts/agent skills check
+run_check ./scripts/agent licenses audit --json
+run_check cargo nextest run --locked --workspace --no-fail-fast --test-threads=1
+run_check cargo test --locked --doc --workspace
+cargo build --locked --bin pgdog
+export PGDOG_BIN="$PWD/target/debug/pgdog"
+source integration/common.sh
+run_pgdog "${PGDOG_TEST_CONFIG_DIR:-integration}"
+# Bound readiness waiting even when the process is alive but not accepting SQL.
+ready=false
+for attempt in $(seq 1 120); do
+    if pg_isready -h 127.0.0.1 -p 6432 -U pgdog -d pgdog >/dev/null; then
+        ready=true
+        break
+    fi
+    sleep 1
+done
+if [[ "$ready" != true ]]; then
+    echo 'PgDog did not become ready within 120 seconds' >&2
+    exit 1
+fi
+run_check cargo nextest run --locked --profile integration --no-fail-fast --test-threads=1
+exit "$failed"
