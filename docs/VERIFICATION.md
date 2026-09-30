@@ -14,6 +14,9 @@
 - For macOS, a Docker PostgreSQL instance can expose only `127.0.0.1:5432`.
   Tests also resolve `localhost`; ensure both IPv4 and IPv6 loopback reach the
   same test instance. Prepare Toxiproxy ports 5435–5438, API port 8474.
+  Prefer a dedicated native PostgreSQL 18 cluster when Docker VM latency exceeds
+  the upstream pool tests' 50 ms checkout budgets. Keep it separate from existing
+  databases and stop only the test instance after verification.
   If a port is occupied, use a local config copy and set
   `PGDOG_TEST_CONFIG_DIR` to its directory. Do not stop unrelated services.
 - On this workstation, `SDKROOT` needed to refer to the SDK inside Xcode;
@@ -107,3 +110,10 @@ process started by the gate. The replication test setup waits for an active sour
 with the existing bounded poll helper: the parent task reports "replicating"
 before its child has created that slot. This also prevents fixture writes from
 preceding the slot start LSN. The exact one-slot assertion remains.
+
+Subscriber tests explicitly flush a synthetic WAL message before polling durable
+commit status. Empty transactions do not request an async WAL flush; an unrelated
+partial WAL page can otherwise keep the sampled insert position ahead of flush
+beyond the five-second deadline. The fixture reproduces that tail while retaining
+the assertions that acknowledgements advance only after durability and never to
+an open transaction's future LSN. Production replication logic is unchanged.

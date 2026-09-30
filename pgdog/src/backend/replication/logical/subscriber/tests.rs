@@ -359,9 +359,19 @@ fn make_subscriber_single_shard() -> StreamSubscriber {
     StreamSubscriber::new(&cluster, tables)
 }
 
-async fn wait_for_commit(sub: &mut StreamSubscriber, lsn: i64) {
+pub(super) async fn wait_for_commit(sub: &mut StreamSubscriber, lsn: i64) {
+    // All fixture shards share one PostgreSQL instance. Empty transactions do
+    // not request an async WAL flush, and an unrelated partial WAL page can
+    // otherwise hold the sampled durability bound behind indefinitely. Drive
+    // real durability explicitly instead of relying on background WAL traffic.
+    let mut wal = test_server().await;
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
+        wal.execute_checked(
+            "SELECT pg_logical_emit_message(false, 'pgdog-tests', 'durability fence', true)",
+        )
+        .await
+        .unwrap();
         sub.refresh_wal_positions().await.unwrap();
         sub.check_for_committed_transaction().await.unwrap();
         if sub.status_update().last_flushed >= lsn {
@@ -555,6 +565,17 @@ async fn status_update_stays_at_committed_lsn_during_transaction() {
     let mut sub = make_subscriber();
     sub.connect().await.unwrap();
 
+    // Reproduce a partial WAL tail with no async commit requesting its flush.
+    // Keep this connection's transaction open while the subscriber commits.
+    let mut wal_tail = test_server().await;
+    wal_tail.execute_checked("BEGIN").await.unwrap();
+    wal_tail
+        .execute_checked(
+            "SELECT pg_logical_emit_message(false, 'pgdog-tests', 'unflushed tail', false)",
+        )
+        .await
+        .unwrap();
+
     // Nothing committed yet: ack pointer is at 0.
     assert_eq!(sub.status_update().last_flushed, 0);
 
@@ -573,6 +594,7 @@ async fn status_update_stays_at_committed_lsn_during_transaction() {
         100,
         "committed_lsn must not advance before commit"
     );
+    wal_tail.execute_checked("ROLLBACK").await.unwrap();
 }
 
 // ── Relation handling tests ─────────────────────────────────────────
