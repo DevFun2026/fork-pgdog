@@ -95,6 +95,8 @@ impl<'a> Parameter<'a> {
             // SAFETY: This struct is only constructed by `Parameters::from_raw`
             // which guarantees that this is safe. Neither `data` nor `len` are
             // public
+            // SAFETY: Private fields retain the source slice lifetime; NULL returns above, and empty slices use an aligned dangling pointer.
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
             Some(unsafe {
                 slice::from_raw_parts(
                     self.data.map(ptr::from_ref).unwrap_or(ptr::dangling()),
@@ -170,6 +172,8 @@ impl<'a> Parameters<'a> {
     /// Construct this type from the FFI safe representation
     pub fn from_raw(raw: RawParameters<'a>) -> Self {
         // SAFETY: into_raw always returns a valid pointer/len combo
+        // SAFETY: RawParameters private fields originate in as_raw; the source slice outlives this borrow, including the empty case.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let parameters = unsafe {
             slice::from_raw_parts(
                 raw.parameters_data
@@ -179,6 +183,8 @@ impl<'a> Parameters<'a> {
             )
         };
         // SAFETY: into_raw always returns a valid pointer/len combo
+        // SAFETY: Format-code pointer and length originate in as_raw and retain the source slice lifetime.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         let format_codes = unsafe {
             slice::from_raw_parts(
                 raw.format_codes_data

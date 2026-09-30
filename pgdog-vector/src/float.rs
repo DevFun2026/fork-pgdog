@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Wrapper type for f32 that implements Ord for PostgreSQL compatibility
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[repr(transparent)]
 pub struct Float(pub f32);
 
 impl PartialOrd for Float {

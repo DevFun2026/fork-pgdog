@@ -9,6 +9,8 @@ fi
 # Never create/drop databases here. Bootstrap only an isolated test database.
 command -v pg_isready >/dev/null
 pg_isready -h 127.0.0.1 -p 5432 -U pgdog -d pgdog
+mkdir -p .agent/.runs/gate-logs
+exec > >(tee .agent/.runs/gate-logs/full-tests.log) 2>&1
 failed=0
 run_check() {
     local status=0

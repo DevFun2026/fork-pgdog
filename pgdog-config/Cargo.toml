@@ -1,4 +1,5 @@
 [package]
+license = "AGPL-3.0-only"
 name = "pgdog-config"
 version = "0.1.0"
 edition = "2024"
@@ -11,7 +12,7 @@ thiserror = "2"
 toml = "0.8"
 url = "2"
 uuid.workspace = true
-rand = "*"
+rand = "0.10.1"
 pgdog-vector = { path = "../pgdog-vector" }
 once_cell = "*"
 schemars.workspace = true

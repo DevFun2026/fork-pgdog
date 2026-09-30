@@ -362,6 +362,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_client_password_expired_cache_refetches() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_static_client_password_expired_cache_refetches"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -389,7 +399,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -403,6 +412,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_client_password_success() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_static_client_password_success"),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -422,7 +438,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -470,6 +485,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_client_password_error_response() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_static_client_password_error_response"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -487,7 +512,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -524,7 +548,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_approle_missing_secret_id() {
-        let _guard = crate::test_utils::remove_env_var("VAULT_SECRET_ID");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_login_approle_missing_secret_id"),
+            &[("VAULT_SECRET_ID", None)],
+        ) {
+            return;
+        }
 
         let vault = Vault {
             url: "http://127.0.0.1:8200".into(),
@@ -570,6 +599,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_approle_success() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_login_approle_success"),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -581,7 +617,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         let vault = approle_vault(&server.uri());
 
         let token = login(&vault).await.unwrap();
@@ -591,6 +626,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_non_success_response() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_login_non_success_response"),
+            &[("VAULT_SECRET_ID", Some("bad-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -600,7 +642,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "bad-secret");
         let vault = approle_vault(&server.uri());
 
         let err = login(&vault).await.unwrap_err();
@@ -668,6 +709,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_passwords_resolves_vault_role() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_resolve_passwords_resolves_vault_role"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -687,7 +738,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         CLIENT_PASSWORD_CACHE
             .lock()
@@ -703,6 +753,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_passwords_mixed_resolves_only_vault() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_resolve_passwords_mixed_resolves_only_vault"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -722,7 +782,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         CLIENT_PASSWORD_CACHE
             .lock()
@@ -745,6 +804,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_passwords_vault_error_skips_entry() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_resolve_passwords_vault_error_skips_entry"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -762,7 +831,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         CLIENT_PASSWORD_CACHE
             .lock()

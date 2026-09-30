@@ -34,6 +34,8 @@ impl Hasher {
     }
 
     fn sha1(bytes: &[u8]) -> u64 {
+        // Compatibility: SHA-1 selects a shard, not authentication or integrity; changing it relocates existing data.
+        // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes
         let mut hasher = Sha1::new();
         hasher.update(bytes);
         let hash = hasher.finalize();

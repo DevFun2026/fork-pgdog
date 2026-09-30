@@ -225,6 +225,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_credentials_success() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_credentials_success"),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -245,7 +252,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -287,6 +293,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_credentials_error_response() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_credentials_error_response"),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -304,7 +317,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -348,6 +360,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_backend_credentials_success() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_static_backend_credentials_success"),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -367,7 +386,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 
@@ -410,6 +428,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_backend_credentials_error_response() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_static_backend_credentials_error_response"
+            ),
+            &[("VAULT_SECRET_ID", Some("my-secret"))],
+        ) {
+            return;
+        }
+
         setup();
         let server = MockServer::start().await;
 
@@ -427,7 +455,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _guard = crate::test_utils::set_env_var("VAULT_SECRET_ID", "my-secret");
         *VAULT_TOKEN.lock() = None;
         set_vault_config(approle_vault(&server.uri()));
 

@@ -1,9 +1,9 @@
 # Fork version of Bencher (Step 2 of 2)
-# 
+#
 # We built the image in bencher_fork_run.yml on the fork PR.
 # Now, we can use it (ON THE MAIN BRANCH, where it's okay to use secrets),
 # and basically do what we do in the main Bencher workflow, with a pre-built image this time.
-  
+
 name: bencher-fork-track
 on:
   workflow_run:
@@ -32,7 +32,7 @@ jobs:
           docker tag pgdog-bench $IMAGE
           echo '${{ secrets.BENCHER_API_KEY }}' | docker login registry.bencher.dev -u pgdog --password-stdin
           docker push $IMAGE
- 
+
   bench:
     needs: image
     permissions:

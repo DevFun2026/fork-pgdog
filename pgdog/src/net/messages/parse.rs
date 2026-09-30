@@ -69,6 +69,8 @@ impl Parse {
 
     pub(crate) fn query(&self) -> &str {
         // SAFETY: We check that this is valid UTF-8 in Self::from_bytes.
+        // SAFETY: FromBytes validates the statement name as UTF-8; rename accepts a Rust string.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.query[0..self.query.len() - 1]) }
     }
 
@@ -79,6 +81,8 @@ impl Parse {
 
     pub(crate) fn name(&self) -> &str {
         // SAFETY: We check that this is valid UTF-8 in Self::from_bytes.
+        // SAFETY: FromBytes validates the query as UTF-8; query mutations accept Rust strings.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.name[0..self.name.len() - 1]) }
     }
 

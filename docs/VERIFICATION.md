@@ -76,3 +76,26 @@ large-import review procedure is needed if the full import cannot fit.
 Release adds smoke/security gates and a detached security-approval signature from
 an independent signer trusted in the base revision. `allowed_signers` is still a
 template with no enrolled signer. No production release is authorized by this setup.
+
+## Remediation details
+
+The dependency lockfile includes patched advisory versions. `tikv-jemalloc-ctl`
+is pinned to upstream commit `66b124bdf4f1c65f154135f4e9d4b25206540091`, which
+removes the unmaintained `paste` macros; its sys dependency remains the existing
+released 0.7.1 allocator binding. Review this temporary patch when the ctl fix is
+released. Hickory 0.26 uses `TokioResolver`/`NetError`; DNS cache behavior retains
+its existing tests.
+
+Scoped `nosemgrep` comments document reviewed invariants: validated UTF-8,
+borrowed plugin slices, trusted native plugin loading, bounded SIMD/FFI calls,
+checked OS resource-limit pointers, test-only subprocess execution, SHA-1 shard
+compatibility and TLS VerifyCa semantics. They suppress only the named rule at
+the documented statement. Native plugins remain trusted code; VerifyCa checks
+the certificate chain and signatures but intentionally omits hostname matching.
+Use VerifyFull for hostname authentication. These dispositions are not a general
+security approval of the imported project.
+
+Environment-dependent tests now re-execute the exact test with variables supplied
+at child startup, checking that exactly one test passed. Tests no longer mutate
+the process environment while Tokio/other threads may read it. Ignored external
+Azure/live-environment tests retain their explicit ignored status.

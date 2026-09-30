@@ -199,6 +199,8 @@ impl Bind {
 
     pub(crate) fn statement(&self) -> &str {
         // SAFETY: We check that this is valid UTF-8 in FromBytes::from_bytes below.
+        // SAFETY: FromBytes validates this exact name as UTF-8; name mutations accept Rust strings.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.statement[0..self.statement.len() - 1]) }
     }
 

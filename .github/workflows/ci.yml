@@ -40,7 +40,7 @@ jobs:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 5
-          command: bash integration/ci/install-deps.sh        
+          command: bash integration/ci/install-deps.sh
       # Compute the binary key before restoring rust-cache: rust-cache restores
       # target/ build outputs that would otherwise change the key. Use the
       # split cache actions so pgdog binaries are saved immediately after the

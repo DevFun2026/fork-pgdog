@@ -35,3 +35,20 @@ A local build is not an EKS/Vault deployment verification. Roll back the gate
 configuration commit if necessary; leave upstream history intact. The existing
 release gate additionally needs independently signed security clearance from a
 signer trusted in the base revision; this task does not enroll a signer.
+
+## Authorized remediation follow-up
+
+The user explicitly selected fixing discovered gate failures. Upgrade vulnerable
+locked dependencies, use the pinned upstream jemalloc-ctl macro fix to remove
+unmaintained paste, and preserve the released allocator sys crate. Add missing
+workspace license metadata under the existing root license; retain explicit MIT
+packages. Normalize only whitespace reported by the tracked-text check.
+
+Reproduce then repair initialized-buffer handling on interrupted stream reads,
+release-mode SIMD size/layout invariants, C hash length ABI/conversion, and the
+two malformed backend message parsers identified during investigation. Replace
+test environment mutation with child-process startup configuration. Record scoped
+SAST dispositions only for reviewed compatibility/trusted-native-code boundaries.
+Run focused regression tests, a fresh read-only candidate review, full gates and
+hosted CI. Increase the JS suite's overall timeout from 60 to 300 seconds after
+observing ongoing passing tests at the old deadline; retain per-test timeouts.

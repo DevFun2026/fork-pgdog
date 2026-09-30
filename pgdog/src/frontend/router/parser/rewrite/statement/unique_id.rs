@@ -53,7 +53,7 @@ mod tests {
     use crate::frontend::PreparedStatements;
     use crate::frontend::router::parser::StatementRewriteContext;
     use crate::frontend::router::parser::rewrite::statement::RewritePlan;
-    use crate::test_utils::set_env_var;
+
     use crate::{backend::ShardingSchema, frontend::client::QueryTimestamps};
     use pg_raw_parse::{Owned, nodes};
 
@@ -139,7 +139,13 @@ mod tests {
 
     #[test]
     fn test_rewrite_select_simple() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_rewrite_select_simple"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let (sql, plan) = run_test("SELECT pgdog.unique_id()", false);
 
         assert!(
@@ -152,7 +158,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_select_simple_multiple_unique_ids() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_rewrite_select_simple_multiple_unique_ids"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let (sql, plan) = run_test("SELECT pgdog.unique_id(), pgdog.unique_id()", false);
 
         // Each unique_id call should get a different value

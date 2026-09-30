@@ -41,6 +41,8 @@ impl CommandComplete {
     }
 
     pub(crate) fn command(&self) -> &str {
+        // SAFETY: FromBytes validates the command slice as UTF-8; from_str constructs it from a Rust string.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.payload[5..self.payload.len() - 1]) }
     }
 
@@ -97,6 +99,12 @@ impl Display for CommandComplete {
 
 impl FromBytes for CommandComplete {
     fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        if bytes.len() < 6 || bytes.last() != Some(&0) {
+            return Err(Error::UnexpectedPayload);
+        }
+        if i32::from_be_bytes(bytes[1..5].try_into()?) as usize != bytes.len() - 1 {
+            return Err(Error::UnexpectedPayload);
+        }
         let original = bytes.clone();
         code!(bytes, 'C');
 
@@ -116,6 +124,25 @@ impl Protocol for CommandComplete {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn malformed_frames_return_errors() {
+        let valid = Bytes::from_static(b"C\0\0\0\x0dSELECT 1\0");
+        assert!(CommandComplete::from_bytes(valid.clone()).is_ok());
+        for end in 0..valid.len() {
+            assert!(
+                CommandComplete::from_bytes(valid.slice(..end)).is_err(),
+                "prefix {end}"
+            );
+        }
+        let mut missing_nul = valid.to_vec();
+        *missing_nul.last_mut().unwrap() = b'x';
+        assert!(CommandComplete::from_bytes(missing_nul.into()).is_err());
+        let mut invalid_utf8 = valid.to_vec();
+        let len = invalid_utf8.len();
+        invalid_utf8[len - 2] = 0xff;
+        assert!(CommandComplete::from_bytes(invalid_utf8.into()).is_err());
+    }
 
     #[test]
     fn rows_and_tag_for_dml() {

@@ -9,6 +9,8 @@ npm install
 # Generate Prisma client
 DATABASE_URL="postgresql://pgdog:pgdog@127.0.0.1:6432/pgdog" npx prisma generate
 
-timeout 60 npm test
+# The full ORM suite exceeds 60s with coverage on hosted runners.
+# Keep Mocha per-test timeouts and a bounded total runtime.
+timeout 300 npm test
 
 popd

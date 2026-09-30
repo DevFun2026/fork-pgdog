@@ -40,6 +40,8 @@ impl Deref for PdStr<'_> {
     fn deref(&self) -> &Self::Target {
         // SAFETY: The returned lifetime is shorter than 'a by definition.
         // The only way to construct this is from a valid string
+        // SAFETY: Private fields come from a borrowed str; its lifetime, UTF-8 validity and slice length are retained.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe {
             str::from_utf8_unchecked(slice::from_raw_parts(
                 self.data.map(ptr::from_ref).unwrap_or(ptr::dangling()),

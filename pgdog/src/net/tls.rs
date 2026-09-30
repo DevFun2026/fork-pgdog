@@ -492,6 +492,10 @@ fn build_connector(config_key: &ConnectorConfigKey) -> Result<Arc<ClientConfig>,
                 client_auth,
             )?;
 
+            // VerifyCa intentionally omits hostname matching. NoHostnameVerifier retains
+            // chain/time validation and TLS handshake signature verification; VerifyFull
+            // remains the mode that also authenticates the configured hostname.
+            // nosemgrep: rust.lang.security.rustls-dangerous.rustls-dangerous
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(verifier));

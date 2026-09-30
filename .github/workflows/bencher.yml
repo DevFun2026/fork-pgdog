@@ -56,7 +56,7 @@ jobs:
         #
         # After testing 5x back-to-back, variance was <1%. This should be enough
         # of a difference, unless something goes on with their servers in the future.
-        # 
+        #
         # TODO: we can re-evaluate a proper variance later
         #
         # Why --github-actions? This allows it to comment on the PR with the result.

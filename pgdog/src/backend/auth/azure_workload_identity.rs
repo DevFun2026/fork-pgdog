@@ -41,15 +41,25 @@ mod tests {
 
     use super::*;
     use crate::config::ServerAuth;
-    use crate::test_utils::set_env_var;
+
     use pgdog_config::Role;
 
     #[tokio::test]
     #[ignore = "requires AKS environment with Workload Identity injection"]
     async fn test_token_contains_expected_query_fields() {
-        let _azure_client_id = set_env_var("AZURE_CLIENT_ID", "EXAMPLE");
-        let _azure_tenant_id = set_env_var("AZURE_TENANT_ID", "EXAMPLE");
-        let _azure_token_file_path = set_env_var("AZURE_FEDERATED_TOKEN_FILE", "/tmp/example");
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_token_contains_expected_query_fields"
+            ),
+            &[
+                ("AZURE_CLIENT_ID", Some("EXAMPLE")),
+                ("AZURE_TENANT_ID", Some("EXAMPLE")),
+                ("AZURE_FEDERATED_TOKEN_FILE", Some("/tmp/example")),
+            ],
+        ) {
+            return;
+        }
 
         let addr = Address {
             host: "my-awesome-db.postgres.database.azure.com".into(),

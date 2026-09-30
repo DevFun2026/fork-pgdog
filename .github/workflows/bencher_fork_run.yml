@@ -1,5 +1,5 @@
 # Fork version of Bencher (Step 1 of 2)
-# 
+#
 # This file is more-or-less a repeat of what we do in the main workflow for building the image
 # except, now, the image gets saved as an artifact, and ran in a separate workflow.
 #
@@ -33,7 +33,7 @@ jobs:
           docker build --build-context bin=target/release -f benches/perf/Dockerfile -t pgdog-bench .
           docker save pgdog-bench | gzip > image.tar.gz
 
-      # Deviation from main workflow (as seen in header of this file)    
+      # Deviation from main workflow (as seen in header of this file)
       - uses: actions/upload-artifact@v4
         with:
           name: image

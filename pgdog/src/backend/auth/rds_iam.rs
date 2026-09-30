@@ -146,7 +146,6 @@ mod tests {
 
     use super::*;
     use crate::config::ServerAuth;
-    use crate::test_utils::set_env_var;
 
     fn make_addr() -> Address {
         Address {
@@ -270,9 +269,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_contains_expected_query_fields() {
-        let _access_key = set_env_var("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE");
-        let _secret_key = set_env_var("AWS_SECRET_ACCESS_KEY", "SECRETEXAMPLE");
-        let _session = set_env_var("AWS_SESSION_TOKEN", "SESSIONEXAMPLE");
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_token_contains_expected_query_fields"
+            ),
+            &[
+                ("AWS_ACCESS_KEY_ID", Some("AKIDEXAMPLE")),
+                ("AWS_SECRET_ACCESS_KEY", Some("SECRETEXAMPLE")),
+                ("AWS_SESSION_TOKEN", Some("SESSIONEXAMPLE")),
+            ],
+        ) {
+            return;
+        }
 
         let addr = make_addr();
         let (token, expires_at) = token(addr).await.unwrap();

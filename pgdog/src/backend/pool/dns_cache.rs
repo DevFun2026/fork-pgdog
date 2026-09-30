@@ -5,7 +5,7 @@
 //! hostname cache hits so callers resolve DNS on every request. IP literals are
 //! returned directly and are not stored in the cache.
 
-use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
+use hickory_resolver::TokioResolver;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ impl Deref for CacheEntry {
 
 /// Shared hostname-to-IP cache backed by the system DNS resolver.
 pub(crate) struct DnsCache {
-    resolver: Arc<Resolver<TokioConnectionProvider>>,
+    resolver: Arc<TokioResolver>,
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
 }
 
@@ -56,9 +56,7 @@ impl DnsCache {
     /// Create a new DNS cache instance.
     pub(crate) fn new() -> Self {
         // Initialize the Resolver with system config (e.g., /etc/resolv.conf on Unix)
-        let resolver = Resolver::builder(TokioConnectionProvider::default())
-            .unwrap()
-            .build();
+        let resolver = TokioResolver::builder_tokio().unwrap().build().unwrap();
 
         DnsCache {
             resolver: Arc::new(resolver),

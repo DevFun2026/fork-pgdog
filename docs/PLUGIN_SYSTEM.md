@@ -273,4 +273,3 @@ The following areas lack test coverage:
 - **Unit tests:** See [pgdog-plugin/src/](../pgdog-plugin/src/) for FFI structure tests. Run with `cd pgdog-plugin && cargo test`.
 - **Example plugin tests:** See [plugins/pgdog-example-plugin/src/plugin.rs](../plugins/pgdog-example-plugin/src/plugin.rs).
 - **Coverage gaps:** Some error, concurrency, and edge cases are not yet covered. See code comments for details.
-

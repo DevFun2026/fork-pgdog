@@ -50,6 +50,8 @@ impl Close {
 
     pub(crate) fn name(&self) -> &str {
         // SAFETY: Name is checked for utf-8 in Bytes::from_bytes
+        // SAFETY: FromBytes validates this exact name slice as UTF-8 before constructing the message.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.payload[6..self.payload.len() - 1]) }
     }
 

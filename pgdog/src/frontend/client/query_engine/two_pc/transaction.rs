@@ -53,7 +53,6 @@ impl FromStr for TwoPcTransaction {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::set_env_var;
 
     use super::*;
 
@@ -79,7 +78,13 @@ mod test {
 
     #[test]
     fn test_deployment_id() {
-        let _guard = set_env_var("DEPLOYMENT_ID", "1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_deployment_id"),
+            &[("DEPLOYMENT_ID", Some("1"))],
+        ) {
+            return;
+        }
+
         let txn = TwoPcTransaction(1678);
         let instance_id = instance_id(); // It's a singleton.
         assert_eq!(format!("__pgdog_2pc_1_{instance_id}_1678"), txn.to_string());
