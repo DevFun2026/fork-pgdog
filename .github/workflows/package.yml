@@ -1,13 +1,5 @@
 name: package
 on:
-  push:
-    branches: ["main", "main-ent"]
-    paths:
-      - ".github/workflows/package.yml"
-      - "**/*.rs"
-      - "**/Cargo.toml"
-  release:
-    types: [published]
   workflow_dispatch:
 
 env:

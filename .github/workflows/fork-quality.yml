@@ -1,0 +1,64 @@
+name: Fork quality gates
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fork-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: bash integration/ci/install-deps.sh
+      - uses: Swatinem/rust-cache@v2
+      - run: bash integration/ci/setup.sh --with-toxi
+      - run: ./scripts/agent verify quick --timeout 3600 --json
+      - name: Run merge commands without claiming independent review
+        if: ${{ !cancelled() }}
+        run: ./scripts/agent verify review --timeout 3600 --json
+      - name: Report public failure identifiers
+        if: failure()
+        run: python3 scripts/ci-test-summary.py
+      - name: Retain command evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-verification-evidence
+          path: .agent/.runs/evidence/
+          retention-days: 7
+  scanners:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scanner: [dependency, license, sast]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - if: matrix.scanner != 'sast'
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - if: matrix.scanner == 'sast'
+        run: pipx install semgrep==1.178.0
+      - run: ./scripts/agent release run-scanner --scanner ${{ matrix.scanner }} --timeout 600
+      - name: Retain scanner evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-scanner-${{ matrix.scanner }}
+          path: .agent/.runs/scanners/
+          retention-days: 7

@@ -275,7 +275,7 @@ impl RewritePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::set_env_var;
+
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -294,7 +294,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_no_unique_ids() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_apply_bind_no_unique_ids"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan::default();
         let mut bind = Bind::default();
         plan.apply_bind(&mut bind, None, QueryTimestamps::now())
@@ -305,7 +311,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_text_format() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_apply_bind_text_format"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             generated_params: vec![GeneratedParam::UniqueId],
             ..Default::default()
@@ -327,7 +339,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_binary_format_uniform() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_apply_bind_binary_format_uniform"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             params: 1,
             generated_params: vec![GeneratedParam::UniqueId],
@@ -354,7 +372,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_binary_format_one_to_one() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_apply_bind_binary_format_one_to_one"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             params: 2,
             generated_params: vec![GeneratedParam::UniqueId],
@@ -383,7 +407,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_multiple_unique_ids() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_apply_bind_multiple_unique_ids"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             generated_params: vec![GeneratedParam::UniqueId; 3],
             ..Default::default()
@@ -405,7 +435,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_bind_appends_to_existing_params() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_apply_bind_appends_to_existing_params"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             params: 2,
             generated_params: vec![GeneratedParam::UniqueId; 2],

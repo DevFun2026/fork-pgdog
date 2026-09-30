@@ -1091,7 +1091,7 @@ impl StreamSubscriber {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{begin_copy_data, commit_copy_data};
+    use super::super::tests::{begin_copy_data, commit_copy_data, wait_for_commit};
     use super::*;
     use crate::config::config;
 
@@ -1169,14 +1169,7 @@ mod tests {
         assert!(sub.changed_tables.is_empty());
         assert_eq!(sub.table_lsns.get(&oid), Some(&50));
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let mut completed = false;
-        while std::time::Instant::now() < deadline && !completed {
-            sub.refresh_wal_positions().await.unwrap();
-            completed = sub.check_for_committed_transaction().await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        assert!(completed);
+        wait_for_commit(&mut sub, 200).await;
 
         assert_eq!(sub.table_lsns.get(&oid), Some(&100));
         assert_eq!(sub.lsn(), 200);

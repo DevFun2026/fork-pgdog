@@ -19,11 +19,15 @@ pub(crate) struct Prepare {
 impl Prepare {
     pub(crate) fn query(&self) -> &str {
         // SAFETY: We only support UTF-8.
+        // SAFETY: Constructors in the prepared-statement cache convert generated Rust strings into these Bytes; wire parsing is unreachable.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.query) }
     }
 
     pub(crate) fn name(&self) -> &str {
         // SAFETY: We only support UTF-8.
+        // SAFETY: Constructors in the prepared-statement cache convert generated Rust strings into these Bytes; wire parsing is unreachable.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.name) }
     }
 

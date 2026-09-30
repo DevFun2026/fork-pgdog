@@ -144,7 +144,6 @@ mod tests {
         let config = crate::backend::pool::Config {
             max: 1,
             min: 1,
-            checkout_timeout: Duration::from_millis(10),
             ..crate::backend::pool::Config::default()
         };
 
@@ -161,8 +160,8 @@ mod tests {
         });
         pool.launch();
 
-        sleep(Duration::from_millis(100)).await;
-
+        // Establish the occupied connection using the normal checkout deadline.
+        // The cancellation under test has its own 100 ms timeout below.
         let _conn = pool.get(&Request::default()).await.unwrap();
 
         let request = Request::unrouted(FrontendPid::new());

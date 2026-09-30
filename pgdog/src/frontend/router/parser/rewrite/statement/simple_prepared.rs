@@ -410,7 +410,7 @@ mod tests {
     use crate::config::PreparedStatementsLevel;
     use crate::frontend::PreparedStatements;
     use crate::frontend::client::QueryTimestamps;
-    use crate::test_utils::set_env_var;
+
     use pg_raw_parse::Node;
     use pgdog_config::Rewrite;
     use std::collections::HashSet;
@@ -504,7 +504,16 @@ mod tests {
 
     #[test]
     fn test_apply_prepare_rewrite_plan_appends_unique_ids() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_apply_prepare_rewrite_plan_appends_unique_ids"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let plan = RewritePlan {
             generated_params: vec![GeneratedParam::UniqueId; 3],
             ..Default::default()

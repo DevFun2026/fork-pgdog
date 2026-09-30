@@ -104,7 +104,6 @@ impl Otel {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::set_env_var;
 
     #[test]
     fn headers_from_toml() {
@@ -164,7 +163,12 @@ mod test {
 
     #[test]
     fn namespace_from_env() {
-        let _guard = set_env_var("PGDOG_OTEL_NAMESPACE", "pgdog_");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::namespace_from_env"),
+            &[("PGDOG_OTEL_NAMESPACE", Some("pgdog_"))],
+        ) {
+            return;
+        }
 
         let otel: Otel = toml::from_str("").expect("parse");
         assert_eq!(otel.namespace.as_deref(), Some("pgdog_"));

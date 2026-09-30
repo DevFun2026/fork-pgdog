@@ -1,5 +1,5 @@
 # Fork version of Bencher (Step 1 of 2)
-# 
+#
 # This file is more-or-less a repeat of what we do in the main workflow for building the image
 # except, now, the image gets saved as an artifact, and ran in a separate workflow.
 #
@@ -10,12 +10,13 @@
 # This is the documented 2-step workflow that Bencher mentions in their docs.
 name: bencher-fork-run
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
   image:
-    if: github.event.pull_request.head.repo.full_name != github.repository
+    if: github.repository == 'pgdogdev/pgdog' && github.event.pull_request.head.repo.full_name != github.repository
     # This initial runner is to assemble the docker image for this PR for the Bencher runner. It doesn't run any tests itself.
     # Bencher's runners do not have outside network access; requires us to have everything ready-to-go.
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -33,7 +34,7 @@ jobs:
           docker build --build-context bin=target/release -f benches/perf/Dockerfile -t pgdog-bench .
           docker save pgdog-bench | gzip > image.tar.gz
 
-      # Deviation from main workflow (as seen in header of this file)    
+      # Deviation from main workflow (as seen in header of this file)
       - uses: actions/upload-artifact@v4
         with:
           name: image

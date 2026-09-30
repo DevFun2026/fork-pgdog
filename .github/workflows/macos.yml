@@ -1,13 +1,6 @@
 name: macos
 on:
-  push:
-    branches:
-      - main
-      - main-ent
-    paths:
-      - ".github/workflows/macos.yml"
-      - "**/*.rs"
-      - "integration/**"
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:

@@ -1,12 +1,10 @@
 name: ci
 on:
-  push:
-    branches:
-      - main-ent
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
-  merge_group:
-    types: [checks_requested]
+permissions:
+  contents: read
 
 jobs:
   # Build both pgdog artifacts in parallel:
@@ -14,7 +12,7 @@ jobs:
   #   - coverage: llvm-cov instrumented debug binary used by the
   #     integration suites to produce line coverage for Codecov
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +34,7 @@ jobs:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 5
-          command: bash integration/ci/install-deps.sh        
+          command: bash integration/ci/install-deps.sh
       # Compute the binary key before restoring rust-cache: rust-cache restores
       # target/ build outputs that would otherwise change the key. Use the
       # split cache actions so pgdog binaries are saved immediately after the
@@ -69,7 +67,7 @@ jobs:
           key: ${{ steps.cache-key.outputs.key }}
 
   ci:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     needs: [build]
     timeout-minutes: 30
     continue-on-error: ${{ matrix.continue_on_error == true }}
@@ -189,7 +187,7 @@ jobs:
       # Codecov merges uploads per flag server-side, so each suite uploads
       # its own lcov under the shared "integration" flag.
       - name: Upload coverage to Codecov
-        if: ${{ github.event_name != 'merge_group' }}
+        if: ${{ github.repository == 'pgdogdev/pgdog' && github.event_name != 'merge_group' }}
         uses: codecov/codecov-action@v4
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -201,6 +199,6 @@ jobs:
   success:
     name: All Integration Tests Passed
     needs: ci
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
     - run: echo Done!

@@ -10,6 +10,8 @@ use std::arch::aarch64::*;
 /// SAFETY: Float is a newtype wrapper around f32, so the memory layout is identical
 #[inline(always)]
 unsafe fn float_slice_to_f32(floats: &[Float]) -> &[f32] {
+    // SAFETY: Float is repr(transparent) over f32; the borrow and element count are unchanged.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         // This is safe because Float is a transparent wrapper around f32
         std::slice::from_raw_parts(floats.as_ptr() as *const f32, floats.len())
@@ -19,7 +21,7 @@ unsafe fn float_slice_to_f32(floats: &[Float]) -> &[f32] {
 /// Scalar reference implementation - no allocations
 #[inline]
 pub fn euclidean_distance_scalar(p: &[Float], q: &[Float]) -> f32 {
-    debug_assert_eq!(p.len(), q.len());
+    assert_eq!(p.len(), q.len(), "vector dimensions must match");
 
     let mut sum = 0.0f32;
     for i in 0..p.len() {
@@ -33,8 +35,10 @@ pub fn euclidean_distance_scalar(p: &[Float], q: &[Float]) -> f32 {
 #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
 #[inline]
 pub fn euclidean_distance_sse(p: &[Float], q: &[Float]) -> f32 {
-    debug_assert_eq!(p.len(), q.len());
+    assert_eq!(p.len(), q.len(), "vector dimensions must match");
 
+    // SAFETY: Equal dimensions are asserted in release builds; full SIMD chunks and scalar tails stay inside both slices.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         // Convert Float slices to f32 slices to avoid temporary arrays
         let p_f32 = float_slice_to_f32(p);
@@ -85,8 +89,10 @@ pub fn euclidean_distance_sse(p: &[Float], q: &[Float]) -> f32 {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 #[inline]
 pub fn euclidean_distance_avx2(p: &[Float], q: &[Float]) -> f32 {
-    debug_assert_eq!(p.len(), q.len());
+    assert_eq!(p.len(), q.len(), "vector dimensions must match");
 
+    // SAFETY: Equal dimensions are asserted in release builds; full SIMD chunks and scalar tails stay inside both slices.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         // Convert Float slices to f32 slices to avoid temporary arrays
         let p_f32 = float_slice_to_f32(p);
@@ -158,8 +164,10 @@ pub fn euclidean_distance_avx2(p: &[Float], q: &[Float]) -> f32 {
 #[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn euclidean_distance_neon(p: &[Float], q: &[Float]) -> f32 {
-    debug_assert_eq!(p.len(), q.len());
+    assert_eq!(p.len(), q.len(), "vector dimensions must match");
 
+    // SAFETY: Equal dimensions are asserted in release builds; full SIMD chunks and scalar tails stay inside both slices.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         // Convert Float slices to f32 slices to avoid temporary arrays
         let p_f32 = float_slice_to_f32(p);
@@ -239,6 +247,30 @@ pub fn euclidean_distance(p: &[Float], q: &[Float]) -> f32 {
 mod tests {
     use super::*;
     use crate::Vector;
+
+    #[test]
+    fn mismatched_dimensions_are_rejected_by_public_distance_functions() {
+        type DistanceFn = fn(&[Float], &[Float]) -> f32;
+        let functions: &[DistanceFn] = &[
+            euclidean_distance,
+            euclidean_distance_scalar,
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+            euclidean_distance_sse,
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+            euclidean_distance_avx2,
+            #[cfg(target_arch = "aarch64")]
+            euclidean_distance_neon,
+        ];
+        for distance in functions {
+            // A longer right slice demonstrates the missing release check
+            // without executing an out-of-bounds read in the old implementation.
+            let p = [Float(1.0); 16];
+            let q = [Float(2.0); 17];
+            assert!(std::panic::catch_unwind(|| distance(&p, &q)).is_err());
+            assert!(std::panic::catch_unwind(|| distance(&q, &p)).is_err());
+            assert_eq!(distance(&[], &[]), 0.0);
+        }
+    }
 
     #[test]
     fn test_no_allocations() {

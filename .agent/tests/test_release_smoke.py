@@ -22,7 +22,8 @@ class ReleaseSmokeTests(unittest.TestCase):
                 self.source_root,
                 fixture,
                 ignore=shutil.ignore_patterns(
-                    ".git", ".superpowers", ".memory", ".runs", "__pycache__", "*.pyc"
+                    ".git", ".superpowers", ".memory", ".runs", "__pycache__", "*.pyc",
+                    "target", "target-*", "venv", "node_modules"
                 ),
             )
             self.git(fixture, "init", "-b", "main")

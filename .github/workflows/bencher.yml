@@ -5,9 +5,6 @@
 
 name: bencher
 on:
-  push:
-    branches:
-      - main
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -17,7 +14,7 @@ env:
 
 jobs:
   image:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.repository == 'pgdogdev/pgdog' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # This initial runner is to assemble the docker image for the Bencher runner. It doesn't run any tests itself.
     # Bencher's runners do not have outside network access; requires us to have everything ready-to-go.
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -56,7 +53,7 @@ jobs:
         #
         # After testing 5x back-to-back, variance was <1%. This should be enough
         # of a difference, unless something goes on with their servers in the future.
-        # 
+        #
         # TODO: we can re-evaluate a proper variance later
         #
         # Why --github-actions? This allows it to comment on the PR with the result.

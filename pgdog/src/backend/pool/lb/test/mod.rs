@@ -55,7 +55,8 @@ fn create_auto_test_pool_config(host: &str, port: u16) -> PoolConfig {
     let mut config = create_test_pool_config(host, port);
     config.address.configured_role = Role::Auto;
     config.config.role_detection = true;
-    config.config.checkout_timeout = Duration::from_millis(50);
+    // Election success tests also open real PostgreSQL connections. Keep the
+    // shared one-second fixture budget; timeout tests override it explicitly.
     config
 }
 

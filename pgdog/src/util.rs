@@ -259,6 +259,8 @@ pub(crate) fn raise_nofile_limit() -> u64 {
         rlim_max: 0,
     };
 
+    // SAFETY: getrlimit receives a valid mutable stack rlimit pointer; its return code is checked before use.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         if getrlimit(RLIMIT_NOFILE, &mut rlim) != 0 {
             warn!("failed to get NOFILE limit");
@@ -270,6 +272,8 @@ pub(crate) fn raise_nofile_limit() -> u64 {
         let prev = rlim.rlim_cur;
         rlim.rlim_cur = rlim.rlim_max;
 
+        // SAFETY: setrlimit borrows the initialized stack rlimit for the duration of the call; its return code is checked.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe {
             if setrlimit(RLIMIT_NOFILE, &rlim) != 0 {
                 warn!(
@@ -420,7 +424,6 @@ impl<T, E> ResultControlFlowExt<T, E> for Result<T, E> {
 mod test {
 
     use super::*;
-    use crate::test_utils::*;
 
     #[test]
     fn test_human_duration() {
@@ -531,7 +534,13 @@ mod test {
 
     #[test]
     fn test_instance_id_format() {
-        let _guard = remove_env_var("NODE_ID");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_instance_id_format"),
+            &[("NODE_ID", None)],
+        ) {
+            return;
+        }
+
         let id = instance_id();
         assert_eq!(id.len(), 8);
         // All characters should be valid hex digits (0-9, a-f)
@@ -553,19 +562,37 @@ mod test {
 
     #[test]
     fn test_node_id_unset() {
-        let _guard = remove_env_var("NODE_ID");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_node_id_unset"),
+            &[("NODE_ID", None)],
+        ) {
+            return;
+        }
+
         assert_eq!(node_id(), None);
     }
 
     #[test]
     fn test_node_id_not_a_number() {
-        let _guard = set_env_var("NODE_ID", "pgdog-abc");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_node_id_not_a_number"),
+            &[("NODE_ID", Some("pgdog-abc"))],
+        ) {
+            return;
+        }
+
         assert_eq!(node_id(), None);
     }
 
     #[test]
     fn test_node_id_bare_number() {
-        let _guard = set_env_var("NODE_ID", "7");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_node_id_bare_number"),
+            &[("NODE_ID", Some("7"))],
+        ) {
+            return;
+        }
+
         assert_eq!(node_id(), Some(7));
     }
 
@@ -648,7 +675,13 @@ mod test {
 
     #[test]
     fn test_node_id_set() {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_node_id_set"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         assert_eq!(node_id(), Some(1));
     }
 

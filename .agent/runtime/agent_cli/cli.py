@@ -84,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify")
     verify.add_argument("level", choices=("quick", "review", "merge", "release"))
     verify.add_argument("--json", action="store_true", dest="as_json")
+    verify.add_argument("--timeout", type=positive_argument, default=60,
+                        help="maximum seconds per configured command (default: 60)")
 
     docs = commands.add_parser("docs")
     docs_commands = docs.add_subparsers(dest="docs_command", required=True)
@@ -276,7 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ConfigError as exc:
             print(json.dumps({"status": "incomplete", "reasons": [str(exc)]}))
             return ExitCode.INCOMPLETE
-        result = run_gate(args.level, config, ROOT)
+        result = run_gate(args.level, config, ROOT, timeout=args.timeout)
         if args.as_json:
             print(json.dumps(result.to_dict(), sort_keys=True))
         else:

@@ -282,9 +282,8 @@ impl Stream {
     ///
     /// # Performance
     ///
-    /// The stream is buffered, so this is quite fast. The pooler will perform exactly
-    /// one memory allocation per protocol message. It can be optimized to re-use an existing
-    /// buffer but it's not worth the complexity.
+    /// The stream is buffered. Message storage grows as the body arrives, so an
+    /// incomplete header cannot force allocation of its entire advertised length.
     pub(crate) async fn read(&mut self) -> Result<Message, crate::net::Error> {
         let mut buf = BytesMut::with_capacity(5);
         self.read_buf(&mut buf).await
@@ -308,14 +307,17 @@ impl Stream {
             }
 
             let capacity = len as usize + 1;
-            bytes.reserve(capacity); // self + 1 byte for the message code
-            unsafe {
-                // SAFETY: We reserved the memory above, so it's there.
-                // It contains garbage but we're about to write to it.
-                bytes.set_len(capacity);
+            // Extend only with initialized bytes actually received. A header alone
+            // must not allocate or zero its entire advertised body, and Take keeps
+            // the next protocol message out of this buffer.
+            while bytes.len() < capacity {
+                let remaining = capacity - bytes.len();
+                bytes.reserve(remaining.min(8192));
+                let mut body = (&mut *self).take(remaining as u64);
+                if eof(AsyncReadExt::read_buf(&mut body, bytes).await)? == 0 {
+                    return Err(crate::net::Error::UnexpectedEof);
+                }
             }
-
-            eof(self.read_exact(&mut bytes[5..capacity]).await)?;
 
             let message = Message::new(bytes.split().freeze());
 
@@ -406,10 +408,74 @@ impl std::fmt::Debug for PeerAddr {
 
 #[cfg(test)]
 mod tests {
+    use crate::net::messages::ToBytes;
     use std::time::Duration;
 
     use super::*;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn header_alone_does_not_allocate_the_declared_body() {
+        let (mut stream, mut peer) = connected_pair().await;
+        let mut bytes = BytesMut::new();
+        peer.write_all(b"Q\0\x80\0\0").await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                stream.read_buf(&mut bytes)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(bytes.len(), 5);
+        assert!(bytes.capacity() <= 16 * 1024);
+    }
+
+    #[tokio::test]
+    async fn cancelled_message_read_keeps_buffer_initialized() {
+        let (mut stream, mut peer) = connected_pair().await;
+        let mut bytes = BytesMut::from(&[0xa5; 64][..]);
+        bytes.clear();
+        peer.write_all(b"Q\0\0\0\x0c").await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                stream.read_buf(&mut bytes)
+            )
+            .await
+            .is_err()
+        );
+        assert!(!bytes.contains(&0xa5));
+        assert!(stream.io_in_progress);
+    }
+
+    #[tokio::test]
+    async fn truncated_message_does_not_expose_unread_buffer_bytes() {
+        let (mut stream, mut peer) = connected_pair().await;
+        // Reuse initialized storage so the old bug is deterministic without
+        // reading truly uninitialized memory in the regression test.
+        let mut bytes = BytesMut::from(&[0xa5; 64][..]);
+        bytes.clear();
+        peer.write_all(b"Q\0\0\0\x0cabc").await.unwrap();
+        peer.shutdown().await.unwrap();
+        assert!(stream.read_buf(&mut bytes).await.is_err());
+        assert!(
+            !bytes.contains(&0xa5),
+            "unread storage was exposed as message bytes"
+        );
+        assert!(!stream.io_in_progress());
+    }
+
+    #[tokio::test]
+    async fn complete_message_preserves_payload_and_releases_buffer() {
+        let (mut stream, mut peer) = connected_pair().await;
+        let payload = b"Q\0\0\0\x0dSELECT 1\0";
+        peer.write_all(payload).await.unwrap();
+        let mut bytes = BytesMut::with_capacity(64);
+        let message = stream.read_buf(&mut bytes).await.unwrap();
+        assert_eq!(&message.to_bytes()[..], payload);
+        assert!(bytes.is_empty());
+    }
 
     #[tokio::test]
     async fn test_io_in_progress_initially_false() {

@@ -107,6 +107,8 @@ impl Describe {
 
     pub(crate) fn statement(&self) -> &str {
         // SAFETY: Name is checked for utf-8 in Bytes::from_bytes
+        // SAFETY: FromBytes validates the name slice as UTF-8; constructors accept Rust strings.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.payload[6..self.payload.len() - 1]) }
     }
 

@@ -1606,7 +1606,6 @@ impl General {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::*;
 
     #[test]
     fn test_prepared_statements_ttl_defaults() {
@@ -1726,35 +1725,77 @@ mod tests {
     }
 
     #[test]
-    fn test_env_query_size_limit() {
-        let _guard = set_env_var("PGDOG_QUERY_SIZE_LIMIT", "4096");
+    fn test_env_query_size_limit_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_case_1"),
+            &[("PGDOG_QUERY_SIZE_LIMIT", Some("4096"))],
+        ) {
+            return;
+        }
         assert_eq!(General::default_query_size_limit(), Some(4096));
+    }
 
-        let _guard = remove_env_var("PGDOG_QUERY_SIZE_LIMIT");
+    #[test]
+    fn test_env_query_size_limit_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_case_2"),
+            &[("PGDOG_QUERY_SIZE_LIMIT", None)],
+        ) {
+            return;
+        }
         assert_eq!(General::default_query_size_limit(), None);
     }
 
     #[test]
-    fn test_env_query_size_limit_action() {
-        let _guard = set_env_var("PGDOG_QUERY_SIZE_LIMIT_ACTION", "Block");
+    fn test_env_query_size_limit_action_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_action_case_1"),
+            &[("PGDOG_QUERY_SIZE_LIMIT_ACTION", Some("Block"))],
+        ) {
+            return;
+        }
         assert_eq!(
             General::query_size_limit_action(),
             QuerySizeLimitAction::Block
         );
+    }
 
-        let _guard = set_env_var("PGDOG_QUERY_SIZE_LIMIT_ACTION", "block");
+    #[test]
+    fn test_env_query_size_limit_action_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_action_case_2"),
+            &[("PGDOG_QUERY_SIZE_LIMIT_ACTION", Some("block"))],
+        ) {
+            return;
+        }
         assert_eq!(
             General::query_size_limit_action(),
             QuerySizeLimitAction::Block
         );
+    }
 
-        let _guard = set_env_var("PGDOG_QUERY_SIZE_LIMIT_ACTION", "BLOCK");
+    #[test]
+    fn test_env_query_size_limit_action_case_3() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_action_case_3"),
+            &[("PGDOG_QUERY_SIZE_LIMIT_ACTION", Some("BLOCK"))],
+        ) {
+            return;
+        }
         assert_eq!(
             General::query_size_limit_action(),
             QuerySizeLimitAction::Block
         );
+    }
 
-        let _guard = remove_env_var("PGDOG_QUERY_SIZE_LIMIT_ACTION");
+    #[test]
+    fn test_env_query_size_limit_action_case_4() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_query_size_limit_action_case_4"),
+            &[("PGDOG_QUERY_SIZE_LIMIT_ACTION", None)],
+        ) {
+            return;
+        }
         assert_eq!(
             General::query_size_limit_action(),
             QuerySizeLimitAction::Warn
@@ -1762,47 +1803,95 @@ mod tests {
     }
 
     #[test]
-    fn test_env_workers() {
-        let _guard = set_env_var("PGDOG_WORKERS", "8");
+    fn test_env_workers_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_workers_case_1"),
+            &[("PGDOG_WORKERS", Some("8"))],
+        ) {
+            return;
+        }
         assert_eq!(General::workers(), 8);
-        let _guard = remove_env_var("PGDOG_WORKERS");
+    }
+
+    #[test]
+    fn test_env_workers_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_workers_case_2"),
+            &[("PGDOG_WORKERS", None)],
+        ) {
+            return;
+        }
         assert_eq!(General::workers(), 2);
     }
 
     #[test]
-    fn test_env_pool_sizes() {
-        let _guard = set_env_var("PGDOG_DEFAULT_POOL_SIZE", "50");
-        let _guard = set_env_var("PGDOG_MIN_POOL_SIZE", "5");
+    fn test_env_pool_sizes_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_pool_sizes_case_1"),
+            &[
+                ("PGDOG_DEFAULT_POOL_SIZE", Some("50")),
+                ("PGDOG_MIN_POOL_SIZE", Some("5")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::default_pool_size(), 50);
         assert_eq!(General::min_pool_size(), 5);
+    }
 
-        let _guard = remove_env_var("PGDOG_DEFAULT_POOL_SIZE");
-        let _guard = remove_env_var("PGDOG_MIN_POOL_SIZE");
+    #[test]
+    fn test_env_pool_sizes_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_pool_sizes_case_2"),
+            &[
+                ("PGDOG_DEFAULT_POOL_SIZE", None),
+                ("PGDOG_MIN_POOL_SIZE", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::default_pool_size(), 10);
         assert_eq!(General::min_pool_size(), 1);
     }
 
     #[test]
-    fn test_env_timeouts() {
-        let _guard = set_env_var("PGDOG_HEALTHCHECK_INTERVAL", "60000");
-        let _guard = set_env_var("PGDOG_HEALTHCHECK_TIMEOUT", "10000");
-        let _guard = set_env_var("PGDOG_CONNECT_TIMEOUT", "10000");
-        let _guard = set_env_var("PGDOG_CHECKOUT_TIMEOUT", "15000");
-        let _guard = set_env_var("PGDOG_IDLE_TIMEOUT", "120000");
+    fn test_env_timeouts_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_timeouts_case_1"),
+            &[
+                ("PGDOG_CHECKOUT_TIMEOUT", Some("15000")),
+                ("PGDOG_CONNECT_TIMEOUT", Some("10000")),
+                ("PGDOG_HEALTHCHECK_INTERVAL", Some("60000")),
+                ("PGDOG_HEALTHCHECK_TIMEOUT", Some("10000")),
+                ("PGDOG_IDLE_TIMEOUT", Some("120000")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::healthcheck_interval(), 60000);
         assert_eq!(General::healthcheck_timeout(), 10000);
         assert_eq!(General::default_connect_timeout(), 10000);
         assert_eq!(General::checkout_timeout(), 15000);
         assert_eq!(General::idle_timeout(), 120000);
+    }
 
-        let _guard = remove_env_var("PGDOG_HEALTHCHECK_INTERVAL");
-        let _guard = remove_env_var("PGDOG_HEALTHCHECK_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_CONNECT_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_CHECKOUT_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_IDLE_TIMEOUT");
+    #[test]
+    fn test_env_timeouts_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_timeouts_case_2"),
+            &[
+                ("PGDOG_CHECKOUT_TIMEOUT", None),
+                ("PGDOG_CONNECT_TIMEOUT", None),
+                ("PGDOG_HEALTHCHECK_INTERVAL", None),
+                ("PGDOG_HEALTHCHECK_TIMEOUT", None),
+                ("PGDOG_IDLE_TIMEOUT", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::healthcheck_interval(), 30000);
         assert_eq!(General::healthcheck_timeout(), 5000);
@@ -1813,35 +1902,68 @@ mod tests {
 
     #[test]
     fn test_env_invalid_values() {
-        let _guard = set_env_var("PGDOG_WORKERS", "invalid");
-        let _guard = set_env_var("PGDOG_DEFAULT_POOL_SIZE", "not_a_number");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_invalid_values"),
+            &[
+                ("PGDOG_DEFAULT_POOL_SIZE", Some("not_a_number")),
+                ("PGDOG_WORKERS", Some("invalid")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::workers(), 2);
         assert_eq!(General::default_pool_size(), 10);
     }
 
     #[test]
-    fn test_env_host_port() {
-        // Test existing env var functionality
-        let _guard = set_env_var("PGDOG_HOST", "192.168.1.1");
-        let _guard = set_env_var("PGDOG_PORT", "8432");
+    fn test_env_host_port_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_host_port_case_1"),
+            &[
+                ("PGDOG_HOST", Some("192.168.1.1")),
+                ("PGDOG_PORT", Some("8432")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::host(), "192.168.1.1");
         assert_eq!(General::port(), 8432);
+    }
 
-        let _guard = remove_env_var("PGDOG_HOST");
-        let _guard = remove_env_var("PGDOG_PORT");
+    #[test]
+    fn test_env_host_port_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_host_port_case_2"),
+            &[("PGDOG_HOST", None), ("PGDOG_PORT", None)],
+        ) {
+            return;
+        }
 
         assert_eq!(General::host(), "0.0.0.0");
         assert_eq!(General::port(), 6432);
     }
 
     #[test]
-    fn test_env_openmetrics_host() {
-        let _guard = set_env_var("PGDOG_OPENMETRICS_HOST", "127.0.0.1");
+    fn test_env_openmetrics_host_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_openmetrics_host_case_1"),
+            &[("PGDOG_OPENMETRICS_HOST", Some("127.0.0.1"))],
+        ) {
+            return;
+        }
         assert_eq!(General::openmetrics_host(), "127.0.0.1");
+    }
 
-        let _guard = remove_env_var("PGDOG_OPENMETRICS_HOST");
+    #[test]
+    fn test_env_openmetrics_host_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_openmetrics_host_case_2"),
+            &[("PGDOG_OPENMETRICS_HOST", None)],
+        ) {
+            return;
+        }
         assert_eq!(General::openmetrics_host(), "0.0.0.0");
     }
 
@@ -1861,81 +1983,338 @@ mod tests {
     }
 
     #[test]
-    fn test_env_enum_fields() {
-        // Test pooler mode
-        let _guard = set_env_var("PGDOG_POOLER_MODE", "session");
+    fn test_env_enum_fields_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_1"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", Some("session")),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::pooler_mode(), PoolerMode::Session);
-        let _guard = remove_env_var("PGDOG_POOLER_MODE");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_2"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::pooler_mode(), PoolerMode::Transaction);
 
         // Test load balancing strategy
-        let _guard = set_env_var("PGDOG_LOAD_BALANCING_STRATEGY", "round_robin");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_3() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_3"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", Some("round_robin")),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::load_balancing_strategy(),
             LoadBalancingStrategy::RoundRobin
         );
-        let _guard = remove_env_var("PGDOG_LOAD_BALANCING_STRATEGY");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_4() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_4"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::load_balancing_strategy(),
             LoadBalancingStrategy::Random
         );
 
         // Test read-write strategy
-        let _guard = set_env_var("PGDOG_READ_WRITE_STRATEGY", "aggressive");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_5() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_5"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", Some("aggressive")),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::read_write_strategy(),
             ReadWriteStrategy::Aggressive
         );
-        let _guard = remove_env_var("PGDOG_READ_WRITE_STRATEGY");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_6() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_6"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::read_write_strategy(),
             ReadWriteStrategy::Conservative
         );
 
         // Test read-write split
-        let _guard = set_env_var("PGDOG_READ_WRITE_SPLIT", "exclude_primary");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_7() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_7"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", Some("exclude_primary")),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::read_write_split(), ReadWriteSplit::ExcludePrimary);
-        let _guard = set_env_var("PGDOG_READ_WRITE_SPLIT", "prefer_primary");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_8() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_8"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", Some("prefer_primary")),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::read_write_split(), ReadWriteSplit::PreferPrimary);
-        let _guard = remove_env_var("PGDOG_READ_WRITE_SPLIT");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_9() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_9"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::read_write_split(), ReadWriteSplit::IncludePrimary);
 
         // Test TLS verify mode
-        let _guard = set_env_var("PGDOG_TLS_VERIFY", "verify_full");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_10() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_10"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", Some("verify_full")),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::default_tls_verify(), TlsVerifyMode::VerifyFull);
-        let _guard = remove_env_var("PGDOG_TLS_VERIFY");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_11() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_11"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::default_tls_verify(), TlsVerifyMode::Prefer);
 
         // Test prepared statements
-        let _guard = set_env_var("PGDOG_PREPARED_STATEMENTS", "full");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_12() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_12"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", Some("full")),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::prepared_statements(),
             PreparedStatementsLevel::Full
         );
-        let _guard = remove_env_var("PGDOG_PREPARED_STATEMENTS");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_13() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_13"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(
             General::prepared_statements(),
             PreparedStatementsLevel::Extended
         );
 
         // Test auth type
-        let _guard = set_env_var("PGDOG_AUTH_TYPE", "md5");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_14() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_14"),
+            &[
+                ("PGDOG_AUTH_TYPE", Some("md5")),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::auth_type(), AuthType::Md5);
-        let _guard = remove_env_var("PGDOG_AUTH_TYPE");
+    }
+
+    #[test]
+    fn test_env_enum_fields_case_15() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_enum_fields_case_15"),
+            &[
+                ("PGDOG_AUTH_TYPE", None),
+                ("PGDOG_LOAD_BALANCING_STRATEGY", None),
+                ("PGDOG_POOLER_MODE", None),
+                ("PGDOG_PREPARED_STATEMENTS", None),
+                ("PGDOG_READ_WRITE_SPLIT", None),
+                ("PGDOG_READ_WRITE_STRATEGY", None),
+                ("PGDOG_TLS_VERIFY", None),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::auth_type(), AuthType::Scram);
     }
 
     #[test]
-    fn test_env_additional_timeouts() {
-        let _guard = set_env_var("PGDOG_IDLE_HEALTHCHECK_INTERVAL", "45000");
-        let _guard = set_env_var("PGDOG_IDLE_HEALTHCHECK_DELAY", "10000");
-        let _guard = set_env_var("PGDOG_BAN_TIMEOUT", "600000");
-        let _guard = set_env_var("PGDOG_ROLLBACK_TIMEOUT", "10000");
-        let _guard = set_env_var("PGDOG_SHUTDOWN_TIMEOUT", "120000");
-        let _guard = set_env_var("PGDOG_SHUTDOWN_TERMINATION_TIMEOUT", "15000");
-        let _guard = set_env_var("PGDOG_CONNECT_ATTEMPT_DELAY", "1000");
-        let _guard = set_env_var("PGDOG_QUERY_TIMEOUT", "30000");
-        let _guard = set_env_var("PGDOG_CLIENT_IDLE_TIMEOUT", "3600000");
+    fn test_env_additional_timeouts_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_additional_timeouts_case_1"),
+            &[
+                ("PGDOG_BAN_TIMEOUT", Some("600000")),
+                ("PGDOG_CLIENT_IDLE_TIMEOUT", Some("3600000")),
+                ("PGDOG_CONNECT_ATTEMPT_DELAY", Some("1000")),
+                ("PGDOG_IDLE_HEALTHCHECK_DELAY", Some("10000")),
+                ("PGDOG_IDLE_HEALTHCHECK_INTERVAL", Some("45000")),
+                ("PGDOG_QUERY_TIMEOUT", Some("30000")),
+                ("PGDOG_ROLLBACK_TIMEOUT", Some("10000")),
+                ("PGDOG_SHUTDOWN_TERMINATION_TIMEOUT", Some("15000")),
+                ("PGDOG_SHUTDOWN_TIMEOUT", Some("120000")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::idle_healthcheck_interval(), 45000);
         assert_eq!(General::idle_healthcheck_delay(), 10000);
@@ -1949,16 +2328,26 @@ mod tests {
         assert_eq!(General::default_connect_attempt_delay(), 1000);
         assert_eq!(General::default_query_timeout(), 30000);
         assert_eq!(General::default_client_idle_timeout(), 3600000);
+    }
 
-        let _guard = remove_env_var("PGDOG_IDLE_HEALTHCHECK_INTERVAL");
-        let _guard = remove_env_var("PGDOG_IDLE_HEALTHCHECK_DELAY");
-        let _guard = remove_env_var("PGDOG_BAN_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_ROLLBACK_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_SHUTDOWN_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_SHUTDOWN_TERMINATION_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_CONNECT_ATTEMPT_DELAY");
-        let _guard = remove_env_var("PGDOG_QUERY_TIMEOUT");
-        let _guard = remove_env_var("PGDOG_CLIENT_IDLE_TIMEOUT");
+    #[test]
+    fn test_env_additional_timeouts_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_additional_timeouts_case_2"),
+            &[
+                ("PGDOG_BAN_TIMEOUT", None),
+                ("PGDOG_CLIENT_IDLE_TIMEOUT", None),
+                ("PGDOG_CONNECT_ATTEMPT_DELAY", None),
+                ("PGDOG_IDLE_HEALTHCHECK_DELAY", None),
+                ("PGDOG_IDLE_HEALTHCHECK_INTERVAL", None),
+                ("PGDOG_QUERY_TIMEOUT", None),
+                ("PGDOG_ROLLBACK_TIMEOUT", None),
+                ("PGDOG_SHUTDOWN_TERMINATION_TIMEOUT", None),
+                ("PGDOG_SHUTDOWN_TIMEOUT", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::idle_healthcheck_interval(), 30000);
         assert_eq!(General::idle_healthcheck_delay(), 5000);
@@ -1970,12 +2359,22 @@ mod tests {
     }
 
     #[test]
-    fn test_env_path_fields() {
-        let _guard = set_env_var("PGDOG_TLS_CERTIFICATE", "/path/to/cert.pem");
-        let _guard = set_env_var("PGDOG_TLS_PRIVATE_KEY", "/path/to/key.pem");
-        let _guard = set_env_var("PGDOG_TLS_SERVER_CA_CERTIFICATE", "/path/to/ca.pem");
-        let _guard = set_env_var("PGDOG_TLS_CLIENT_CA_CERTIFICATE", "/path/to/client-ca.pem");
-        let _guard = set_env_var("PGDOG_QUERY_LOG", "/var/log/pgdog/queries.log");
+    fn test_env_path_fields_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_path_fields_case_1"),
+            &[
+                ("PGDOG_QUERY_LOG", Some("/var/log/pgdog/queries.log")),
+                ("PGDOG_TLS_CERTIFICATE", Some("/path/to/cert.pem")),
+                (
+                    "PGDOG_TLS_CLIENT_CA_CERTIFICATE",
+                    Some("/path/to/client-ca.pem"),
+                ),
+                ("PGDOG_TLS_PRIVATE_KEY", Some("/path/to/key.pem")),
+                ("PGDOG_TLS_SERVER_CA_CERTIFICATE", Some("/path/to/ca.pem")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(
             General::tls_certificate(),
@@ -1997,12 +2396,22 @@ mod tests {
             General::query_log(),
             Some(PathBuf::from("/var/log/pgdog/queries.log"))
         );
+    }
 
-        let _guard = remove_env_var("PGDOG_TLS_CERTIFICATE");
-        let _guard = remove_env_var("PGDOG_TLS_PRIVATE_KEY");
-        let _guard = remove_env_var("PGDOG_TLS_SERVER_CA_CERTIFICATE");
-        let _guard = remove_env_var("PGDOG_TLS_CLIENT_CA_CERTIFICATE");
-        let _guard = remove_env_var("PGDOG_QUERY_LOG");
+    #[test]
+    fn test_env_path_fields_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_path_fields_case_2"),
+            &[
+                ("PGDOG_QUERY_LOG", None),
+                ("PGDOG_TLS_CERTIFICATE", None),
+                ("PGDOG_TLS_CLIENT_CA_CERTIFICATE", None),
+                ("PGDOG_TLS_PRIVATE_KEY", None),
+                ("PGDOG_TLS_SERVER_CA_CERTIFICATE", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::tls_certificate(), None);
         assert_eq!(General::tls_private_key(), None);
@@ -2012,29 +2421,49 @@ mod tests {
     }
 
     #[test]
-    fn test_query_log_stdout_env() {
-        let _guard = set_env_var("PGDOG_QUERY_LOG_STDOUT", "true");
+    fn test_query_log_stdout_env_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_query_log_stdout_env_case_1"),
+            &[("PGDOG_QUERY_LOG_STDOUT", Some("true"))],
+        ) {
+            return;
+        }
         assert!(General::query_log_stdout());
+    }
 
-        let _guard = remove_env_var("PGDOG_QUERY_LOG_STDOUT");
+    #[test]
+    fn test_query_log_stdout_env_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_query_log_stdout_env_case_2"),
+            &[("PGDOG_QUERY_LOG_STDOUT", None)],
+        ) {
+            return;
+        }
         assert!(!General::query_log_stdout());
     }
 
     #[test]
-    fn test_env_numeric_fields() {
-        let _guard = set_env_var("PGDOG_BROADCAST_PORT", "7432");
-        let _guard = set_env_var("PGDOG_OPENMETRICS_PORT", "9090");
-        let _guard = set_env_var("PGDOG_PREPARED_STATEMENTS_LIMIT", "1000");
-        let _guard = set_env_var("PGDOG_PREPARED_STATEMENTS_TTL", "3600000");
-        let _guard = set_env_var("PGDOG_PREPARED_STATEMENTS_TTL_JITTER", "5000");
-        let _guard = set_env_var("PGDOG_QUERY_CACHE_LIMIT", "500");
-        let _guard = set_env_var("PGDOG_CONNECT_ATTEMPTS", "3");
-        let _guard = set_env_var("PGDOG_MIRROR_QUEUE", "256");
-        let _guard = set_env_var("PGDOG_MIRROR_EXPOSURE", "0.5");
-        let _guard = set_env_var("PGDOG_DNS_TTL", "60000");
-        let _guard = set_env_var("PGDOG_PUB_SUB_CHANNEL_SIZE", "100");
-        let _guard = set_env_var("PGDOG_LOG_MIN_DURATION_PARSE", "5");
-        let _guard = set_env_var("PGDOG_LOG_QUERY_SAMPLE_LENGTH", "200");
+    fn test_env_numeric_fields_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_numeric_fields_case_1"),
+            &[
+                ("PGDOG_BROADCAST_PORT", Some("7432")),
+                ("PGDOG_CONNECT_ATTEMPTS", Some("3")),
+                ("PGDOG_DNS_TTL", Some("60000")),
+                ("PGDOG_LOG_MIN_DURATION_PARSE", Some("5")),
+                ("PGDOG_LOG_QUERY_SAMPLE_LENGTH", Some("200")),
+                ("PGDOG_MIRROR_EXPOSURE", Some("0.5")),
+                ("PGDOG_MIRROR_QUEUE", Some("256")),
+                ("PGDOG_OPENMETRICS_PORT", Some("9090")),
+                ("PGDOG_PREPARED_STATEMENTS_LIMIT", Some("1000")),
+                ("PGDOG_PREPARED_STATEMENTS_TTL", Some("3600000")),
+                ("PGDOG_PREPARED_STATEMENTS_TTL_JITTER", Some("5000")),
+                ("PGDOG_PUB_SUB_CHANNEL_SIZE", Some("100")),
+                ("PGDOG_QUERY_CACHE_LIMIT", Some("500")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::broadcast_port(), 7432);
         assert_eq!(General::openmetrics_port(), Some(9090));
@@ -2049,20 +2478,30 @@ mod tests {
         assert_eq!(General::pub_sub_channel_size(), 100);
         assert_eq!(General::default_log_min_duration_parse(), Some(5));
         assert_eq!(General::log_query_sample_length(), 200);
+    }
 
-        let _guard = remove_env_var("PGDOG_BROADCAST_PORT");
-        let _guard = remove_env_var("PGDOG_OPENMETRICS_PORT");
-        let _guard = remove_env_var("PGDOG_PREPARED_STATEMENTS_LIMIT");
-        let _guard = remove_env_var("PGDOG_PREPARED_STATEMENTS_TTL");
-        let _guard = remove_env_var("PGDOG_PREPARED_STATEMENTS_TTL_JITTER");
-        let _guard = remove_env_var("PGDOG_QUERY_CACHE_LIMIT");
-        let _guard = remove_env_var("PGDOG_CONNECT_ATTEMPTS");
-        let _guard = remove_env_var("PGDOG_MIRROR_QUEUE");
-        let _guard = remove_env_var("PGDOG_MIRROR_EXPOSURE");
-        let _guard = remove_env_var("PGDOG_DNS_TTL");
-        let _guard = remove_env_var("PGDOG_PUB_SUB_CHANNEL_SIZE");
-        let _guard = remove_env_var("PGDOG_LOG_MIN_DURATION_PARSE");
-        let _guard = remove_env_var("PGDOG_LOG_QUERY_SAMPLE_LENGTH");
+    #[test]
+    fn test_env_numeric_fields_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_numeric_fields_case_2"),
+            &[
+                ("PGDOG_BROADCAST_PORT", None),
+                ("PGDOG_CONNECT_ATTEMPTS", None),
+                ("PGDOG_DNS_TTL", None),
+                ("PGDOG_LOG_MIN_DURATION_PARSE", None),
+                ("PGDOG_LOG_QUERY_SAMPLE_LENGTH", None),
+                ("PGDOG_MIRROR_EXPOSURE", None),
+                ("PGDOG_MIRROR_QUEUE", None),
+                ("PGDOG_OPENMETRICS_PORT", None),
+                ("PGDOG_PREPARED_STATEMENTS_LIMIT", None),
+                ("PGDOG_PREPARED_STATEMENTS_TTL", None),
+                ("PGDOG_PREPARED_STATEMENTS_TTL_JITTER", None),
+                ("PGDOG_PUB_SUB_CHANNEL_SIZE", None),
+                ("PGDOG_QUERY_CACHE_LIMIT", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::broadcast_port(), General::port() + 1);
         assert_eq!(General::openmetrics_port(), None);
@@ -2080,21 +2519,38 @@ mod tests {
     }
 
     #[test]
-    fn test_env_boolean_fields() {
-        let _guard = set_env_var("PGDOG_DRY_RUN", "true");
-        let _guard = set_env_var("PGDOG_CROSS_SHARD_DISABLED", "yes");
-        let _guard = set_env_var("PGDOG_LOG_CONNECTIONS", "false");
-        let _guard = set_env_var("PGDOG_LOG_DISCONNECTIONS", "0");
+    fn test_env_boolean_fields_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_boolean_fields_case_1"),
+            &[
+                ("PGDOG_CROSS_SHARD_DISABLED", Some("yes")),
+                ("PGDOG_DRY_RUN", Some("true")),
+                ("PGDOG_LOG_CONNECTIONS", Some("false")),
+                ("PGDOG_LOG_DISCONNECTIONS", Some("0")),
+            ],
+        ) {
+            return;
+        }
 
         assert!(General::dry_run());
         assert!(General::cross_shard_disabled());
         assert!(!General::log_connections());
         assert!(!General::log_disconnections());
+    }
 
-        let _guard = remove_env_var("PGDOG_DRY_RUN");
-        let _guard = remove_env_var("PGDOG_CROSS_SHARD_DISABLED");
-        let _guard = remove_env_var("PGDOG_LOG_CONNECTIONS");
-        let _guard = remove_env_var("PGDOG_LOG_DISCONNECTIONS");
+    #[test]
+    fn test_env_boolean_fields_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_boolean_fields_case_2"),
+            &[
+                ("PGDOG_CROSS_SHARD_DISABLED", None),
+                ("PGDOG_DRY_RUN", None),
+                ("PGDOG_LOG_CONNECTIONS", None),
+                ("PGDOG_LOG_DISCONNECTIONS", None),
+            ],
+        ) {
+            return;
+        }
 
         assert!(!General::dry_run());
         assert!(!General::cross_shard_disabled());
@@ -2103,27 +2559,59 @@ mod tests {
     }
 
     #[test]
-    fn test_env_log_settings() {
-        let _guard = set_env_var("PGDOG_LOG_FORMAT", "json");
-        let _guard = set_env_var("RUST_LOG", "pgdog=debug,info");
+    fn test_env_log_settings_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_log_settings_case_1"),
+            &[
+                ("PGDOG_LOG_FORMAT", Some("json")),
+                ("RUST_LOG", Some("pgdog=debug,info")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::log_format(), LogFormat::Json);
         assert_eq!(General::log_level(), "pgdog=debug,info");
+    }
 
-        let _guard = set_env_var("PGDOG_LOG_FORMAT", "json_flattened");
+    #[test]
+    fn test_env_log_settings_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_log_settings_case_2"),
+            &[
+                ("PGDOG_LOG_FORMAT", Some("json_flattened")),
+                ("RUST_LOG", Some("pgdog=debug,info")),
+            ],
+        ) {
+            return;
+        }
         assert_eq!(General::log_format(), LogFormat::JsonFlattened);
+    }
 
-        let _guard = remove_env_var("PGDOG_LOG_FORMAT");
-        let _guard = remove_env_var("RUST_LOG");
+    #[test]
+    fn test_env_log_settings_case_3() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_log_settings_case_3"),
+            &[("PGDOG_LOG_FORMAT", None), ("RUST_LOG", None)],
+        ) {
+            return;
+        }
 
         assert_eq!(General::log_format(), LogFormat::Text);
         assert_eq!(General::log_level(), "info");
     }
 
     #[test]
-    fn test_env_other_fields() {
-        let _guard = set_env_var("PGDOG_BROADCAST_ADDRESS", "192.168.1.100");
-        let _guard = set_env_var("PGDOG_OPENMETRICS_NAMESPACE", "pgdog_metrics");
+    fn test_env_other_fields_case_1() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_other_fields_case_1"),
+            &[
+                ("PGDOG_BROADCAST_ADDRESS", Some("192.168.1.100")),
+                ("PGDOG_OPENMETRICS_NAMESPACE", Some("pgdog_metrics")),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(
             General::broadcast_address(),
@@ -2133,9 +2621,19 @@ mod tests {
             General::openmetrics_namespace(),
             Some("pgdog_metrics".to_string())
         );
+    }
 
-        let _guard = remove_env_var("PGDOG_BROADCAST_ADDRESS");
-        let _guard = remove_env_var("PGDOG_OPENMETRICS_NAMESPACE");
+    #[test]
+    fn test_env_other_fields_case_2() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_other_fields_case_2"),
+            &[
+                ("PGDOG_BROADCAST_ADDRESS", None),
+                ("PGDOG_OPENMETRICS_NAMESPACE", None),
+            ],
+        ) {
+            return;
+        }
 
         assert_eq!(General::broadcast_address(), None);
         assert_eq!(General::openmetrics_namespace(), None);
@@ -2143,9 +2641,16 @@ mod tests {
 
     #[test]
     fn test_env_invalid_enum_values() {
-        let _guard = set_env_var("PGDOG_POOLER_MODE", "invalid_mode");
-        let _guard = set_env_var("PGDOG_AUTH_TYPE", "not_an_auth");
-        let _guard = set_env_var("PGDOG_TLS_VERIFY", "bad_verify");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_env_invalid_enum_values"),
+            &[
+                ("PGDOG_AUTH_TYPE", Some("not_an_auth")),
+                ("PGDOG_POOLER_MODE", Some("invalid_mode")),
+                ("PGDOG_TLS_VERIFY", Some("bad_verify")),
+            ],
+        ) {
+            return;
+        }
 
         // Should fall back to defaults for invalid values
         assert_eq!(General::pooler_mode(), PoolerMode::Transaction);
@@ -2155,11 +2660,17 @@ mod tests {
 
     #[test]
     fn test_general_default_uses_env_vars() {
-        // Set some environment variables
-        let _guard = set_env_var("PGDOG_WORKERS", "8");
-        let _guard = set_env_var("PGDOG_POOLER_MODE", "session");
-        let _guard = set_env_var("PGDOG_AUTH_TYPE", "trust");
-        let _guard = set_env_var("PGDOG_DRY_RUN", "true");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_general_default_uses_env_vars"),
+            &[
+                ("PGDOG_AUTH_TYPE", Some("trust")),
+                ("PGDOG_DRY_RUN", Some("true")),
+                ("PGDOG_POOLER_MODE", Some("session")),
+                ("PGDOG_WORKERS", Some("8")),
+            ],
+        ) {
+            return;
+        }
 
         let general = General::default();
 

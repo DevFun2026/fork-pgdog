@@ -78,6 +78,21 @@ class AntigravityTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 self.assertEqual(adapter.parse(json.dumps(payload)).status, "incomplete")
 
+    def test_agy_repeated_terminal_objects_must_all_agree(self):
+        result = {"verdict": "pass", "findings": []}
+        final = {**result, "toolAction": "Finishing the review", "toolSummary": "Review completion"}
+        payload = {"status": "SUCCESS", "structured_output": result,
+                   "response": "\n".join(map(json.dumps, (result, result, final)))}
+        self.assertEqual(GeminiAdapter().parse(json.dumps(payload)).verdict, "pass")
+        for response in ("", json.dumps(result) + " prose",
+                         json.dumps(result) + json.dumps({"verdict": "fail", "findings": []}),
+                         json.dumps({**result, "unknown": "data"}),
+                         json.dumps({**result, "toolAction": {"execute": "command"}}),
+                         "[]", json.dumps(result) + " null"):
+            with self.subTest(response=response):
+                payload["response"] = response
+                self.assertEqual(GeminiAdapter().parse(json.dumps(payload)).status, "incomplete")
+
     def test_linux_agy_settings_are_exact_disposable_mount_not_host_profile(self):
         sandbox = _sandboxed_command(("/bin/echo",), self.root, self.root, "gemini")
         with mock.patch("platform.system", return_value="Linux"), mock.patch("shutil.which", return_value="/usr/bin/bwrap"):

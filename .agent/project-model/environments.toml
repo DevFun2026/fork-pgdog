@@ -1,12 +1,12 @@
 [[environments]]
 id = "github-actions"
 name = "GitHub Actions"
-description = "Linux merge gate plus macOS and Linux runtime tests; provider secrets are restricted to protected jobs."
+description = "Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required."
 
 [[environments]]
 id = "gitlab-ci"
 name = "GitLab CI"
-description = "Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence."
+description = "Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence."
 
 [[environments]]
 id = "local"

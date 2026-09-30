@@ -1,30 +1,54 @@
 # Fork version of Bencher (Step 2 of 2)
-# 
+#
 # We built the image in bencher_fork_run.yml on the fork PR.
 # Now, we can use it (ON THE MAIN BRANCH, where it's okay to use secrets),
 # and basically do what we do in the main Bencher workflow, with a pre-built image this time.
-  
+
 name: bencher-fork-track
 on:
-  workflow_run:
-    workflows: [bencher-fork-run]
-    types: [completed]
-
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful bencher-fork-run workflow run ID
+        required: true
+        type: string
+      head_sha:
+        description: Commit SHA built by that run
+        required: true
+        type: string
 env:
-  IMAGE: registry.bencher.dev/pgdog:${{ github.event.workflow_run.head_sha }}
+  IMAGE: registry.bencher.dev/pgdog:${{ inputs.head_sha }}
 
 jobs:
   image:
     # Download image from previous workflow (2-step). Push image to bencher.
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name != github.repository
+    if: github.repository == 'pgdogdev/pgdog'
     permissions:
       actions: read
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
+      - name: Validate selected benchmark run
+        uses: actions/github-script@v7
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        with:
+          script: |
+            if (!/^[0-9]+$/.test(process.env.RUN_ID) || !/^[a-f0-9]{40}$/.test(process.env.HEAD_SHA)) {
+              throw new Error('Invalid run ID or commit SHA');
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: Number(process.env.RUN_ID)
+            });
+            if (run.conclusion !== 'success' || run.head_sha !== process.env.HEAD_SHA ||
+                run.path !== '.github/workflows/bencher_fork_run.yml' || run.event !== 'pull_request' ||
+                run.head_repository.full_name === `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error('Expected a successful fork pull-request benchmark run at the selected SHA');
+            }
       - uses: actions/download-artifact@v4
         with:
           name: image
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Push image
         run: |
@@ -32,7 +56,7 @@ jobs:
           docker tag pgdog-bench $IMAGE
           echo '${{ secrets.BENCHER_API_KEY }}' | docker login registry.bencher.dev -u pgdog --password-stdin
           docker push $IMAGE
- 
+
   bench:
     needs: image
     permissions:
@@ -46,7 +70,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: event.json
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Since we're running this on main branch, we have to download the artifact
@@ -71,8 +95,7 @@ jobs:
         #
         # Why --github-actions? This allows it to comment on the PR with the result.
         # Why --adapter json? This allows us to use a 'custom harness'; basically nothing like rust's cargo test / criterion, we're running custom scripts
-        # Why --detach & --ci-callback-token? This allows us to exit early, and defer posting a comment until repository_dispatch is fired on
-        # a separate workflow (bencher_followup.yml)
+        # Results are collected manually with bencher_followup.yml after the detached run.
         run: |
           bencher run \
             --project pgdog \

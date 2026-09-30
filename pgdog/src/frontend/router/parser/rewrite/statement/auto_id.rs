@@ -242,7 +242,6 @@ mod tests {
     use crate::config::PreparedStatementsLevel;
     use crate::frontend::PreparedStatements;
     use crate::frontend::router::parser::StatementRewriteContext;
-    use crate::test_utils::set_env_var;
 
     pub(super) fn make_schema_with_bigint_pk() -> Schema {
         let mut columns = IndexMap::new();
@@ -343,6 +342,13 @@ mod tests {
 
     #[test]
     fn test_rewrite_mode_injects_auto_id() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_rewrite_mode_injects_auto_id"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (name) VALUES ('test')",
@@ -360,6 +366,13 @@ mod tests {
 
     #[test]
     fn test_error_mode_returns_error() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_error_mode_returns_error"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let result = rewrite_sql_with_mode(
             "INSERT INTO users (name) VALUES ('test')",
@@ -378,6 +391,13 @@ mod tests {
 
     #[test]
     fn test_ignore_mode_does_nothing() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_ignore_mode_does_nothing"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (name) VALUES ('test')",
@@ -392,6 +412,13 @@ mod tests {
 
     #[test]
     fn test_no_inject_when_pk_present() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_no_inject_when_pk_present"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (id, name) VALUES (1, 'test')",
@@ -406,6 +433,13 @@ mod tests {
 
     #[test]
     fn test_no_inject_for_non_bigint_pk() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_no_inject_for_non_bigint_pk"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_non_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (name) VALUES ('test')",
@@ -420,6 +454,13 @@ mod tests {
 
     #[test]
     fn test_no_inject_for_unknown_table() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_no_inject_for_unknown_table"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = Schema::default();
         let (_, plan) = rewrite_sql_with_mode(
             "INSERT INTO unknown (name) VALUES ('test')",
@@ -433,6 +474,13 @@ mod tests {
 
     #[test]
     fn test_inject_with_multi_row_insert() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_inject_with_multi_row_insert"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (name) VALUES ('a'), ('b')",
@@ -448,6 +496,13 @@ mod tests {
 
     #[test]
     fn test_error_mode_ok_when_pk_present() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_error_mode_ok_when_pk_present"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let result = rewrite_sql_with_mode(
             "INSERT INTO users (id, name) VALUES (1, 'test')",
@@ -460,6 +515,13 @@ mod tests {
 
     #[test]
     fn test_replace_default_with_unique_id() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_replace_default_with_unique_id"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (id, name) VALUES (DEFAULT, 'test')",
@@ -476,6 +538,13 @@ mod tests {
 
     #[test]
     fn test_replace_default_multi_row() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_replace_default_multi_row"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, plan) = rewrite_sql_with_mode(
             "INSERT INTO users (id, name) VALUES (DEFAULT, 'a'), (DEFAULT, 'b')",
@@ -491,6 +560,13 @@ mod tests {
 
     #[test]
     fn test_error_mode_preserves_default() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_error_mode_preserves_default"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let (sql, _plan) = rewrite_sql_with_mode(
             "INSERT INTO users (id, name) VALUES (DEFAULT, 'test')",
@@ -539,7 +615,6 @@ mod tests {
         schema: &ShardingSchema,
         prepared: &mut PreparedStatements,
     ) -> Result<(String, RewritePlan), Error> {
-        let _guard = set_env_var("NODE_ID", "pgdog-1");
         let ast = pg_raw_parse::parse(sql).unwrap();
         let mut rewriter = StatementRewrite::new(StatementRewriteContext {
             extended: false,
@@ -564,6 +639,16 @@ mod tests {
 
     #[test]
     fn test_prepare_execute_rewrite_injects_auto_id() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_prepare_execute_rewrite_injects_auto_id"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let schema = sharding_schema_with_mode(RewriteMode::Rewrite);
         let mut prepared = PreparedStatements::default();
@@ -610,6 +695,13 @@ mod tests {
 
     #[test]
     fn test_rewrite_omni_skips_sharded_table() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_rewrite_omni_skips_sharded_table"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let schema = sharding_schema_with_sharded_users(RewriteMode::RewriteOmni);
         let (sql, plan) = rewrite_sql_with_sharding_schema(
@@ -626,6 +718,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_omni_injects_for_non_sharded_table() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_rewrite_omni_injects_for_non_sharded_table"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         // No sharded tables configured, so "users" is not sharded
         let schema = ShardingSchema {
@@ -650,6 +752,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_omni_global_uses_column_sequence() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_rewrite_omni_global_uses_column_sequence"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let schema = ShardingSchema {
             shards: 3,
@@ -703,6 +815,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_omni_global_skips_sharded_table() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(
+                module_path!(),
+                "::test_rewrite_omni_global_skips_sharded_table"
+            ),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let db_schema = make_schema_with_bigint_pk();
         let schema = sharding_schema_with_sharded_users(RewriteMode::RewriteOmniGlobal);
         for original in [

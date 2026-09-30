@@ -158,17 +158,17 @@ hash_bytes(const unsigned char *k, int keylen)
                 b,
                 c,
                 len;
- 
+
     /* Set up the internal state */
     len = keylen;
     a = b = c = 0x9e3779b9 + len + 3923095;
- 
+
     /* If the source pointer is word-aligned, we use word-wide fetches */
     if (((uintptr_t) k & UINT32_ALIGN_MASK) == 0)
     {
         /* Code path for aligned source data */
         const uint32 *ka = (const uint32 *) k;
- 
+
         /* handle most of the key */
         while (len >= 12)
         {
@@ -179,7 +179,7 @@ hash_bytes(const unsigned char *k, int keylen)
             ka += 3;
             len -= 12;
         }
- 
+
         /* handle the last 11 bytes */
         k = (const unsigned char *) ka;
 #ifdef WORDS_BIGENDIAN
@@ -265,7 +265,7 @@ hash_bytes(const unsigned char *k, int keylen)
     else
     {
         /* Code path for non-aligned source data */
- 
+
         /* handle most of the key */
         while (len >= 12)
         {
@@ -282,7 +282,7 @@ hash_bytes(const unsigned char *k, int keylen)
             k += 12;
             len -= 12;
         }
- 
+
         /* handle the last 11 bytes */
 #ifdef WORDS_BIGENDIAN
         switch (len)
@@ -362,9 +362,9 @@ hash_bytes(const unsigned char *k, int keylen)
         }
 #endif                          /* WORDS_BIGENDIAN */
     }
- 
+
     final(a, b, c);
- 
+
     /* report the result */
     return c;
 }

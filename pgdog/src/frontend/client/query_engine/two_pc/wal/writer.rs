@@ -42,6 +42,16 @@ pub(crate) struct WalWriter {
 }
 
 impl WalWriter {
+    #[cfg(test)]
+    pub(crate) async fn rotate_for_test(&self) -> Result<(), Error> {
+        // Use the background writer's lock and sequence to avoid racing a
+        // capacity-triggered rotation while closing the fixture's final segment.
+        let mut next_segment_id = self.next_segment_id.lock().await;
+        let segment_id = *next_segment_id;
+        *next_segment_id += 1;
+        self.swap(segment_id).await
+    }
+
     /// Write a record to the WAL and wait for it to be flushed
     /// to disk.
     ///

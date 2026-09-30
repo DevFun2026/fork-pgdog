@@ -7,7 +7,6 @@ use crate::frontend::router::parser::route::{Route, Shard, ShardWithPriority};
 
 use super::prelude::*;
 use super::{test_client, test_sharded_client};
-use crate::test_utils::*;
 
 async fn run_test(messages: Vec<ProtocolMessage>) -> Option<OffsetPlan> {
     let mut client = test_sharded_client();
@@ -126,7 +125,13 @@ async fn test_offset_limit_no_select() {
 
 #[tokio::test]
 async fn test_offset_with_unique_id_simple() {
-    let _guard = set_env_var("NODE_ID", "pgdog-1");
+    if !crate::test_utils::run_in_test_process(
+        concat!(module_path!(), "::test_offset_with_unique_id_simple"),
+        &[("NODE_ID", Some("pgdog-1"))],
+    ) {
+        return;
+    }
+
     let sql = "SELECT pgdog.unique_id() FROM test LIMIT 10 OFFSET 5";
     let mut client = test_sharded_client();
     client.client_request = ClientRequest::from(vec![ProtocolMessage::Query(Query::new(sql))]);
@@ -193,7 +198,13 @@ async fn test_offset_with_unique_id_simple() {
 
 #[tokio::test]
 async fn test_offset_with_unique_id_extended() {
-    let _guard = set_env_var("NODE_ID", "pgdog-1");
+    if !crate::test_utils::run_in_test_process(
+        concat!(module_path!(), "::test_offset_with_unique_id_extended"),
+        &[("NODE_ID", Some("pgdog-1"))],
+    ) {
+        return;
+    }
+
     let sql = "SELECT pgdog.unique_id(), $1 FROM test LIMIT $2 OFFSET $3";
     let mut client = test_sharded_client();
     client.client_request = ClientRequest::from(vec![

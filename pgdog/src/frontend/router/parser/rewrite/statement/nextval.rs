@@ -423,7 +423,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_nextval_bind_values_and_formats() {
-        let _guard = crate::test_utils::set_env_var("NODE_ID", "pgdog-1");
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::test_nextval_bind_values_and_formats"),
+            &[("NODE_ID", Some("pgdog-1"))],
+        ) {
+            return;
+        }
+
         let (_, plan) = rewrite(
             "SELECT $1, $2, pgdog.nextval('a'), pgdog.unique_id(), \
              pgdog.nextval('b'), pgdog.unique_id(), pgdog.nextval('a')",

@@ -37,6 +37,8 @@ impl Query {
     pub(crate) fn query(&self) -> &str {
         // SAFETY:  We check for valid UTF-8 on creation.
         //          Don't read the trailing null byte.
+        // SAFETY: FromBytes validates the query slice as UTF-8; constructors and mutations accept Rust strings.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         unsafe { from_utf8_unchecked(&self.payload[5..self.payload.len() - 1]) }
     }
 

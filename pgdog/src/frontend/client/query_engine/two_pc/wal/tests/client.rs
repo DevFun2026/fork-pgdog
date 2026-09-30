@@ -20,6 +20,10 @@ pub(super) struct TwoPcTestClient {
 }
 
 impl TwoPcTestClient {
+    pub(super) async fn rotate_wal(&self) {
+        self.manager.rotate_wal_for_test().await;
+    }
+
     // This is the execution flow in our query engine.
     //
     // It can be interrupted at any point and, if the WAL works correctly,

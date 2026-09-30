@@ -322,7 +322,6 @@ mod test {
     use crate::stats::pools::PoolMetric;
 
     use super::*;
-    use crate::test_utils::*;
 
     #[test]
     fn gauge_metric_produces_gauge_json() {
@@ -490,11 +489,19 @@ mod test {
 
     #[test]
     fn service_name_and_scope() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::service_name_and_scope"),
+            &[
+                ("OTEL_SERVICE_NAME", None),
+                ("OTEL_RESOURCE_ATTRIBUTES", None),
+            ],
+        ) {
+            return;
+        }
+
         let _test_lock = TEST_LOCK.lock();
 
         // Ensure no env overrides leak from other tests.
-        let _guard = remove_env_var("OTEL_SERVICE_NAME");
-        let _guard = remove_env_var("OTEL_RESOURCE_ATTRIBUTES");
 
         let metric = Metric::new(PoolMetric {
             name: "test".into(),
@@ -526,39 +533,63 @@ mod test {
     }
 
     #[test]
-    fn otel_env_var_overrides() {
-        let _test_lock = TEST_LOCK.lock();
-
-        // Clean slate.
-        let _guard = remove_env_var("OTEL_SERVICE_NAME");
-        let _guard = remove_env_var("OTEL_RESOURCE_ATTRIBUTES");
-
-        // 1. OTEL_SERVICE_NAME overrides service.name.
-        {
-            let _guard = set_env_var("OTEL_SERVICE_NAME", "my-pgdog");
-            let attrs = resource_attributes();
-            let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
-            assert_eq!(svc.value.string_value, "my-pgdog");
+    fn otel_service_name_override() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::otel_service_name_override"),
+            &[
+                ("OTEL_SERVICE_NAME", Some("my-pgdog")),
+                ("OTEL_RESOURCE_ATTRIBUTES", None),
+            ],
+        ) {
+            return;
         }
+        let attrs = resource_attributes();
+        let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
+        assert_eq!(svc.value.string_value, "my-pgdog");
+    }
 
-        // 2. OTEL_RESOURCE_ATTRIBUTES adds and overrides.
-        {
-            let _guard = set_env_var("OTEL_RESOURCE_ATTRIBUTES", "env=prod,service.name=custom");
-            let attrs = resource_attributes();
-            let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
-            assert_eq!(svc.value.string_value, "custom");
-            let env_attr = attrs.iter().find(|a| a.key == "env").unwrap();
-            assert_eq!(env_attr.value.string_value, "prod");
+    #[test]
+    fn otel_resource_attributes_override() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::otel_resource_attributes_override"),
+            &[
+                ("OTEL_SERVICE_NAME", None),
+                (
+                    "OTEL_RESOURCE_ATTRIBUTES",
+                    Some("env=prod,service.name=custom"),
+                ),
+            ],
+        ) {
+            return;
         }
+        let attrs = resource_attributes();
+        let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
+        assert_eq!(svc.value.string_value, "custom");
+        assert_eq!(
+            attrs
+                .iter()
+                .find(|a| a.key == "env")
+                .unwrap()
+                .value
+                .string_value,
+            "prod"
+        );
+    }
 
-        // 3. OTEL_SERVICE_NAME takes precedence over OTEL_RESOURCE_ATTRIBUTES.
-        {
-            let _guard = set_env_var("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-attrs");
-            let _guard = set_env_var("OTEL_SERVICE_NAME", "from-svc-name");
-            let attrs = resource_attributes();
-            let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
-            assert_eq!(svc.value.string_value, "from-svc-name");
+    #[test]
+    fn otel_service_name_precedence() {
+        if !crate::test_utils::run_in_test_process(
+            concat!(module_path!(), "::otel_service_name_precedence"),
+            &[
+                ("OTEL_SERVICE_NAME", Some("from-svc-name")),
+                ("OTEL_RESOURCE_ATTRIBUTES", Some("service.name=from-attrs")),
+            ],
+        ) {
+            return;
         }
+        let attrs = resource_attributes();
+        let svc = attrs.iter().find(|a| a.key == "service.name").unwrap();
+        assert_eq!(svc.value.string_value, "from-svc-name");
     }
 
     #[test]

@@ -25,3 +25,31 @@ source = "review-engine"
 target = "provider-adapters"
 data_categories = ["project-source", "review-package"]
 trust_boundary = "local-to-provider-process"
+
+[[data_flows]]
+id = "client-query"
+source = "sql-client"
+target = "pgdog-proxy"
+data_categories = ["sql-query", "database-credentials"]
+trust_boundary = "client-to-proxy"
+
+[[data_flows]]
+id = "backend-query"
+source = "pgdog-proxy"
+target = "postgresql"
+data_categories = ["sql-query", "database-credentials"]
+trust_boundary = "proxy-to-database"
+
+[[data_flows]]
+id = "backend-results"
+source = "postgresql"
+target = "pgdog-proxy"
+data_categories = ["query-results"]
+trust_boundary = "database-to-proxy"
+
+[[data_flows]]
+id = "client-results"
+source = "pgdog-proxy"
+target = "sql-client"
+data_categories = ["query-results"]
+trust_boundary = "proxy-to-client"
