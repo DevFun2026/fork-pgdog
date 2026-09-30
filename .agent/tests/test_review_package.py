@@ -163,6 +163,128 @@ class ReviewPackageTests(unittest.TestCase):
         package = build_package(self.request(base="HEAD~2"))
         self.assertIn(paths[1].encode(), package.diff_bytes)
 
+    def move_fixture(self, name="src/demo.txt", *, content_change=False, mode_change=False, symlink=False):
+        self.write(name, "original fixture\n" * 50)
+        if symlink:
+            (self.root / name).unlink()
+            (self.root / name).symlink_to("README.md")
+        self.git("add", ".")
+        self.git("commit", "-m", "fixture")
+        destination = "applications/pgdog/" + name
+        (self.root / destination).parent.mkdir(parents=True, exist_ok=True)
+        self.git("mv", name, destination)
+        if content_change:
+            self.write(destination, "modified fixture\n" * 50)
+        self.git("add", ".")
+        if mode_change:
+            self.git("update-index", "--chmod=+x", destination)
+        self.git("commit", "-m", "move")
+        return destination
+
+    def test_verified_rename_is_bound_and_compacted(self):
+        destination = self.move_fixture()
+        package = build_package(self.request())
+        self.assertEqual(package.diff_bytes, b"")
+        proof = package.manifest.verified_renames
+        self.assertEqual(proof["count"], 1)
+        self.assertEqual(proof["groups"], [{"from": "", "to": "applications/pgdog/", "paths": ["src/demo.txt"]}])
+        self.assertEqual(package.manifest.scope, (destination,))
+        self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
+
+    def test_sensitive_rename_only_sends_metadata_and_explicit_context_stays_denied(self):
+        destination = self.move_fixture("fixtures/server.pem")
+        package = build_package(self.request())
+        self.assertEqual(package.diff_bytes, b"")
+        self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
+        with self.assertRaisesRegex(ReviewPackageBlocked, "denied"):
+            build_package(self.request(context_paths=(destination,)))
+
+    def test_changed_sensitive_rename_is_denied(self):
+        for change in ("content_change", "mode_change"):
+            with self.subTest(change=change):
+                self.move_fixture("fixtures/" + change + ".pem", **{change: True})
+                with self.assertRaisesRegex(ReviewPackageBlocked, "denied"):
+                    build_package(self.request())
+
+    def test_changed_regular_rename_and_symlink_remain_visible(self):
+        for change in ("content_change", "mode_change", "symlink"):
+            with self.subTest(change=change):
+                destination = self.move_fixture("src/" + change, **{change: True})
+                package = build_package(self.request())
+                self.assertIn(destination.encode(), package.diff_bytes)
+                self.assertIsNone(package.manifest.verified_renames)
+
+    def test_forged_rename_proof_and_legacy_downgrade_are_rejected(self):
+        self.move_fixture()
+        package = build_package(self.request())
+        manifest_path = package.path / "manifest.json"
+        original = json.loads(manifest_path.read_text())
+        for field, value in (("count", 0), ("entries_sha256", "0" * 64), ("groups", [])):
+            payload = json.loads(json.dumps(original))
+            payload["verified_renames"][field] = value
+            manifest_path.write_text(json.dumps(payload))
+            with self.assertRaises(ReviewPackageBlocked):
+                load_package(package.path, root=self.root)
+        for field in ("full_diff_sha256", "omitted_generated", "estimated_tokens"):
+            original.pop(field)
+        manifest_path.write_text(json.dumps(original))
+        with self.assertRaisesRegex(ReviewPackageBlocked, "manifest"):
+            load_package(package.path, root=self.root)
+
+    def test_sensitive_source_cannot_be_laundered_by_new_filename(self):
+        self.move_fixture("fixtures/secret.pem")
+        self.git("mv", "applications/pgdog/fixtures/secret.pem", "ordinary.txt")
+        self.write("ordinary.txt", "different content\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "rename and modify")
+        with self.assertRaisesRegex(ReviewPackageBlocked, "denied"):
+            build_package(self.request())
+
+    def test_rename_paths_are_literal_and_arbitrary_basename_is_preserved(self):
+        destination = self.move_fixture('src/a space "quote".txt')
+        package = build_package(self.request())
+        self.assertEqual(package.manifest.verified_renames["groups"][0]["paths"], ['src/a space "quote".txt'])
+        self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
+        self.git("mv", destination, "new-name.txt")
+        self.git("commit", "-m", "rename basename")
+        package = build_package(self.request())
+        self.assertEqual(package.manifest.verified_renames["groups"],
+                         [{"from": destination, "to": "new-name.txt", "paths": [""]}])
+
+    def test_unsafe_directory_and_control_character_moves_stay_blocked(self):
+        for name in (".memory/fixture.txt", "src/new\nline.txt"):
+            with self.subTest(name=name):
+                self.move_fixture(name)
+                with self.assertRaises(ReviewPackageBlocked):
+                    build_package(self.request())
+
+    def test_legacy_uncompacted_rename_package_still_loads(self):
+        self.move_fixture()
+        from agent_cli.review.package import project_diff
+        def old_projection(root, base, head, **kwargs):
+            return project_diff(root, base, head, compact_renames=False)
+        with mock.patch("agent_cli.review.package.project_diff", side_effect=old_projection):
+            package = build_package(self.request())
+        self.assertIsNone(package.manifest.verified_renames)
+        self.assertIn(b"rename from src/demo.txt", package.diff_bytes)
+        self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
+
+    def test_large_move_table_preserves_every_path_in_directory_tree(self):
+        for index in range(12):
+            self.write(f"src/nested/{index}.txt", f"unique fixture {index}\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "large fixture")
+        (self.root / "applications").mkdir()
+        self.git("mv", "src", "applications/src")
+        self.git("commit", "-m", "large move")
+        package = build_package(self.request())
+        self.assertEqual(package.diff_bytes, b"")
+        proof = package.manifest.verified_renames
+        self.assertEqual(proof["count"], 12)
+        self.assertEqual(proof["groups"], [{"from": "", "to": "applications/",
+                         "tree": {"src": {"nested": {f"{i}.txt": None for i in range(12)}}}}])
+        self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
+
     def test_token_budget_blocks_without_truncating_review(self):
         with self.assertRaisesRegex(ReviewPackageBlocked, "estimated.token"):
             build_package(self.request(max_estimated_tokens=1))

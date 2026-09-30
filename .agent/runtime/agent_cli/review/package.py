@@ -55,7 +55,8 @@ def package_usage(package: ReviewPackage) -> dict[str, object]:
             + sum(item.size for item in package.manifest.files)
             + len(REVIEW_INSTRUCTIONS.encode("utf-8")))
     return {"bytes": size, "estimated_tokens": (size + 2) // 3,
-            "estimator": ESTIMATOR, "omitted_generated_files": len(package.manifest.omitted_generated)}
+            "estimator": ESTIMATOR, "omitted_generated_files": len(package.manifest.omitted_generated),
+            "verified_rename_files": (package.manifest.verified_renames or {}).get("count", 0)}
 
 
 def _run_git(root: Path, arguments: tuple[str, ...], *, binary: bool = False):
@@ -78,10 +79,91 @@ def _resolve_ref(root: Path, ref: str) -> str:
     return value.strip()
 
 
-def project_diff(root: Path, base: str, head: str) -> tuple[bytes, bytes, tuple[tuple[str, str], ...]]:
-    """Omit only proven duplicate skill changes. Never trust branch manifests."""
+def _git_paths(root: Path, base: str, head: str, *, all_sides: bool = False) -> tuple[str, ...]:
+    flags = ("--no-renames",) if all_sides else ()
+    raw = _run_git(root, ("diff", "--name-only", "-z", *flags, base, head), binary=True)
+    return tuple(item.decode("utf-8", errors="strict") for item in raw.split(b"\0") if item)
+
+
+def _verified_rename_projection(root: Path, base: str, head: str):
+    """Derive proof from Git trees, never from user-supplied manifest claims."""
+    trees = []
+    for rev in (base, head):
+        tree = {}
+        for record in _run_git(root, ("ls-tree", "-r", "-z", rev), binary=True).split(b"\0"):
+            if record:
+                metadata, path = record.split(b"\t", 1)
+                mode, kind, blob = metadata.decode("ascii").split()
+                tree[path.decode("utf-8", errors="strict")] = (mode, kind, blob)
+        trees.append(tree)
+    before, after = trees
+    raw = _run_git(root, ("diff", "--raw", "-z", "--no-abbrev", "--find-renames=100%",
+                          "--no-ext-diff", "--no-textconv", base, head), binary=True)
+    records = iter(raw.split(b"\0"))
+    entries = []
+    for metadata in records:
+        if not metadata:
+            continue
+        status = metadata.decode("ascii").split()[-1]
+        source = next(records).decode("utf-8", errors="strict")
+        destination = next(records).decode("utf-8", errors="strict") if status[0] in "RC" else source
+        old, new = before.get(source), after.get(destination)
+        if (status == "R100" and source not in after and destination not in before
+                and old == new and old is not None and old[0] in {"100644", "100755"}
+                and old[1] == "blob"):
+            _safe_relative(source, metadata_only=True)
+            _safe_relative(destination, metadata_only=True)
+            entries.append([source, destination, old[0], old[2]])
+    if not entries:
+        return None, set()
+    entries.sort()
+    groups: dict[tuple[str, str], list[str]] = {}
+    for source, destination, _, _ in entries:
+        old_parts, new_parts = source.split("/"), destination.split("/")
+        common = []
+        while old_parts and new_parts and old_parts[-1] == new_parts[-1]:
+            common.insert(0, old_parts.pop())
+            new_parts.pop()
+        # Arbitrary basename renames use a separate exact mapping group.
+        if not common:
+            old_parts, new_parts, common = [source], [destination], [""]
+        old_prefix, new_prefix = "/".join(old_parts), "/".join(new_parts)
+        if common != [""]:
+            old_prefix += "/" if old_prefix else ""
+            new_prefix += "/" if new_prefix else ""
+        groups.setdefault((old_prefix, new_prefix), []).append("/".join(common))
+    tables = []
+    for (source, destination), paths in sorted(groups.items()):
+        table = {"from": source, "to": destination}
+        if len(paths) <= 8:
+            table["paths"] = paths
+        else:
+            # A directory trie retains every path without repeating prefixes.
+            tree = {}
+            for path in paths:
+                node = tree
+                parts = path.split("/")
+                for part in parts[:-1]:
+                    node = node.setdefault(part, {})
+                node[parts[-1]] = None
+            table["tree"] = tree
+        tables.append(table)
+    proof = {
+        "version": 1,
+        "count": len(entries),
+        "entries_sha256": sha256(json.dumps(entries, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest(),
+        "groups": tables,
+    }
+    return proof, {path for entry in entries for path in entry[:2]}
+
+
+def project_diff(root: Path, base: str, head: str, *, compact_renames: bool = True):
+    """Omit only proven duplicate skills and unchanged regular-file renames."""
     full = bytes(_run_git(root, ("diff", "--binary", base, head), binary=True))
-    scope = set(_run_git(root, ("diff", "--name-only", base, head)).splitlines())
+    scope = set(_git_paths(root, base, head))
+    renames, rename_paths = _verified_rename_projection(root, base, head) if compact_renames else (None, set())
+    for path in _git_paths(root, base, head, all_sides=True):
+        _safe_relative(path, metadata_only=path in rename_paths)
     omitted = []
     cache: dict[tuple[str, str], tuple[str, str] | None] = {}
 
@@ -105,19 +187,21 @@ def project_diff(root: Path, base: str, head: str) -> tuple[bytes, bytes, tuple[
                    for copy, canonical in pairs):
                 omitted.append((path, source))
     projected = full
-    if omitted:
+    excluded = {path for path, _ in omitted} | rename_paths
+    if excluded:
         projected = bytes(_run_git(root, ("diff", "--binary", base, head, "--", ".",
-            *(f":(exclude,literal){path}" for path, _ in omitted)), binary=True))
-    return full, projected, tuple(omitted)
+            *(f":(exclude,literal){path}" for path in sorted(excluded))), binary=True))
+    return full, projected, tuple(omitted), renames, rename_paths
 
 
-def _safe_relative(path: str) -> str:
+def _safe_relative(path: str, *, metadata_only: bool = False) -> str:
     parsed = PurePosixPath(path)
-    if not path or parsed.is_absolute() or ".." in parsed.parts:
+    if (not path or parsed.is_absolute() or ".." in parsed.parts
+            or parsed.as_posix() != path or any(ord(char) < 32 or ord(char) == 127 for char in path)):
         raise ReviewPackageBlocked(f"path escapes repository: {path}")
     if any(part in {".git", ".memory", ".runs"} for part in parsed.parts):
         raise ReviewPackageBlocked(f"denied review path: {path}")
-    if parsed.name in DENIED_NAMES or parsed.suffix in {".pem", ".key", ".p12"}:
+    if not metadata_only and (parsed.name in DENIED_NAMES or parsed.suffix in {".pem", ".key", ".p12"}):
         raise ReviewPackageBlocked(f"denied review path: {path}")
     return parsed.as_posix()
 
@@ -192,6 +276,10 @@ def load_package(path: Path, *, root: Path) -> ReviewPackage:
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
         projection_fields = {"full_diff_sha256", "omitted_generated", "estimated_tokens"}
+        if "verified_renames" in raw and (not projection_fields <= set(raw)
+                or not isinstance(raw["verified_renames"], dict)
+                or raw["verified_renames"].get("version") != 1):
+            raise ValueError("invalid rename projection manifest")
         if projection_fields & set(raw):
             if (not projection_fields <= set(raw)
                     or not isinstance(raw["full_diff_sha256"], str)
@@ -211,12 +299,14 @@ def load_package(path: Path, *, root: Path) -> ReviewPackage:
         package_path / "diff.patch", manifest.diff_sha256, "diff.patch"
     )
     if manifest.full_diff_sha256 is not None:
-        full, projected, omitted = project_diff(root, manifest.base_sha, manifest.head_sha)
-        git_scope = tuple(sorted(_safe_relative(path) for path in _run_git(
-            root, ("diff", "--name-only", manifest.base_sha, manifest.head_sha)).splitlines() if path))
+        full, projected, omitted, renames, rename_paths = project_diff(
+            root, manifest.base_sha, manifest.head_sha, compact_renames=manifest.verified_renames is not None)
+        git_scope = tuple(sorted(_safe_relative(path, metadata_only=path in rename_paths)
+                                for path in _git_paths(root, manifest.base_sha, manifest.head_sha)))
         if (sha256(full).hexdigest() != manifest.full_diff_sha256
                 or projected != diff_bytes or omitted != manifest.omitted_generated
-                or manifest.scope != git_scope):
+                or manifest.scope != git_scope
+                or json.dumps(renames, sort_keys=True) != json.dumps(manifest.verified_renames, sort_keys=True)):
             raise ReviewPackageBlocked("review projection does not match full Git change")
     _checked_bytes(
         package_path / "requirements.md",
@@ -258,10 +348,10 @@ def build_package(request: ReviewPackageRequest) -> ReviewPackage:
         raise ReviewPackageBlocked("package byte and estimated-token limits must be positive")
     base_sha = _resolve_ref(root, request.base)
     head_sha = _resolve_ref(root, request.head)
-    full_diff, diff_bytes, omitted = project_diff(root, base_sha, head_sha)
+    full_diff, diff_bytes, omitted, renames, rename_paths = project_diff(root, base_sha, head_sha)
     _scan_content("full diff", full_diff)
-    scope_output = _run_git(root, ("diff", "--name-only", base_sha, head_sha))
-    scope = tuple(sorted(_safe_relative(item) for item in scope_output.splitlines() if item))
+    scope = tuple(sorted(_safe_relative(item, metadata_only=item in rename_paths)
+                         for item in _git_paths(root, base_sha, head_sha)))
 
     context: list[tuple[str, bytes]] = []
     # Explicitly requested copies proven above can also share one context file.
@@ -328,6 +418,7 @@ def build_package(request: ReviewPackageRequest) -> ReviewPackage:
         created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         full_diff_sha256=sha256(full_diff).hexdigest(),
         omitted_generated=omitted,
+        verified_renames=renames,
     )
     # Include the manifest itself and the instructions in the payload budget.
     # Iterate until decimal digit lengths stop changing.

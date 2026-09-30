@@ -44,9 +44,12 @@ class ReviewManifest:
     full_diff_sha256: str | None = None
     omitted_generated: tuple[tuple[str, str], ...] = ()
     estimated_tokens: int = 0
+    verified_renames: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         result = asdict(self)
+        if self.verified_renames is None:
+            result.pop("verified_renames")
         if self.full_diff_sha256 is None:
             # Preserve checksums for pre-projection manifests.
             for key in ("full_diff_sha256", "omitted_generated", "estimated_tokens"):

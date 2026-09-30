@@ -146,3 +146,9 @@ Native AGY terminal responses may contain repeated result JSON objects with
 agree with the strict `structured_output`, rejecting conflicts, extra fields,
 trailing prose and malformed output. Native login review remains explicitly
 approved and bound to its package; a parsed old review does not approve new code.
+
+The partial-request disconnect fixture polls for zero active `ClientRead`
+backends for at most one second, below the integration proxy's two-second query
+timeout. Linux coverage observed two backends still cleaning up after the former
+fixed 100 ms sleep. The zero-backend assertion and all 50 clients are retained.
+The Rust client matrix runs serially and without fail-fast so every case runs.
