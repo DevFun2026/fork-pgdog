@@ -117,3 +117,9 @@ partial WAL page can otherwise keep the sampled insert position ahead of flush
 beyond the five-second deadline. The fixture reproduces that tail while retaining
 the assertions that acknowledgements advance only after durability and never to
 an open transaction's future LSN. Production replication logic is unchanged.
+
+The checkpoint fixture closes its final WAL segment before expecting every
+completed segment to be recycled: a live phase record legitimately retains its
+identity dependencies. Rotation support is compiled only for tests. The client-ID
+fixture still holds and checks 500 clients, with at most 32 concurrent connection
+handshakes to fit macOS's observed listen backlog of 128.

@@ -1,5 +1,5 @@
 use crate::setup::admin_sqlx;
-use futures_util::future::join_all;
+use futures_util::{StreamExt, stream};
 use serial_test::serial;
 use sqlx::{Executor, Row};
 use std::collections::HashSet;
@@ -8,6 +8,7 @@ use tokio_postgres::{Client, NoTls};
 
 /// Number of client connections to create for testing unique IDs.
 const NUM_CLIENTS: usize = 500;
+const CONCURRENT_CONNECTS: usize = 32;
 
 #[tokio::test]
 #[serial]
@@ -17,7 +18,8 @@ async fn test_client_ids_unique() {
     admin.execute("SET auth_type TO 'md5'").await.unwrap();
     admin.close().await;
 
-    // Spawn all connection attempts in parallel.
+    // Establish connections concurrently within small host listen backlogs.
+    // Keep all 500 clients open together for the uniqueness assertions below.
     let connect_futures: Vec<_> = (0..NUM_CLIENTS)
         .map(|_| async {
             let (client, connection) = tokio_postgres::connect(
@@ -37,7 +39,10 @@ async fn test_client_ids_unique() {
         })
         .collect();
 
-    let results: Vec<(Client, JoinHandle<()>)> = join_all(connect_futures).await;
+    let results: Vec<(Client, JoinHandle<()>)> = stream::iter(connect_futures)
+        .buffer_unordered(CONCURRENT_CONNECTS)
+        .collect()
+        .await;
     let (clients, connection_handles): (Vec<_>, Vec<_>) = results.into_iter().unzip();
 
     // Connect to admin DB and run SHOW CLIENTS.

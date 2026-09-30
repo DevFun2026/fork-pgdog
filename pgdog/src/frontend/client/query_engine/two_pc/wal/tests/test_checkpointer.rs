@@ -43,6 +43,12 @@ async fn checkpointer_recycles_wal_segments(wal_segment_size: usize) {
     .await
     .expect("clients should generate multiple WAL segments");
 
+    // A live segment containing phase records must retain their identity
+    // dependencies, even after the transactions finish. Close that final
+    // segment so all completed records are eligible for recycling, leaving
+    // exactly one empty active segment as asserted below.
+    client.rotate_wal().await;
+
     timeout(Duration::from_secs(5), async {
         loop {
             if SegmentRegistry::get().len() == 1 {
@@ -52,7 +58,12 @@ async fn checkpointer_recycles_wal_segments(wal_segment_size: usize) {
         }
     })
     .await
-    .expect("checkpointer should recycle inactive WAL segments");
+    .unwrap_or_else(|err| {
+        panic!(
+            "checkpointer should recycle inactive WAL segments: {err}; registry: {:?}",
+            SegmentRegistry::get()
+        )
+    });
 
     client.shutdown().await;
 }

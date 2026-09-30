@@ -48,6 +48,16 @@ pub(crate) struct Manager {
 }
 
 impl Manager {
+    #[cfg(test)]
+    pub(crate) async fn rotate_wal_for_test(&self) {
+        self.wal
+            .load_full()
+            .expect("test WAL must be enabled")
+            .rotate_for_test()
+            .await
+            .unwrap();
+    }
+
     /// Get transaction manager instance.
     pub(crate) fn get() -> Self {
         MANAGER.clone()
