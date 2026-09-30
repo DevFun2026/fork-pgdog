@@ -34,6 +34,22 @@ pub(super) async fn start_replication(admin: &Pool<Postgres>, slot: Option<&str>
     })
     .await;
 
+    // The parent reports "replicating" before the child creates and attaches
+    // its WAL slot. Writes before that point can precede the slot's start LSN.
+    let direct = connection_sqlx_direct().await;
+    poll("an active source replication slot", || async {
+        fail_if_task_errored(admin, task_id).await;
+        let active: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_replication_slots \
+             WHERE slot_name LIKE '__pgdog_repl_%' AND active",
+        )
+        .fetch_one(&direct)
+        .await
+        .expect("source slots must be readable");
+        (active == 1).then_some(())
+    })
+    .await;
+
     task_id
 }
 
@@ -125,14 +141,7 @@ async fn test_stop_task() {
         prepare_replication(&admin, &direct).await;
         let task_id = start_replication(&admin, None).await;
 
-        // The parent task enters "replicating" before its child creates the
-        // source slot. Wait for that observable resource before stopping it.
-        let slots = poll("the source replication slot", || async {
-            fail_if_task_errored(&admin, task_id).await;
-            let slots = test_slot_names(&direct).await;
-            (!slots.is_empty()).then_some(slots)
-        })
-        .await;
+        let slots = test_slot_names(&direct).await;
         assert_eq!(
             slots.len(),
             1,

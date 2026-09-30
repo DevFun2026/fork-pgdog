@@ -103,6 +103,7 @@ the process environment while Tokio/other threads may read it. Ignored external
 Azure/live-environment tests retain their explicit ignored status.
 
 TLS reload integration tests honor `PGDOG_TEST_CONFIG_DIR`, matching the PgDog
-process started by the gate. The replication stop test waits for the source slot
+process started by the gate. The replication test setup waits for an active source slot
 with the existing bounded poll helper: the parent task reports "replicating"
-before its child has created that slot. The exact one-slot assertion remains.
+before its child has created that slot. This also prevents fixture writes from
+preceding the slot start LSN. The exact one-slot assertion remains.
