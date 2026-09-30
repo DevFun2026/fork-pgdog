@@ -1,0 +1,27 @@
+//! ParseComplete (B) message.
+use super::code;
+use super::prelude::*;
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParseComplete;
+
+impl FromBytes for ParseComplete {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        code!(bytes, '1');
+        let _len = bytes.get_i32();
+        Ok(Self)
+    }
+}
+
+impl ToBytes for ParseComplete {
+    fn to_bytes(&self) -> Bytes {
+        let payload = Payload::named(self.code());
+        payload.freeze()
+    }
+}
+
+impl Protocol for ParseComplete {
+    fn code(&self) -> char {
+        '1'
+    }
+}

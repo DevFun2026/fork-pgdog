@@ -1,0 +1,20 @@
+.superpowers/
+
+# Agent runtime state
+.agent/.runs/
+.agent/.memory/
+.agent/config.local.toml
+
+# Provider-local settings
+.claude/settings.local.json
+.gemini/settings.local.json
+.codex/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

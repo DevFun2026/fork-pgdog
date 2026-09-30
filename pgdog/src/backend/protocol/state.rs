@@ -1,0 +1,954 @@
+use crate::{
+    net::{Message, Protocol},
+    stats::memory::MemoryUsage,
+};
+
+use super::super::Error;
+use std::{collections::VecDeque, fmt::Debug};
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Action {
+    Forward,
+    Ignore,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) enum ExecutionCode {
+    /// ReadyForQuery (regular, 'Z')
+    ReadyForQuery,
+    /// A ReadyForQuery we expect because we forwarded a Sync.
+    /// Unlike a Query's ReadyForQuery, this one still is expected to arrive after an extended-protocol error.
+    ReadyForQuerySync,
+    /// Completion of a simple-protocol statement
+    CommandComplete,
+    /// Completion of an extended Execute
+    ExecutionCompleted,
+    ParseComplete,
+    BindComplete,
+    CloseComplete,
+    DescriptionOrNothing,
+    Copy,
+    Error,
+    Untracked,
+}
+
+impl MemoryUsage for ExecutionCode {
+    fn memory_usage(&self) -> usize {
+        std::mem::size_of::<ExecutionCode>()
+    }
+}
+
+impl From<char> for ExecutionCode {
+    fn from(value: char) -> Self {
+        match value {
+            'Z' => Self::ReadyForQuery,
+            'C' | 'I' => Self::CommandComplete,
+            's' => Self::ExecutionCompleted, // PortalSuspended
+            '1' => Self::ParseComplete,
+            '2' => Self::BindComplete,
+            '3' => Self::CloseComplete,
+            'T' | 'n' | 't' => Self::DescriptionOrNothing,
+            'G' | 'c' | 'f' => Self::Copy,
+            'E' => Self::Error,
+            _ => Self::Untracked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ExecutionItem {
+    Code(ExecutionCode),
+    Ignore(ExecutionCode),
+}
+
+impl MemoryUsage for ExecutionItem {
+    fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProtocolState {
+    queue: VecDeque<ExecutionItem>,
+    simulated: VecDeque<Message>,
+    out_of_sync: bool,
+}
+
+impl MemoryUsage for ProtocolState {
+    fn memory_usage(&self) -> usize {
+        self.queue.memory_usage() + self.simulated.memory_usage() + self.out_of_sync.memory_usage()
+    }
+}
+
+impl ProtocolState {
+    /// Add a message to the ignore list.
+    ///
+    /// The server will return this message, but we won't send it to the client.
+    /// This is used for preparing statements that the client expects to be there
+    /// but the server connection doesn't have yet.
+    ///
+    pub(crate) fn add_ignore(&mut self, code: impl Into<ExecutionCode>) {
+        let code = code.into();
+        self.queue.push_back(ExecutionItem::Ignore(code));
+    }
+
+    /// Add a message to the execution queue. We expect this message
+    /// to be returned by the server.
+    pub(crate) fn add(&mut self, code: impl Into<ExecutionCode>) {
+        let code = code.into();
+        self.queue.push_back(ExecutionItem::Code(code));
+    }
+
+    /// New code we expect now to arrive first.
+    pub(crate) fn prepend(&mut self, code: impl Into<ExecutionCode>) {
+        let code = code.into();
+        self.queue.push_front(ExecutionItem::Code(code));
+    }
+
+    /// Add a message we will return to the client but the server
+    /// won't send. This is used for telling the client we did something,
+    /// e.g. closed a prepared statement, when we actually did not.
+    pub(crate) fn add_simulated(&mut self, message: Message) {
+        self.queue
+            .push_back(ExecutionItem::Code(message.code().into()));
+        self.simulated.push_back(message);
+    }
+
+    /// Get a simulated message from the execution queue.
+    ///
+    /// Returns a message only if it should be returned at the current state
+    /// of the extended pipeline.
+    pub(crate) fn get_simulated(&mut self) -> Option<Message> {
+        let code = self.queue.front();
+        let message = self.simulated.front();
+        if let Some(ExecutionItem::Code(code)) = code
+            && let Some(message) = message
+            && code == &ExecutionCode::from(message.code())
+        {
+            let _ = self.queue.pop_front();
+            return self.simulated.pop_front();
+        }
+        None
+    }
+
+    /// Should we ignore the message we just received
+    /// and not forward it to the client.
+    pub(crate) fn action(
+        &mut self,
+        code: impl Into<ExecutionCode> + Debug,
+    ) -> Result<Action, Error> {
+        let code = code.into();
+        match code {
+            ExecutionCode::Untracked => return Ok(Action::Forward),
+            ExecutionCode::Error => {
+                // Replies arrive in request order.
+                // The entry at the front corresponds to the request the server was processing when it generated this error.
+                // Perform the same test Postgres uses to decide whether to skip messages until a Sync.
+                // An error inside Parse/Bind/Describe/Execute/Close sets ignore_till_sync = true
+                // An error inside a simple Query, a function call, or Sync itself does not.
+
+                let extended_error = matches!(
+                    self.queue.front(),
+                    Some(ExecutionItem::Code(code) | ExecutionItem::Ignore(code)) if matches!(
+                        code,
+                        ExecutionCode::ParseComplete
+                            | ExecutionCode::BindComplete
+                            | ExecutionCode::DescriptionOrNothing
+                            | ExecutionCode::CloseComplete
+                            | ExecutionCode::ExecutionCompleted
+                    )
+                );
+
+                if !extended_error {
+                    // A simple-query error only aborts the current simple query.
+                    // Keep any later pipelined simple query RFQs queued.
+                    while !matches!(
+                        self.queue.front(),
+                        None | Some(ExecutionItem::Code(
+                            ExecutionCode::ReadyForQuery | ExecutionCode::ReadyForQuerySync
+                        ))
+                    ) {
+                        self.queue.pop_front();
+                    }
+                    return Ok(Action::Forward);
+                }
+
+                // Remove everything from the execution queue.
+                // The connection is out of sync until client re-syncs it.
+                self.out_of_sync = true;
+                while !matches!(
+                    self.queue.front(),
+                    None | Some(ExecutionItem::Code(ExecutionCode::ReadyForQuerySync))
+                ) {
+                    self.queue.pop_front();
+                }
+                return Ok(Action::Forward);
+            }
+
+            ExecutionCode::ReadyForQuery | ExecutionCode::ReadyForQuerySync => {
+                self.out_of_sync = false;
+            }
+            _ => (),
+        };
+        let in_queue = self.queue.pop_front().ok_or(Error::ProtocolOutOfSync)?;
+        let action = match in_queue {
+            // The queue is waiting for the server to send ReadyForQuery,
+            // but it sent something else. That means the execution pipeline
+            // isn't done. We are not tracking every single message, so this is expected.
+            ExecutionItem::Code(in_queue_code) => {
+                if (code != ExecutionCode::ReadyForQuery
+                    && code != ExecutionCode::ReadyForQuerySync)
+                    && (in_queue_code == ExecutionCode::ReadyForQuery
+                        || in_queue_code == ExecutionCode::ReadyForQuerySync)
+                {
+                    self.queue.push_front(in_queue);
+                }
+
+                Ok(Action::Forward)
+            }
+
+            // Used for preparing statements that the client expects to be there.
+            ExecutionItem::Ignore(in_queue) => {
+                if code == in_queue {
+                    Ok(Action::Ignore)
+                } else {
+                    Err(Error::ProtocolOutOfSync)
+                }
+            }
+        }?;
+
+        Ok(action)
+    }
+
+    pub(crate) fn in_copy_mode(&self) -> bool {
+        self.queue.front() == Some(&ExecutionItem::Code(ExecutionCode::Copy))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue(&self) -> &VecDeque<ExecutionItem> {
+        &self.queue
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_mut(&mut self) -> &mut VecDeque<ExecutionItem> {
+        &mut self.queue
+    }
+
+    pub(crate) fn done(&self) -> bool {
+        self.is_empty() && !self.out_of_sync
+    }
+
+    pub(crate) fn has_more_messages(&self) -> bool {
+        !self.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_sync(&self) -> bool {
+        !self.out_of_sync
+    }
+
+    /// Check if the protocol is out of sync due to an error in extended protocol.
+    pub(crate) fn out_of_sync(&self) -> bool {
+        self.out_of_sync
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // ========================================
+    // Simple Query Protocol Tests
+    // ========================================
+
+    #[test]
+    fn test_simple_query_with_results() {
+        let mut state = ProtocolState::default();
+        // Simple query: SELECT * FROM users
+        // Expected: RowDescription -> DataRow(s) -> CommandComplete -> ReadyForQuery
+        state.add('T'); // RowDescription
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        // DataRows are not tracked, they come between T and C
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_simple_query_no_results() {
+        let mut state = ProtocolState::default();
+        // Simple query: INSERT/UPDATE/DELETE
+        // Expected: CommandComplete -> ReadyForQuery
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_simple_query_empty() {
+        let mut state = ProtocolState::default();
+        // Empty query
+        // Expected: EmptyQueryResponse -> ReadyForQuery
+        state.add('I'); // EmptyQueryResponse
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('I').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_simple_query_error() {
+        let mut state = ProtocolState::default();
+        // Query with syntax error
+        // Expected: ErrorResponse -> ReadyForQuery
+        state.add('C'); // CommandComplete (expected but won't arrive)
+        state.add('Z'); // ReadyForQuery
+
+        // Error clears the queue except ReadyForQuery
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert_eq!(state.len(), 1); // Only ReadyForQuery remains
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_simple_query_multiple_results() {
+        let mut state = ProtocolState::default();
+        // Multiple SELECT statements in one query
+        // Expected: T->C->T->C->Z
+        state.add('T'); // RowDescription for first query
+        state.add('C'); // CommandComplete for first query
+        state.add('T'); // RowDescription for second query
+        state.add('C'); // CommandComplete for second query
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    // ========================================
+    // Extended Query Protocol Tests
+    // ========================================
+
+    #[test]
+    fn test_extended_parse_bind_execute_sync() {
+        let mut state = ProtocolState::default();
+        // Basic extended query: Parse -> Bind -> Execute -> Sync
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_parse_bind_describe_execute_sync() {
+        let mut state = ProtocolState::default();
+        // Extended query with Describe: Parse -> Bind -> Describe -> Execute -> Sync
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete
+        state.add('T'); // RowDescription from Describe
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_describe_statement_returns_nodata() {
+        let mut state = ProtocolState::default();
+        // Describe a statement that doesn't return data (e.g., INSERT)
+        state.add('1'); // ParseComplete
+        state.add('n'); // NoData from Describe
+        state.add('2'); // BindComplete
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('n').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_portal_suspended() {
+        let mut state = ProtocolState::default();
+        // Execute with row limit, returns PortalSuspended
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete
+        state.add('s'); // PortalSuspended (partial results)
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('s').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_close_statement() {
+        let mut state = ProtocolState::default();
+        // Close a prepared statement
+        state.add('3'); // CloseComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('3').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_pipelined_queries() {
+        let mut state = ProtocolState::default();
+        // Multiple queries in one pipeline: Parse->Bind->Execute->Parse->Bind->Execute->Sync
+        state.add('1'); // ParseComplete #1
+        state.add('2'); // BindComplete #1
+        state.add('C'); // CommandComplete #1
+        state.add('1'); // ParseComplete #2
+        state.add('2'); // BindComplete #2
+        state.add('C'); // CommandComplete #2
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    // ========================================
+    // Error Handling Tests
+    // ========================================
+
+    #[test]
+    fn test_extended_parse_error() {
+        let mut state = ProtocolState::default();
+        // Parse fails (syntax error)
+        state.add('1'); // ParseComplete (expected but won't arrive)
+        state.add('2'); // BindComplete (won't be reached)
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        // Error clears queue except the Sync-owed ReadyForQuery
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        assert_eq!(state.len(), 1); // Only ReadyForQuery remains
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_bind_error() {
+        let mut state = ProtocolState::default();
+        // Parse succeeds, Bind fails
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete (expected but won't arrive)
+        state.add('C'); // CommandComplete (won't be reached)
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        assert_eq!(state.len(), 1);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+    }
+
+    #[test]
+    fn test_extended_execute_error() {
+        let mut state = ProtocolState::default();
+        // Parse and Bind succeed, Execute fails
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete
+        state.add(ExecutionCode::ExecutionCompleted); // Execute CommandComplete (expected but won't arrive)
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+    }
+
+    #[test]
+    fn test_simple_query_error_no_out_of_sync() {
+        let mut state = ProtocolState::default();
+        // Simple query error should NOT set out_of_sync
+        state.add('C'); // CommandComplete (expected but won't arrive)
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync); // Simple query doesn't set out_of_sync
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+    }
+
+    #[test]
+    fn test_extended_error_in_pipeline() {
+        let mut state = ProtocolState::default();
+        // Pipeline with error in middle: P->B->E->P->B->E->Sync
+        // If first Execute fails, rest of pipeline still processes
+        state.add('1'); // ParseComplete #1
+        state.add('2'); // BindComplete #1
+        state.add(ExecutionCode::ExecutionCompleted); // Execute #1's CommandComplete (won't arrive)
+        state.add('1'); // ParseComplete #2
+        state.add('2'); // BindComplete #2
+        state.add(ExecutionCode::ExecutionCompleted); // Execute #2's CommandComplete
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        // After error in extended protocol, we're out of sync
+        // Server still sends remaining responses but we're waiting for ReadyForQuery
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+    }
+
+    #[test]
+    fn test_extended_error_drops_simple_query_rfq() {
+        // Regression test for #1314.
+        //
+        // Postgrex's mode: :savepoint wraps each query in a savepoint by sending
+        // Bind, Execute and a simple Query("RELEASE SAVEPOINT postgrex_query") in one batch (with no Sync in that batch)
+        //
+        // When that Execute errors, the server discards everything until a Sync arrives,
+        // so the Query's ReadyForQuery is never produced.
+        //
+        // PgDog used to keep waiting for it and never read the Sync the client had already sent
+
+        let mut state = ProtocolState::default();
+        state.add_ignore('1'); // Injected Parse
+        state.add('2'); // BindComplete
+        state.add(ExecutionCode::ExecutionCompleted); // Execute
+        state.add(ExecutionCode::ReadyForQuery); // Simple Query's RFQ... never produced
+
+        // Server: ParseComplete (swallowed), and then the Execute fails.
+        assert_eq!(state.action('1').unwrap(), Action::Ignore);
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+
+        // Nothing left to wait for.
+        // We must go back to reading the client, which is where the Sync will come from.
+        assert!(state.is_empty());
+        assert!(!state.has_more_messages());
+
+        // The client's Sync is forwarded.
+        state.add(ExecutionCode::ReadyForQuerySync);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_extended_error_keeps_batch_pipelined_after_sync() {
+        // An extended-protocol error only invalidates expectations up to the next Sync.
+        // A second batch set to go after that Sync should be normally handled after ignore_till_sync ends.
+        let mut state = ProtocolState::default();
+        state.add('1'); // ParseComplete #1
+        state.add(ExecutionCode::ExecutionCompleted); // Execute #1
+        state.add(ExecutionCode::ReadyForQuerySync); // Sync #1
+        state.add('1'); // ParseComplete #2
+        state.add(ExecutionCode::ExecutionCompleted); // Execute #2
+        state.add(ExecutionCode::ReadyForQuerySync); // Sync #2
+
+        // Parse #1 fails.
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        assert_eq!(state.len(), 4); // Sync #1's RFQ and all of batch #2 should still be here!
+
+        // Server: RFQ for Sync #1, then batch #2 runs normally.
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(!state.out_of_sync);
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    // ========================================
+    // COPY Protocol Tests
+    // ========================================
+
+    #[test]
+    fn test_copy_in_success() {
+        let mut state = ProtocolState::default();
+        // COPY FROM STDIN
+        state.add('G'); // CopyInResponse
+        state.add('C'); // CommandComplete (after CopyDone or CopyFail)
+        state.add('Z'); // ReadyForQuery
+
+        // Check copy_mode before consuming the message
+        assert!(state.in_copy_mode());
+        assert_eq!(state.action('G').unwrap(), Action::Forward);
+        // After consuming 'G', we're no longer in copy mode (it's popped from queue)
+        assert!(!state.in_copy_mode());
+        // CopyData messages ('d') would be sent here but aren't tracked
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_copy_fail() {
+        let mut state = ProtocolState::default();
+        // COPY that fails
+        state.add('G'); // CopyInResponse
+        state.add('C'); // CommandComplete (won't arrive due to error)
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('G').unwrap(), Action::Forward);
+        // Client sends CopyFail ('f')
+        // Server responds with ErrorResponse
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+    }
+
+    // ========================================
+    // Ignore Tests (for statement preparation)
+    // ========================================
+
+    #[test]
+    fn test_ignore_parse_complete() {
+        let mut state = ProtocolState::default();
+        state.add_ignore('1');
+        assert_eq!(state.action('1').unwrap(), Action::Ignore);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_ignore_bind_complete() {
+        let mut state = ProtocolState::default();
+        state.add_ignore('2');
+        assert_eq!(state.action('2').unwrap(), Action::Ignore);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_ignore_error_behavior() {
+        let mut state = ProtocolState::default();
+        state.add_ignore('1');
+        state.add_ignore('2');
+
+        // When we get an error with Ignore items in queue,
+        // the Error arm is triggered first (before checking queue items)
+        // so it clears the queue and returns Forward, not ForwardAndRemove
+        let result = state.action('E').unwrap();
+        assert_eq!(result, Action::Forward);
+        // Queue should be empty after error
+        assert!(state.is_empty());
+        // Note: The ForwardAndRemove logic in the Ignore arm (line 192-193)
+        // is unreachable because Error is handled at the top of action()
+        // This may be dead code or a bug in the implementation.
+    }
+
+    #[test]
+    fn test_pipelined_simple_query_error_keeps_next_query_response() {
+        let mut state = ProtocolState::default();
+        state.add('Z'); // First simple query.
+        state.add('Z'); // Second simple query.
+
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert_eq!(state.len(), 2);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert_eq!(state.len(), 1);
+
+        // The next response belongs to the second simple query.
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_ignore_wrong_code_is_out_of_sync() {
+        let mut state = ProtocolState::default();
+        state.add_ignore('1');
+        // We expect ParseComplete but get BindComplete
+        assert!(state.action('2').is_err());
+    }
+
+    // ========================================
+    // Simulated Messages Tests
+    // ========================================
+
+    #[test]
+    fn test_simulated_message() {
+        let mut state = ProtocolState::default();
+        // Create a simulated CloseComplete message
+        let message = Message::new(bytes::Bytes::from(vec![b'3', 0, 0, 0, 4]));
+        state.add_simulated(message.clone());
+
+        assert_eq!(state.len(), 1);
+        let retrieved = state.get_simulated();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().code(), '3');
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_simulated_message_wrong_position() {
+        let mut state = ProtocolState::default();
+        let message = Message::new(bytes::Bytes::from(vec![b'3', 0, 0, 0, 4]));
+        state.add('1'); // ParseComplete expected first
+        state.add_simulated(message);
+
+        // get_simulated should return None because CloseComplete is not at front
+        let retrieved = state.get_simulated();
+        assert!(retrieved.is_none());
+        assert_eq!(state.len(), 2);
+    }
+
+    // ========================================
+    // State Management Tests
+    // ========================================
+
+    #[test]
+    fn test_prepend() {
+        let mut state = ProtocolState::default();
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+        state.prepend('T'); // RowDescription should come first
+
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_untracked_messages_always_forward() {
+        let mut state = ProtocolState::default();
+        state.add('C'); // CommandComplete
+
+        // Untracked messages (like DataRow 'D', NoticeResponse 'N', etc.) should always forward
+        // even if they're not in the queue
+        assert_eq!(state.action('D').unwrap(), Action::Forward);
+        assert_eq!(state.action('N').unwrap(), Action::Forward);
+        assert_eq!(state.action('S').unwrap(), Action::Forward); // ParameterStatus
+
+        // Original queue should be unchanged
+        assert_eq!(state.len(), 1);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+    }
+
+    #[test]
+    fn test_ready_for_query_when_expecting_other() {
+        let mut state = ProtocolState::default();
+        state.add('T'); // RowDescription
+        state.add('Z'); // ReadyForQuery
+
+        // If we receive ReadyForQuery but we're expecting RowDescription first:
+        // - The code sets out_of_sync = false
+        // - Pops 'T' from queue
+        // - Checks: is received code NOT RFQ AND expected code IS RFQ?
+        // - No, received IS RFQ, so we don't push back
+        // - We consume 'T' and move on, 'Z' remains in queue
+        let result = state.action('Z');
+        assert!(result.is_ok());
+        assert_eq!(state.len(), 1); // Only 'Z' remains
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_done_when_empty_and_in_sync() {
+        let mut state = ProtocolState::default();
+        assert!(state.done());
+
+        state.add('Z');
+        assert!(!state.done()); // Has messages
+
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.done()); // Empty and in sync
+    }
+
+    #[test]
+    fn test_not_done_when_out_of_sync() {
+        let mut state = ProtocolState::default();
+        state.add('1'); // ParseComplete
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+        assert!(state.out_of_sync);
+        assert!(!state.done()); // Out of sync, not done even though has messages
+
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.done()); // Back in sync and empty
+    }
+
+    #[test]
+    fn test_out_of_sync_empty_queue() {
+        let mut state = ProtocolState::default();
+        // Error with no pending ReadyForQuery
+        let result = state.action('E');
+        assert!(result.is_ok());
+        assert!(state.is_empty()); // Queue is empty
+    }
+
+    // ========================================
+    // Edge Cases and Complex Scenarios
+    // ========================================
+
+    #[test]
+    fn test_multiple_untracked_between_tracked() {
+        let mut state = ProtocolState::default();
+        state.add('T'); // RowDescription
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('T').unwrap(), Action::Forward);
+        // Multiple DataRows (untracked)
+        assert_eq!(state.action('D').unwrap(), Action::Forward);
+        assert_eq!(state.action('D').unwrap(), Action::Forward);
+        assert_eq!(state.action('D').unwrap(), Action::Forward);
+        // NoticeResponse (untracked)
+        assert_eq!(state.action('N').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_parameter_description() {
+        let mut state = ProtocolState::default();
+        // Describe a prepared statement's parameters
+        state.add('1'); // ParseComplete
+        state.add('t'); // ParameterDescription
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('t').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_empty_queue_non_error_message() {
+        let mut state = ProtocolState::default();
+        // Receiving a tracked message when queue is empty should be OutOfSync
+        let result = state.action('C');
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mixed_simple_and_extended() {
+        let mut state = ProtocolState::default();
+        // This shouldn't happen in practice, but test state tracking
+        // Simple query
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+
+        // Now extended query
+        state.add('1'); // ParseComplete
+        state.add('2'); // BindComplete
+        state.add('C'); // CommandComplete
+        state.add('Z'); // ReadyForQuery
+
+        assert_eq!(state.action('1').unwrap(), Action::Forward);
+        assert_eq!(state.action('2').unwrap(), Action::Forward);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+    }
+
+    #[test]
+    fn test_copy_mode_detection() {
+        let mut state = ProtocolState::default();
+        assert!(!state.in_copy_mode());
+
+        state.add('G'); // CopyInResponse
+        state.add('C'); // CommandComplete
+        assert!(state.in_copy_mode());
+
+        assert_eq!(state.action('G').unwrap(), Action::Forward);
+        assert!(!state.in_copy_mode()); // No longer at front
+
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert!(!state.in_copy_mode());
+    }
+
+    #[test]
+    fn test_has_more_messages() {
+        let mut state = ProtocolState::default();
+        assert!(!state.has_more_messages());
+
+        state.add('C');
+        assert!(state.has_more_messages());
+
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert!(!state.has_more_messages());
+    }
+
+    #[test]
+    fn test_names_cleared_on_error() {
+        // This test verifies that when an error occurs, both queue AND names
+        // are cleared to maintain the invariant that they stay synchronized.
+
+        let mut state = ProtocolState::default();
+        state.add_ignore('1');
+        state.add_ignore('2');
+        state.add_ignore('3');
+        state.add(ExecutionCode::ReadyForQuerySync); // ReadyForQuery owed by Sync
+
+        // Error should clear both queue (except the Sync-owed RFQ) and names
+        assert_eq!(state.action('E').unwrap(), Action::Forward);
+
+        // Consume the ReadyForQuery
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty()); // Queue is empty
+
+        // Now if we add a new ignore item, it should work correctly
+        // because names was also cleared
+        state.add_ignore('1');
+        assert_eq!(state.action('1').unwrap(), Action::Ignore);
+        assert!(state.is_empty()); // Both queue and names should be empty
+
+        // Verify we can continue using the state normally
+        state.add_ignore('2');
+        state.add('C');
+        state.add('Z');
+
+        // Process normally
+        assert_eq!(state.action('2').unwrap(), Action::Ignore);
+        assert_eq!(state.action('C').unwrap(), Action::Forward);
+        assert_eq!(state.action('Z').unwrap(), Action::Forward);
+        assert!(state.is_empty());
+    }
+}

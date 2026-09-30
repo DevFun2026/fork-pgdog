@@ -1,0 +1,558 @@
+//! Bind (F) message.
+use crate::net::c_string_buf_len;
+
+use super::Error;
+use super::FromDataType;
+use super::Vector;
+use super::c_string_bytes;
+use super::code;
+use super::prelude::*;
+
+use std::fmt::Debug;
+use std::str::from_utf8;
+use std::str::from_utf8_unchecked;
+
+pub(crate) use pgdog_postgres_types::Format;
+
+/// Parameter data.
+#[derive(Clone, PartialEq, PartialOrd, Ord, Eq)]
+pub(crate) struct Parameter {
+    /// Parameter data length.
+    pub(crate) len: i32,
+    /// Parameter data.
+    pub(crate) data: Bytes,
+}
+
+impl Debug for Parameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("Parameter");
+        if let Ok(text) = from_utf8(&self.data) {
+            debug.field("data", &text);
+        } else {
+            debug.field("data", &self.data);
+        }
+        debug.field("len", &self.len);
+        debug.finish()
+    }
+}
+
+impl Parameter {
+    pub(crate) fn len(&self) -> usize {
+        4 + self.data.len()
+    }
+
+    /// Create a null parameter (no data).
+    pub(crate) fn new_null() -> Self {
+        Self {
+            len: -1,
+            data: Bytes::new(),
+        }
+    }
+
+    pub(crate) fn new(data: &[u8]) -> Self {
+        Self {
+            len: data.len() as i32,
+            data: Bytes::copy_from_slice(data),
+        }
+    }
+}
+
+/// Parameter with encoded format.
+#[derive(Debug, Clone)]
+pub(crate) struct ParameterWithFormat<'a> {
+    parameter: &'a Parameter,
+    format: Format,
+}
+
+impl<'a> ParameterWithFormat<'a> {
+    /// Create new parameter with format information.
+    pub(crate) fn new(parameter: &'a Parameter, format: Format) -> Self {
+        Self { parameter, format }
+    }
+
+    /// Get text representation if it's valid UTF-8.
+    pub(crate) fn text(&self) -> Option<&str> {
+        from_utf8(&self.parameter.data).ok()
+    }
+
+    /// Get the parameter as a textual value for debugging purposes only.
+    pub(crate) fn text_debug(&self) -> String {
+        if let Some(text) = self.text() {
+            text.to_string()
+        } else {
+            hex::encode(self.data())
+        }
+    }
+
+    /// Get BIGINT if one is encoded in the field.
+    pub(crate) fn bigint(&self) -> Option<i64> {
+        Self::decode(self)
+    }
+
+    /// Get vector, if one is encoded in the field.
+    pub(crate) fn vector(&self) -> Option<Vector> {
+        Self::decode(self)
+    }
+
+    /// Get decoded value.
+    pub(crate) fn decode<T: FromDataType>(&self) -> Option<T> {
+        T::decode(&self.parameter.data, self.format).ok()
+    }
+
+    pub(crate) fn format(&self) -> Format {
+        self.format
+    }
+
+    pub(crate) fn data(&'a self) -> &'a [u8] {
+        &self.parameter.data
+    }
+
+    pub(crate) fn is_null(&self) -> bool {
+        self.parameter.len < 0
+    }
+
+    pub(crate) fn parameter(&self) -> &Parameter {
+        self.parameter
+    }
+}
+
+/// Bind (F) message.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
+pub(crate) struct Bind {
+    /// Portal name.
+    portal: Bytes,
+    /// Prepared statement name.
+    statement: Bytes,
+    /// Format codes.
+    codes: Vec<Format>,
+    /// Parameters.
+    params: Vec<Parameter>,
+    /// Results format (raw bytes, 2 bytes per i16).
+    results: Bytes,
+    /// Original payload.
+    original: Option<Bytes>,
+}
+
+impl Default for Bind {
+    fn default() -> Self {
+        Bind {
+            portal: Bytes::from("\0"),
+            statement: Bytes::from("\0"),
+            codes: vec![],
+            params: vec![],
+            results: Bytes::new(),
+            original: None,
+        }
+    }
+}
+
+impl Bind {
+    pub(crate) fn len(&self) -> usize {
+        self.portal.len()
+            + self.statement.len()
+            + self.codes.len() * std::mem::size_of::<i16>() + 2 // num codes
+            + self.params.iter().map(|p| p.len()).sum::<usize>() + 2 // num params
+            + self.results.len() + 2 // num results (results already stores raw bytes)
+            + 4 // len
+            + 1 // code
+    }
+
+    /// Format a parameter is using.
+    pub(crate) fn parameter_format(&self, index: usize) -> Result<Format, Error> {
+        let code = if self.codes.len() == self.params.len() {
+            self.codes.get(index).copied()
+        } else if self.codes.len() == 1 {
+            self.codes.first().copied()
+        } else {
+            Some(Format::Text)
+        };
+
+        Ok(code.unwrap_or(Format::Text))
+    }
+
+    /// Get parameter at index.
+    pub(crate) fn parameter(&self, index: usize) -> Result<Option<ParameterWithFormat<'_>>, Error> {
+        let format = self.parameter_format(index)?;
+        Ok(self
+            .params
+            .get(index)
+            .map(|parameter| ParameterWithFormat { parameter, format }))
+    }
+
+    /// Rename this Bind message to a different prepared statement.
+    pub(crate) fn rename(&mut self, name: impl AsRef<str>) {
+        self.statement = c_string_bytes(name.as_ref());
+        self.original = None;
+    }
+
+    /// Make this an anonymous Bind message.
+    pub(crate) fn anonymize(&mut self) {
+        if !self.anonymous() {
+            self.rename("");
+        }
+    }
+
+    /// Is this Bind message anonymous?
+    pub(crate) fn anonymous(&self) -> bool {
+        self.statement.len() == 1
+    }
+
+    pub(crate) fn statement(&self) -> &str {
+        // SAFETY: We check that this is valid UTF-8 in FromBytes::from_bytes below.
+        unsafe { from_utf8_unchecked(&self.statement[0..self.statement.len() - 1]) }
+    }
+
+    /// Format the client asked each result column to be returned in.
+    pub(crate) fn result_formats(&self) -> impl ExactSizeIterator<Item = Format> + '_ {
+        self.results.chunks_exact(2).map(|code| {
+            if i16::from_be_bytes([code[0], code[1]]) == 0 {
+                Format::Text
+            } else {
+                Format::Binary
+            }
+        })
+    }
+
+    pub(crate) fn new_statement(name: &str) -> Self {
+        Self {
+            statement: c_string_bytes(name),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_params(name: &str, params: &[Parameter]) -> Self {
+        Self {
+            statement: c_string_bytes(name),
+            params: params.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_name_portal(name: &str, portal: &str) -> Self {
+        Self {
+            statement: c_string_bytes(name),
+            portal: c_string_bytes(portal),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn new_params_codes(name: &str, params: &[Parameter], codes: &[Format]) -> Self {
+        Self {
+            statement: c_string_bytes(name),
+            codes: codes.to_vec(),
+            params: params.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_params_codes_results(
+        name: &str,
+        params: &[Parameter],
+        codes: &[Format],
+        results: &[i16],
+    ) -> Self {
+        let mut me = Self::new_params_codes(name, params, codes);
+        let mut buf = bytes::BytesMut::with_capacity(results.len() * 2);
+        for result in results {
+            buf.put_i16(*result);
+        }
+        me.results = buf.freeze();
+
+        me
+    }
+
+    pub(crate) fn params_raw(&self) -> &[Parameter] {
+        &self.params
+    }
+
+    pub(crate) fn format_codes_raw(&self) -> &[Format] {
+        &self.codes
+    }
+
+    /// Push a parameter to the end of the parameter list with the given format.
+    ///
+    /// Handles format codes correctly per PostgreSQL semantics:
+    /// - If codes.len() == 0: all parameters use Text
+    /// - If codes.len() == 1: all parameters use that one format (uniform)
+    /// - If codes.len() == params.len() (and > 1): one-to-one mapping
+    pub(crate) fn push_param(&mut self, param: Parameter, format: Format) {
+        if self.codes.len() == 1 {
+            // Uniform format: if new format differs, expand to one-to-one
+            if self.codes[0] != format {
+                let existing_format = self.codes[0];
+                self.codes = vec![existing_format; self.params.len()];
+                self.codes.push(format);
+            }
+            // If format matches, keep uniform (no change to codes)
+        } else if self.codes.len() > 1 && self.codes.len() == self.params.len() {
+            // One-to-one mapping: add the new format
+            self.codes.push(format);
+        } else if self.codes.is_empty() && format == Format::Binary {
+            // No codes (all text): if adding binary, need to expand
+            self.codes = vec![Format::Text; self.params.len()];
+            self.codes.push(Format::Binary);
+        }
+        // If codes.len() == 0 and format is Text, no codes needed
+
+        self.params.push(param);
+        self.original = None;
+    }
+
+    /// Get the effective format for new parameters.
+    pub(crate) fn default_param_format(&self) -> Format {
+        if self.codes.len() == 1 {
+            self.codes[0]
+        } else if self.codes.is_empty() {
+            Format::Text
+        } else {
+            // One-to-one mapping: default to Text for new params
+            Format::Text
+        }
+    }
+}
+
+impl FromBytes for Bind {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        let original = bytes.clone();
+        code!(bytes, 'B');
+
+        let len = bytes.get_i32() as usize;
+        // Declared length includes itself (4 bytes) but not the code byte.
+        // Verify the remaining buffer has enough data.
+        if bytes.remaining() + 4 < len {
+            return Err(Error::UnexpectedEof);
+        }
+
+        let portal_len = c_string_buf_len(&bytes);
+        if portal_len == 0 {
+            return Err(Error::UnexpectedEof);
+        }
+        let portal = bytes.split_to(portal_len);
+
+        let statement_len = c_string_buf_len(&bytes);
+        if statement_len == 0 {
+            return Err(Error::UnexpectedEof);
+        }
+        let statement = bytes.split_to(statement_len);
+
+        from_utf8(&portal[0..portal.len() - 1])?;
+        from_utf8(&statement[0..statement.len() - 1])?;
+
+        if bytes.remaining() < 2 {
+            return Err(Error::UnexpectedEof);
+        }
+        let num_codes = bytes.get_u16();
+        if bytes.remaining() < num_codes as usize * 2 {
+            return Err(Error::UnexpectedEof);
+        }
+        let codes = (0..num_codes as usize)
+            .map(|_| match bytes.get_i16() {
+                0 => Format::Text,
+                _ => Format::Binary,
+            })
+            .collect();
+
+        if bytes.remaining() < 2 {
+            return Err(Error::UnexpectedEof);
+        }
+        let num_params = bytes.get_u16();
+        let mut params = Vec::with_capacity(num_params as usize);
+        for _ in 0..num_params as usize {
+            if bytes.remaining() < 4 {
+                return Err(Error::UnexpectedEof);
+            }
+            let len = bytes.get_i32();
+            let data = if len >= 0 {
+                if bytes.remaining() < len as usize {
+                    return Err(Error::UnexpectedEof);
+                }
+                bytes.split_to(len as usize)
+            } else {
+                Bytes::new()
+            };
+            params.push(Parameter { len, data });
+        }
+
+        if bytes.remaining() < 2 {
+            return Err(Error::UnexpectedEof);
+        }
+        let num_results = bytes.get_i16();
+        let results = if num_results > 0 {
+            let results_len = num_results as usize * 2;
+            if bytes.remaining() < results_len {
+                return Err(Error::UnexpectedEof);
+            }
+            bytes.split_to(results_len)
+        } else {
+            Bytes::new()
+        };
+
+        Ok(Self {
+            portal,
+            statement,
+            codes,
+            params,
+            results,
+            original: Some(original),
+        })
+    }
+}
+
+impl ToBytes for Bind {
+    fn to_bytes(&self) -> Bytes {
+        // Fast path.
+        if let Some(ref original) = self.original {
+            return original.clone();
+        }
+
+        let mut payload = Payload::named(self.code());
+        payload.reserve(self.len());
+
+        payload.put(self.portal.clone());
+        payload.put(self.statement.clone());
+        payload.put_u16(self.codes.len() as u16);
+        for code in &self.codes {
+            payload.put_i16(match code {
+                Format::Text => 0,
+                Format::Binary => 1,
+            });
+        }
+        payload.put_u16(self.params.len() as u16);
+        for param in &self.params {
+            payload.put_i32(param.len);
+            payload.put(&param.data[..]);
+        }
+        payload.put_i16((self.results.len() / 2) as i16);
+        payload.put(self.results.clone());
+        payload.freeze()
+    }
+}
+
+impl Protocol for Bind {
+    fn code(&self) -> char {
+        'B'
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        backend::{
+            pool::{Request, test::pool},
+            server::test::test_server,
+        },
+        net::{DataRow, Execute, Parse, ProtocolMessage, Sync, messages::ErrorResponse},
+    };
+
+    #[tokio::test]
+    async fn test_bind() {
+        let pool = pool();
+        let mut conn = pool.get(&Request::default()).await.unwrap();
+        let bind = Bind {
+            original: None,
+            portal: "\0".into(),
+            statement: "__pgdog_1\0".into(),
+            codes: vec![Format::Binary, Format::Text],
+            params: vec![
+                Parameter {
+                    len: 2,
+                    data: Bytes::copy_from_slice(&[0, 1]),
+                },
+                Parameter {
+                    len: 4,
+                    data: Bytes::from("test"),
+                },
+            ],
+            results: {
+                let mut buf = bytes::BytesMut::with_capacity(2);
+                buf.put_i16(0);
+                buf.freeze()
+            },
+        };
+        let bytes = bind.to_bytes();
+        let mut original = Bind::from_bytes(bytes.clone()).unwrap();
+        original.original = None;
+        assert_eq!(original, bind);
+        assert_eq!(bind.len(), bytes.len());
+        let mut c = bytes.clone();
+        let _ = c.get_u8();
+        let len = c.get_i32();
+
+        assert_eq!(len as usize + 1, bytes.len());
+
+        conn.send(&vec![ProtocolMessage::from(bind)].into())
+            .await
+            .unwrap();
+        let res = conn.read().await.unwrap();
+        let err = ErrorResponse::from_bytes(res.to_bytes()).unwrap();
+        assert_eq!(err.code, "26000");
+
+        let anon = Bind::default();
+        assert!(anon.anonymous());
+    }
+
+    #[tokio::test]
+    async fn test_jsonb() {
+        let mut server = test_server().await;
+        let parse = Parse::named("test", "SELECT $1::jsonb");
+        let binary_marker = String::from("\u{1}");
+        let json = r#"[{"name": "force_database_error", "type": "C", "value": "false"}, {"name": "__dbver__", "type": "C", "value": 2}]"#;
+        let jsonb = binary_marker + json;
+        let bind = Bind {
+            statement: "test\0".into(),
+            codes: vec![Format::Binary],
+            params: vec![Parameter {
+                data: Bytes::copy_from_slice(jsonb.as_bytes()),
+                len: jsonb.len() as i32,
+            }],
+            ..Default::default()
+        };
+        let execute = Execute::new();
+        server
+            .send(
+                &vec![
+                    ProtocolMessage::from(parse),
+                    bind.into(),
+                    execute.into(),
+                    Sync.into(),
+                ]
+                .into(),
+            )
+            .await
+            .unwrap();
+
+        for c in ['1', '2', 'D', 'C', 'Z'] {
+            let msg = server.read().await.unwrap();
+            if msg.code() == 'E' {
+                let err = ErrorResponse::from_bytes(msg.to_bytes()).unwrap();
+                panic!("{:?}", err);
+            }
+
+            if msg.code() == 'D' {
+                let dr = DataRow::from_bytes(msg.to_bytes()).unwrap();
+                let r = dr.get::<String>(0, Format::Binary).unwrap();
+                assert_eq!(r, json);
+            }
+            assert_eq!(msg.code(), c);
+        }
+    }
+
+    #[test]
+    fn test_large_parameter_count_round_trip() {
+        let count = 35_000;
+        let params: Vec<Parameter> = (0..count).map(|_| Parameter::new_null()).collect();
+        let bind = Bind::new_params("__pgdog_large", &params);
+
+        let bytes = bind.to_bytes();
+        let decoded = Bind::from_bytes(bytes.clone()).unwrap();
+
+        assert_eq!(decoded.params_raw().len(), count);
+        assert_eq!(decoded.codes.len(), 0);
+        assert_eq!(decoded.statement(), "__pgdog_large");
+        assert_eq!(bytes.len(), decoded.len());
+    }
+}

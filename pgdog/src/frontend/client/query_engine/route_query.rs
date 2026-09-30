@@ -1,0 +1,265 @@
+use pgdog_config::PoolerMode;
+use tracing::trace;
+
+use crate::frontend::router::Error as RouterError;
+use crate::frontend::router::parser::Error as ParserError;
+use crate::frontend::router::parser::rewrite::statement::plan::RewriteResult;
+use crate::frontend::router::parser::rewrite::statement::projection;
+use crate::frontend::router::sharding::lookup;
+use crate::util::safe_timeout;
+
+use super::*;
+
+#[derive(Debug, Clone)]
+pub(crate) enum ClusterCheck {
+    Ok,
+    Offline,
+}
+
+impl QueryEngine {
+    /// Check that the cluster is still valid and online.
+    pub(crate) async fn cluster_check(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &ClientRequest,
+    ) -> Result<ClusterCheck, Error> {
+        // Admin doesn't have a cluster.
+        let res = match self.backend.cluster() {
+            Ok(cluster) => {
+                if !context.in_transaction() && !cluster.online() {
+                    let identifier = cluster.identifier();
+
+                    // Reload cluster config.
+                    self.backend.safe_reload().await?;
+
+                    if self.backend.cluster().is_ok() {
+                        Ok(ClusterCheck::Ok)
+                    } else {
+                        self.error_response(
+                            context,
+                            client_request,
+                            ErrorResponse::connection(&identifier.user, &identifier.database),
+                        )
+                        .await?;
+                        Ok(ClusterCheck::Offline)
+                    }
+                } else {
+                    Ok(ClusterCheck::Ok)
+                }
+            }
+            _ => Ok(ClusterCheck::Ok),
+        };
+
+        if let Ok(ClusterCheck::Ok) = res {
+            // Wait for boot-time maintenance before we throw traffic at the cluster.
+            if let Ok(cluster) = self.backend.cluster() {
+                safe_timeout(
+                    context.timeouts.query_timeout(&State::Active),
+                    cluster.wait_ready(),
+                )
+                .await
+                .map_err(|_| Error::ClusterStart)?;
+            }
+            res
+        } else {
+            res
+        }
+    }
+
+    pub(super) async fn route_query(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &mut ClientRequest,
+        rewrite_result: Option<&RewriteResult>,
+    ) -> Result<bool, Error> {
+        // Check that we can route this transaction at all.
+        if self.backend.pooler_mode() == PoolerMode::Statement && client_request.is_begin() {
+            self.error_response(
+                context,
+                client_request,
+                ErrorResponse::transaction_statement_mode(),
+            )
+            .await?;
+            return Ok(false);
+        }
+
+        let cluster = match self.backend.cluster() {
+            Ok(cluster) => cluster,
+            _ => {
+                return Ok(true);
+            }
+        };
+
+        let router_context = RouterContext::new(
+            client_request,
+            cluster,
+            context.params,
+            context.transaction,
+            context.sticky,
+        )?;
+        let mut result = self.router.query(router_context).map(|_| ());
+
+        // Resolve sharding key lookups that missed the cache and route
+        // the query once more, with the translations handed to the
+        // second pass through the router context. Parsing is
+        // deterministic, so the second pass asks for exactly the keys
+        // the first pass collected and can't miss: no retry loop. A
+        // lookup that can't be resolved fails the statement: routing
+        // by the untranslated value could put it on the wrong shard.
+        if result.is_ok() {
+            let pending = self.router.command().route().pending_lookups().to_vec();
+            if !pending.is_empty() {
+                match lookup::resolve(cluster, pending).await {
+                    Ok(resolved) => {
+                        let router_context = RouterContext::new(
+                            client_request,
+                            cluster,
+                            context.params,
+                            context.transaction,
+                            context.sticky,
+                        )?
+                        .with_resolved_lookups(resolved);
+                        result = self.router.query(router_context).map(|_| ());
+
+                        // Defensive: can't happen unless routing stops
+                        // being deterministic.
+                        if result.is_ok()
+                            && !self.router.command().route().pending_lookups().is_empty()
+                        {
+                            self.error_response(
+                                context,
+                                client_request,
+                                ErrorResponse::sharding_key_lookup(
+                                    "lookups did not resolve routing",
+                                ),
+                            )
+                            .await?;
+                            return Ok(false);
+                        }
+                    }
+
+                    Err(response) => {
+                        self.error_response(context, client_request, response)
+                            .await?;
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        match result {
+            Ok(()) => {
+                let command = self.router.command();
+                client_request.route = Some(command.route().clone());
+                trace!("routing {:#?} to {:#?}", client_request.messages, command,);
+
+                projection::finalize_after_route(
+                    client_request,
+                    &cluster.schema(),
+                    rewrite_result.and_then(RewriteResult::offset_plan),
+                )?;
+
+                if let Some(rewrite_result) = rewrite_result {
+                    rewrite_result.apply_after_route(client_request)?;
+                }
+
+                // Only validate shard placement for requests that actually execute
+                // a query. Bare protocol-control batches (e.g. a lone Sync or Flush)
+                // route to a default/cross-shard target but must still be forwarded
+                // to the already-connected backend to finish the exchange.
+                if client_request.is_executable() && Self::is_shard_switch(command, &self.backend) {
+                    self.error_response(
+                        context,
+                        client_request,
+                        ErrorResponse::direct_shard_mismatch(),
+                    )
+                    .await?;
+                    return Ok(false);
+                }
+            }
+
+            Err(RouterError::Parser(ParserError::OmniWriteWithDirective)) => {
+                self.error_response(
+                    context,
+                    client_request,
+                    ErrorResponse::omni_write_with_directive(),
+                )
+                .await?;
+
+                return Ok(false);
+            }
+            Err(RouterError::Parser(ParserError::UnmappedShardKey(shard_key))) => {
+                self.error_response(
+                    context,
+                    client_request,
+                    ErrorResponse::unmapped_sharding_key_in_cross_shard_disabled(
+                        shard_key.as_str(),
+                    ),
+                )
+                .await?;
+
+                return Ok(false);
+            }
+            Err(err) => {
+                self.error_response(
+                    context,
+                    client_request,
+                    ErrorResponse::syntax(err.to_string().as_str()),
+                )
+                .await?;
+
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    // Caller switched shards mid-transaction and the transaction is pinned
+    // to one shard only.
+    fn is_shard_switch(command: &Command, backend: &Connection) -> bool {
+        if let Shard::Direct(shard) = command.route().shard() {
+            // Round robin doesn't matter, any shard
+            // can answer that query.
+            if command
+                .route()
+                .shard_with_priority()
+                .source()
+                .is_round_robin()
+            {
+                return false;
+            }
+            // Session mode shouldn't trigger any checks,
+            // you're on your own here.
+            if backend.session_mode() {
+                return false;
+            }
+            if let Some(connected_shard) = backend.direct_shard_number()
+                && *shard != connected_shard
+            {
+                return true;
+            }
+        } else if let Command::Query(route) = command {
+            // Tried to run a cross-shard query while connected to one shard only.
+            if route.is_cross_shard() && backend.direct_shard_number().is_some() {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::backend::pool::Connection;
+
+    use super::QueryEngine;
+
+    impl QueryEngine {
+        /// Get mutable reference to the backend connection.
+        pub(crate) fn backend(&mut self) -> &mut Connection {
+            &mut self.backend
+        }
+    }
+}

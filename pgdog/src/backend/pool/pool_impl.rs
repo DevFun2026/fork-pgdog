@@ -1,0 +1,533 @@
+//! Connection pool.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use futures::future::try_join_all;
+use once_cell::sync::{Lazy, OnceCell};
+use parking_lot::RwLock;
+use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
+use pgdog_config::Role;
+use tokio::sync::Notify;
+use tokio::time::Instant;
+use tracing::{debug, error};
+
+use crate::backend::pool::LsnStats;
+use crate::backend::{ConnectReason, DisconnectReason, Server, ServerOptions};
+use crate::config::PoolerMode;
+use crate::net::messages::{BackendPid, FrontendPid};
+use crate::net::{Liveness, Parameter, Parameters};
+
+use super::inner::CheckInResult;
+use super::{
+    Address, Comms, Config, Error, Guard, Healtcheck, Inner, Monitor, Oids, PoolConfig, Request,
+    State, Stats, Waiting,
+    lb::TargetHealth,
+    lsn_monitor::{LsnMonitor, ReplicaLag},
+};
+use crate::util::safe_timeout;
+
+static ID_COUNTER: Lazy<Arc<AtomicU64>> = Lazy::new(|| Arc::new(AtomicU64::new(0)));
+fn next_pool_id() -> u64 {
+    ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Connection pool.
+#[derive(Clone)]
+pub(crate) struct Pool {
+    inner: Arc<InnerSync>,
+}
+
+pub(crate) struct InnerSync {
+    pub(super) comms: Comms,
+    pub(super) addr: Address,
+    pub(super) inner: Mutex<Inner>,
+    pub(super) id: u64,
+    pub(super) config: Config,
+    pub(super) health: TargetHealth,
+    pub(super) params: OnceCell<Parameters>,
+    pub(super) lsn_stats: RwLock<LsnStats>,
+    pub(super) lsn_role_change: Notify,
+    pub(super) oids: Arc<Oids>,
+}
+
+impl std::fmt::Debug for Pool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pool")
+            .field("addr", &self.inner.addr)
+            .finish()
+    }
+}
+
+impl Pool {
+    #[cfg(test)]
+    pub(crate) fn new(config: &PoolConfig) -> Self {
+        Self::with_oid_mapping(config, Default::default())
+    }
+
+    /// Create new connection pool.
+    pub(crate) fn with_oid_mapping(config: &PoolConfig, oids: Arc<Oids>) -> Self {
+        let id = next_pool_id();
+        Self {
+            inner: Arc::new(InnerSync {
+                comms: Comms::new(),
+                addr: config.address.clone(),
+                inner: Mutex::new(Inner::new(config.config, id)),
+                id,
+                config: config.config,
+                health: TargetHealth::new(),
+                params: OnceCell::new(),
+                lsn_stats: RwLock::new(LsnStats::default()),
+                lsn_role_change: Notify::new(),
+                oids,
+            }),
+        }
+    }
+
+    /// Test pool, no connections.
+    #[cfg(test)]
+    pub(crate) fn new_test() -> Self {
+        let config = PoolConfig {
+            address: Address::new_test(),
+            config: Config::default(),
+        };
+
+        Self::new(&config)
+    }
+
+    pub(crate) fn inner(&self) -> &InnerSync {
+        &self.inner
+    }
+
+    pub(crate) fn healthy(&self) -> bool {
+        self.inner.health.healthy()
+    }
+
+    /// Launch the maintenance loop, bringing the pool online.
+    pub(crate) fn launch(&self) {
+        let mut guard = self.lock();
+        if !guard.online {
+            guard.online = true;
+            Monitor::run(self);
+            LsnMonitor::run(self);
+        }
+    }
+
+    pub(crate) async fn get(&self, request: &Request) -> Result<Guard, Error> {
+        match safe_timeout(self.config().checkout_timeout, self.get_internal(request)).await {
+            Ok(Ok(conn)) => Ok(conn),
+            Err(_) => {
+                self.inner.health.toggle(false);
+                self.lock().stats.counts.checkout_timeouts += 1;
+                Err(Error::CheckoutTimeout)
+            }
+            Ok(Err(err)) => {
+                self.inner.health.toggle(false);
+                Err(err)
+            }
+        }
+    }
+
+    /// Get a connection from the pool.
+    async fn get_internal(&self, request: &Request) -> Result<Guard, Error> {
+        loop {
+            let pool = self.clone();
+
+            // Fast path, idle connection probably available.
+            let (server, granted_at, paused) = {
+                // Ask for time before we acquire the lock
+                // and only if we actually waited for a connection.
+                let granted_at = request.created_at;
+                let elapsed = granted_at.saturating_duration_since(request.created_at);
+                let mut guard = self.lock();
+
+                if !guard.online {
+                    return Err(Error::Offline);
+                }
+
+                let conn = guard.take(request)?;
+
+                if conn.is_some() {
+                    guard.stats.counts.wait_time += elapsed;
+                    guard.stats.counts.server_assignment_count += 1;
+                    if request.read {
+                        guard.stats.counts.reads += 1;
+                    } else {
+                        guard.stats.counts.writes += 1;
+                    }
+                }
+
+                (conn, granted_at, guard.paused)
+            };
+
+            if paused {
+                self.comms().ready.notified().await;
+            }
+
+            let (mut server, granted_at) = if let Some(server) = server {
+                (Guard::new(pool, server, granted_at), granted_at)
+            } else {
+                // Slow path, pool is empty, will create new connection
+                // or wait for one to be returned if the pool is maxed out.
+                let mut waiting = Waiting::new(pool, request)?;
+                waiting.wait().await?
+            };
+
+            server
+                .prepared_statements_mut()
+                .configure(self.inner.config.prepared_statements);
+            server.set_pooler_mode(self.inner.config.pooler_mode);
+
+            match self
+                .maybe_healthcheck(
+                    server,
+                    self.inner.config.healthcheck_timeout,
+                    self.inner.config.healthcheck_interval,
+                    granted_at,
+                )
+                .await
+            {
+                Ok(conn) => return Ok(conn),
+                // Try another connection.
+                Err(Error::HealthcheckError) => continue,
+                Err(Error::ServerClosed) => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Server parameters
+    pub(crate) fn cached_params(&self) -> Option<&Parameters> {
+        self.inner.params.get()
+    }
+
+    /// Record the server parameters of a newly created connection
+    pub(super) fn cache_params(&self, params: &Parameters) {
+        if self.inner.params.get().is_none() {
+            let _ = self.inner.params.set(params.clone());
+        }
+    }
+
+    /// Get server parameters, fetch them if necessary.
+    pub(crate) async fn params(&self, request: &Request) -> Result<&Parameters, Error> {
+        if let Some(params) = self.inner.params.get() {
+            Ok(params)
+        } else {
+            let conn = self.get(request).await?;
+            let params = conn.params().clone();
+            Ok(self.inner.params.get_or_init(|| params))
+        }
+    }
+
+    /// Perform a health check on the connection if one is needed.
+    async fn maybe_healthcheck(
+        &self,
+        mut conn: Guard,
+        healthcheck_timeout: Duration,
+        healthcheck_interval: Duration,
+        now: Instant,
+    ) -> Result<Guard, Error> {
+        if conn.liveness() != Liveness::Clean {
+            conn.stats_mut().state(crate::state::State::ForceClose);
+            conn.disconnect_reason(DisconnectReason::ServerClosed);
+            return Err(Error::ServerClosed);
+        }
+
+        let mut healthcheck = Healtcheck::conditional(
+            &mut conn,
+            self,
+            healthcheck_interval,
+            healthcheck_timeout,
+            now,
+        );
+
+        if let Err(err) = healthcheck.healthcheck().await {
+            conn.disconnect_reason(DisconnectReason::Unhealthy);
+            drop(conn);
+            self.inner.health.toggle(false);
+            return Err(err);
+        } else if !self.inner.health.healthy() {
+            self.inner.health.toggle(true);
+        }
+
+        Ok(conn)
+    }
+
+    /// Check the connection back into the pool.
+    pub(super) fn checkin(&self, mut server: Box<Server>) -> Result<(), Error> {
+        // Server is checked in right after transaction finished
+        // in transaction mode but can be checked in anytime in session mode.
+        let now = if server.pooler_mode() == &PoolerMode::Session {
+            Instant::now()
+        } else {
+            server.stats().last_used()
+        };
+
+        let counts = {
+            let stats = server.stats_mut();
+            stats.clear_client_id();
+            let counts = stats.reset_last_checkout();
+            stats.update();
+            counts
+        };
+
+        // Check everything and maybe check the connection
+        // into the idle pool.
+        let CheckInResult {
+            server_error,
+            replenish,
+        } = { self.lock().maybe_check_in(server, now, counts, false)? };
+
+        if server_error {
+            error!(
+                "pool received broken server connection, closing [{}]",
+                self.addr()
+            );
+            self.inner.health.toggle(false);
+        }
+
+        // Notify maintenance that we need a new connection because
+        // the one we tried to check in was broken.
+        if replenish {
+            self.comms().request.notify_one();
+        }
+
+        Ok(())
+    }
+
+    /// Send a cancellation request if the client is connected to a server.
+    pub(crate) async fn cancel(&self, id: FrontendPid) -> Result<(), super::super::Error> {
+        // Must NOT hold the lock while doing async I/O.
+        let key = self.lock().cancel_key(id).cloned();
+        if let Some(key) = key {
+            Server::cancel(self.addr(), key).await?;
+        }
+        Ok(())
+    }
+
+    /// Connection pool unique identifier.
+    pub(crate) fn id(&self) -> u64 {
+        self.inner.id
+    }
+
+    /// Take connections from the pool and tell all idle ones to be returned
+    /// to a new instance of the pool.
+    ///
+    /// This shuts down the pool.
+    pub(crate) fn move_conns_to(&self, destination: &Pool) -> Result<(), Error> {
+        // Ensure no deadlock.
+        assert!(self.inner.id != destination.id());
+        let now = Instant::now();
+
+        {
+            let mut from_guard = self.lock();
+            let mut to_guard = destination.lock();
+
+            // Propagate pause state so a paused database stays paused after reload.
+            to_guard.paused = from_guard.paused;
+
+            // Preserve cumulative pool metrics reported by SHOW STATS and SHOW POOLS.
+            to_guard.stats = from_guard.stats;
+            to_guard.errors = from_guard.errors;
+            to_guard.out_of_sync = from_guard.out_of_sync;
+            to_guard.re_synced = from_guard.re_synced;
+            to_guard.force_close = from_guard.force_close;
+            from_guard.online = false;
+
+            let (idle, taken) = from_guard.move_conns_to(destination);
+            for server in idle {
+                to_guard.put(server, now)?;
+            }
+            to_guard.set_taken(taken);
+        }
+
+        self.shutdown();
+
+        Ok(())
+    }
+
+    /// Reset cumulative statistics for this pool.
+    pub(crate) fn reset_stats(&self) {
+        let mut guard = self.lock();
+        guard.stats = Stats::default();
+        guard.errors = 0;
+        guard.out_of_sync = 0;
+        guard.re_synced = 0;
+        guard.force_close = 0;
+    }
+
+    /// The two pools refer to the same database.
+    pub(crate) fn has_compatible_address_with(&self, other: &Pool) -> bool {
+        self.addr().compatible(other.addr())
+    }
+
+    /// Pause pool, closing all open connections.
+    pub(crate) fn pause(&self) {
+        let mut guard = self.lock();
+        guard.dump_idle();
+        guard.paused = true;
+    }
+
+    /// Send a cancellation request for all running queries.
+    pub(crate) async fn cancel_all(&self) -> Result<(), Error> {
+        let addr = self.addr().clone();
+        // Collect into a Vec to drop the pool lock before awaiting
+        let futures: Vec<_> = self
+            .lock()
+            .cancel_keys()
+            .map(|key| Server::cancel(&addr, key.clone()))
+            .collect();
+
+        try_join_all(futures)
+            .await
+            .map_err(|_| Error::FastShutdown)?;
+        Ok(())
+    }
+
+    /// Resume the pool.
+    pub(crate) fn resume(&self) {
+        {
+            let mut guard = self.lock();
+            guard.paused = false;
+        }
+
+        self.comms().ready.notify_waiters();
+    }
+
+    /// Create a connection to the pool, untracked by the logic here.
+    pub(crate) async fn standalone(&self, reason: ConnectReason) -> Result<Server, Error> {
+        Monitor::create_connection(self, reason).await
+    }
+
+    /// Mark this pool offline and evict idle connections.
+    ///
+    /// Called from two contexts: atomic pool replacement (where a new generation
+    /// is swapped in immediately after) and process shutdown. The operation is the
+    /// same in both cases: set `online = false`, dump idle connections, and notify
+    /// any waiters so they return `Error::Offline` rather than blocking forever.
+    pub(crate) fn shutdown(&self) {
+        debug!(
+            host = %self.addr().host,
+            port = self.addr().port,
+            database = %self.addr().database_name,
+            user = %self.addr().user,
+            "pool offline"
+        );
+        let mut guard = self.lock();
+        guard.online = false;
+        guard.dump_idle();
+        guard.close_waiters(Error::Offline);
+        self.comms().shutdown.cancel();
+        self.comms().ready.notify_waiters();
+    }
+
+    /// Sets the `Pool` offline (to refuse more connections)
+    /// Does not dump idle connections or shutdown.
+    pub(crate) fn set_offline(self) {
+        let mut guard = self.lock();
+        guard.online = false;
+    }
+
+    /// Pool exclusive lock.
+    pub(super) fn lock(&self) -> MutexGuard<'_, RawMutex, Inner> {
+        self.inner.inner.lock()
+    }
+
+    /// Mark or unmark a checked-out backend as pinned to its client.
+    ///
+    /// Called by [`Guard::set_locked`] when the frontend takes or releases an
+    /// advisory lock / manual pin, so `sv_locked` reflects reality per-pool.
+    /// On checkin the `Taken` entry is removed entirely, so no explicit
+    /// cleanup is needed on drop.
+    pub(crate) fn set_locked(&self, backend: BackendPid, locked: bool) {
+        self.lock().set_locked(backend, locked);
+    }
+
+    /// Internal notifications.
+    pub(super) fn comms(&self) -> &Comms {
+        &self.inner.comms
+    }
+
+    /// Pool address.
+    pub(crate) fn addr(&self) -> &Address {
+        &self.inner.addr
+    }
+
+    /// Get pool configuration.
+    pub(crate) fn config(&self) -> &Config {
+        &self.inner.config
+    }
+
+    pub(crate) fn oids(&self) -> &Arc<Oids> {
+        &self.inner.oids
+    }
+
+    /// Get startup parameters for new server connections.
+    pub(super) fn server_options(&self) -> ServerOptions {
+        let mut options = ServerOptions::default();
+
+        let config = self.inner.config;
+
+        if let Some(statement_timeout) = config.statement_timeout {
+            options.add(Parameter {
+                name: "statement_timeout".into(),
+                value: statement_timeout.as_millis().to_string().into(),
+            });
+        }
+
+        if let Some(lock_timeout) = config.lock_timeout {
+            options.add(Parameter {
+                name: "lock_timeout".into(),
+                value: lock_timeout.as_millis().to_string().into(),
+            });
+        }
+
+        if config.replication_mode {
+            options.add(Parameter {
+                name: "replication".into(),
+                value: "database".into(),
+            });
+        }
+
+        if config.read_only {
+            options.add(Parameter {
+                name: "default_transaction_read_only".into(),
+                value: "on".into(),
+            });
+        }
+
+        options
+    }
+
+    /// Pool state.
+    pub(crate) fn state(&self) -> State {
+        State::get(self)
+    }
+
+    /// Get replica lag real quick.
+    pub(crate) fn replica_lag(&self) -> ReplicaLag {
+        self.lock().replica_lag
+    }
+
+    /// LSN stats
+    pub(crate) fn lsn_stats(&self) -> LsnStats {
+        *self.inner().lsn_stats.read()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_lsn_stats(&self, stats: LsnStats) {
+        *self.inner().lsn_stats.write() = stats;
+    }
+
+    /// Set pool role returning true if the role changed.
+    pub(crate) fn set_role(&self, role: Role) -> bool {
+        self.lock().set_role(role)
+    }
+
+    /// Update pool configuration used in internals.
+    #[cfg(test)]
+    pub(crate) fn update_config(&self, config: Config) {
+        self.lock().config = config;
+    }
+}

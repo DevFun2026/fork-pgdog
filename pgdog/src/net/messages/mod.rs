@@ -1,0 +1,349 @@
+//! PostgreSQL wire protocol messages.
+pub(crate) mod auth;
+pub(crate) mod backend_key;
+pub(crate) mod backend_pid;
+pub(crate) mod bind;
+pub(crate) mod bind_complete;
+pub(crate) mod buffer;
+pub(crate) mod close;
+pub(crate) mod close_complete;
+pub(crate) mod command_complete;
+pub(crate) mod copy_data;
+pub(crate) mod copy_done;
+pub(crate) mod copy_fail;
+pub(crate) mod data_row;
+pub(crate) mod data_types;
+pub(crate) mod describe;
+pub(crate) mod empty_query_response;
+pub(crate) mod error_response;
+pub(crate) mod execute;
+pub(crate) mod fastpath;
+pub(crate) mod flush;
+pub(crate) mod frontend_pid;
+pub(crate) mod hello;
+pub(crate) mod negotiate_protocol_version;
+pub(crate) mod no_data;
+pub(crate) mod notice_response;
+pub(crate) mod notification_response;
+pub(crate) mod parameter_description;
+pub(crate) mod parameter_status;
+pub(crate) mod parse;
+pub(crate) mod parse_complete;
+pub(crate) mod payload;
+pub(crate) mod prelude;
+pub(crate) mod prepare;
+pub(crate) mod protocol_version;
+pub(crate) mod query;
+pub(crate) mod replication;
+pub(crate) mod rfq;
+pub(crate) mod row_description;
+pub(crate) mod sync;
+pub(crate) mod terminate;
+
+pub(crate) use auth::{Authentication, Password, scram_challenge};
+pub(crate) use backend_key::BackendKeyData;
+pub(crate) use backend_pid::BackendPid;
+pub(crate) use bind::{Bind, Format, ParameterWithFormat};
+pub(crate) use bind_complete::BindComplete;
+pub(crate) use buffer::MessageBuffer;
+pub(crate) use close::Close;
+pub(crate) use close_complete::CloseComplete;
+pub(crate) use command_complete::CommandComplete;
+pub(crate) use copy_data::CopyData;
+pub(crate) use copy_done::CopyDone;
+pub(crate) use copy_fail::CopyFail;
+pub(crate) use data_row::{DataRow, ToDataRowColumn};
+pub(crate) use data_types::*;
+pub(crate) use describe::Describe;
+pub(crate) use empty_query_response::EmptyQueryResponse;
+pub(crate) use error_response::ErrorResponse;
+pub(crate) use execute::Execute;
+pub(crate) use fastpath::Fastpath;
+pub(crate) use flush::Flush;
+pub(crate) use frontend_pid::FrontendPid;
+pub(crate) use hello::Startup;
+pub(crate) use negotiate_protocol_version::NegotiateProtocolVersion;
+pub(crate) use no_data::NoData;
+pub(crate) use notice_response::NoticeResponse;
+pub(crate) use notification_response::NotificationResponse;
+pub(crate) use parameter_description::ParameterDescription;
+pub(crate) use parameter_status::ParameterStatus;
+pub(crate) use parse::Parse;
+pub(crate) use parse_complete::ParseComplete;
+pub(crate) use payload::Payload;
+pub(crate) use prepare::{PREPARE_TEMPLATE_NAME, Prepare};
+pub(crate) use protocol_version::ProtocolVersion;
+pub(crate) use query::Query;
+pub(crate) use rfq::{ReadyForQuery, TransactionState};
+pub(crate) use row_description::{Field, RowDescription};
+pub(crate) use sync::Sync;
+pub(crate) use terminate::Terminate;
+
+use crate::{net::Error, stats::memory::MemoryUsage};
+
+use bytes::Bytes;
+
+/// Encode a string as a NULL-terminated C string in a single allocation.
+pub(crate) fn c_string_bytes(value: &str) -> Bytes {
+    Bytes::from([value.as_bytes(), b"\0"].concat())
+}
+
+/// Convert a Rust struct to a PostgreSQL wire protocol message.
+pub(crate) trait ToBytes {
+    /// Create the protocol message as an array of bytes.
+    /// The message must conform to the spec. No additional manipulation
+    /// of the data will take place.
+    fn to_bytes(&self) -> Bytes;
+}
+
+/// Convert a PostgreSQL wire protocol message to a Rust struct.
+pub(crate) trait FromBytes: Sized {
+    /// Perform the conversion.
+    fn from_bytes(bytes: Bytes) -> Result<Self, Error>;
+}
+
+/// PostgreSQL wire protocol message.
+pub(crate) trait Protocol: ToBytes + FromBytes + std::fmt::Debug {
+    /// 99% of messages have a letter code.
+    fn code(&self) -> char;
+
+    /// Convert to message.
+    fn message(&self) -> Message {
+        Message::new(self.to_bytes())
+    }
+
+    /// Message is part of a stream and should not be buffered.
+    fn streaming(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone, PartialEq, Default, Copy, Debug)]
+pub(crate) enum Source {
+    /// Message synthesised by pgdog itself (not from any real connection).
+    /// This is the default: any message constructed without an explicit source is internal.
+    #[default]
+    Internal,
+    /// Message received from a PostgreSQL backend connection.
+    Backend(BackendPid),
+    /// Message received from the client (frontend).
+    Frontend,
+}
+
+impl Source {
+    pub(crate) fn backend_id(&self) -> Option<BackendPid> {
+        if let Self::Backend(id) = self {
+            Some(*id)
+        } else {
+            None
+        }
+    }
+}
+
+/// PostgreSQL protocol message.
+#[derive(Clone, Default, PartialEq)]
+pub(crate) struct Message {
+    payload: Bytes,
+    stream: bool,
+    source: Source,
+}
+
+impl MemoryUsage for Message {
+    fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Bytes>() + self.stream.memory_usage() + std::mem::size_of::<Source>()
+    }
+}
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.code() {
+            'Q' => Query::from_bytes(self.payload()).unwrap().fmt(f),
+            'D' => match self.source {
+                Source::Frontend => Describe::from_bytes(self.payload()).unwrap().fmt(f),
+                Source::Backend(_) | Source::Internal => {
+                    DataRow::from_bytes(self.payload()).unwrap().fmt(f)
+                }
+            },
+            'P' => Parse::from_bytes(self.payload()).unwrap().fmt(f),
+            'B' => Bind::from_bytes(self.payload()).unwrap().fmt(f),
+            'S' => match self.source {
+                Source::Frontend => f.debug_struct("Sync").finish(),
+                Source::Backend(_) | Source::Internal => {
+                    ParameterStatus::from_bytes(self.payload()).unwrap().fmt(f)
+                }
+            },
+            '1' => ParseComplete::from_bytes(self.payload()).unwrap().fmt(f),
+            '2' => BindComplete::from_bytes(self.payload()).unwrap().fmt(f),
+            '3' => f.debug_struct("CloseComplete").finish(),
+            'E' => match self.source {
+                Source::Frontend => f.debug_struct("Execute").finish(),
+                Source::Backend(_) | Source::Internal => {
+                    ErrorResponse::from_bytes(self.payload()).unwrap().fmt(f)
+                }
+            },
+            'T' => RowDescription::from_bytes(self.payload()).unwrap().fmt(f),
+            'Z' => ReadyForQuery::from_bytes(self.payload()).unwrap().fmt(f),
+            'C' => match self.source {
+                Source::Frontend => Close::from_bytes(self.payload()).unwrap().fmt(f),
+                Source::Backend(_) | Source::Internal => {
+                    CommandComplete::from_bytes(self.payload()).unwrap().fmt(f)
+                }
+            },
+            'd' => CopyData::from_bytes(self.payload()).unwrap().fmt(f),
+            'v' => NegotiateProtocolVersion::from_bytes(self.payload())
+                .unwrap()
+                .fmt(f),
+            'W' => f.debug_struct("CopyBothResponse").finish(),
+            'I' => f.debug_struct("EmptyQueryResponse").finish(),
+            't' => ParameterDescription::from_bytes(self.payload())
+                .unwrap()
+                .fmt(f),
+            'H' => f.debug_struct("Flush").finish(),
+            _ => f
+                .debug_struct("Message")
+                .field("payload", &self.payload())
+                .finish(),
+        }
+    }
+}
+
+impl ToBytes for Message {
+    fn to_bytes(&self) -> Bytes {
+        self.payload.clone()
+    }
+}
+
+impl Protocol for Message {
+    fn code(&self) -> char {
+        self.payload[0] as char
+    }
+
+    fn streaming(&self) -> bool {
+        self.stream
+    }
+}
+
+impl FromBytes for Message {
+    fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
+        Ok(Self {
+            payload: bytes,
+            stream: false,
+            source: Source::default(),
+        })
+    }
+}
+
+impl Message {
+    /// Create new message from network payload.
+    pub(crate) fn new(payload: Bytes) -> Self {
+        Self {
+            payload,
+            stream: false,
+            source: Source::default(),
+        }
+    }
+
+    /// This message is part of a stream and should be flushed asap.
+    pub(crate) fn stream(mut self, stream: bool) -> Self {
+        self.stream = stream;
+        self
+    }
+
+    /// Take the message payload.
+    pub(crate) fn payload(&self) -> Bytes {
+        self.payload.clone()
+    }
+
+    /// Number of bytes in the message.
+    pub(crate) fn len(&self) -> usize {
+        self.payload.len()
+    }
+
+    /// This message is coming from the backend.
+    pub(crate) fn backend(mut self, id: BackendPid) -> Self {
+        self.source = Source::Backend(id);
+        self
+    }
+
+    /// This message is coming from the frontend.
+    pub(crate) fn frontend(mut self) -> Self {
+        self.source = Source::Frontend;
+        self
+    }
+
+    /// Where is this message coming from?
+    pub(crate) fn source(&self) -> Source {
+        self.source
+    }
+
+    #[cfg(test)]
+    // FIXME(sage): This and transaction_error should use ReadyForQuery's code
+    pub(crate) fn in_transaction(&self) -> bool {
+        self.code() == 'Z' && matches!(self.payload[5] as char, 'T' | 'E')
+    }
+
+    pub(crate) fn transaction_error(&self) -> bool {
+        self.code() == 'Z' && self.payload[5] as char == 'E'
+    }
+
+    pub(crate) fn replace_payload(&mut self, bytes: Bytes) {
+        self.payload = bytes;
+    }
+}
+
+/// Check that the message we received is what we expected.
+/// Return an error otherwise.
+macro_rules! code {
+    ($code: expr_2021, $expected: expr_2021) => {{
+        let code = $code.get_u8() as char;
+        let expected = $expected as char;
+        if code != expected {
+            return Err(crate::net::Error::UnexpectedMessage(expected, code));
+        }
+    }};
+}
+
+pub(crate) use code;
+
+macro_rules! from_message {
+    ($ty:tt) => {
+        impl TryFrom<Message> for $ty {
+            type Error = crate::net::Error;
+
+            fn try_from(message: Message) -> Result<$ty, Self::Error> {
+                <$ty as FromBytes>::from_bytes(message.to_bytes())
+            }
+        }
+    };
+}
+
+from_message!(Authentication);
+from_message!(BackendKeyData);
+from_message!(Bind);
+from_message!(BindComplete);
+from_message!(Close);
+from_message!(CloseComplete);
+from_message!(CommandComplete);
+from_message!(CopyData);
+from_message!(CopyDone);
+from_message!(CopyFail);
+from_message!(DataRow);
+from_message!(Describe);
+from_message!(EmptyQueryResponse);
+from_message!(ErrorResponse);
+from_message!(Execute);
+from_message!(Fastpath);
+from_message!(Flush);
+from_message!(NegotiateProtocolVersion);
+from_message!(NoData);
+from_message!(NoticeResponse);
+from_message!(NotificationResponse);
+from_message!(ParameterDescription);
+from_message!(ParameterStatus);
+from_message!(Parse);
+from_message!(ParseComplete);
+from_message!(Query);
+from_message!(ReadyForQuery);
+from_message!(RowDescription);
+from_message!(Sync);
+from_message!(Terminate);

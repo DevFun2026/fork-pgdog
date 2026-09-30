@@ -1,0 +1,236 @@
+//! Communication to/from connected clients.
+
+use std::net::SocketAddr;
+use std::ops::Deref;
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use fnv::FnvHashMap as HashMap;
+use once_cell::sync::Lazy;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+
+use crate::net::Parameters;
+use crate::net::messages::{BackendKeyData, FrontendPid};
+
+use super::{ConnectedClient, Stats};
+
+static COMMS: Lazy<Comms> = Lazy::new(Comms::new);
+
+/// Get global communication channel.
+pub(crate) fn comms() -> Comms {
+    COMMS.clone()
+}
+
+/// Sync primitives shared between all clients.
+#[derive(Debug)]
+struct Global {
+    shutdown: CancellationToken,
+    // This uses the FNV hasher, which is safe,
+    // because FrontendPid is monotonically minted by us,
+    // not derived from untrusted client input.
+    clients: Arc<DashMap<FrontendPid, ConnectedClient>>,
+    tracker: TaskTracker,
+}
+
+/// Bi-directional communications between client and internals.
+#[derive(Clone, Debug)]
+pub(crate) struct Comms {
+    global: Arc<Global>,
+}
+
+impl Default for Comms {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Comms {
+    /// Create new communications channel between a client and pgDog.
+    fn new() -> Self {
+        Self {
+            global: Arc::new(Global {
+                shutdown: CancellationToken::new(),
+                clients: Arc::new(DashMap::default()),
+                tracker: TaskTracker::new(),
+            }),
+        }
+    }
+
+    /// Get all connected clients.
+    pub(crate) fn clients(&self) -> HashMap<FrontendPid, ConnectedClient> {
+        self.global
+            .clients
+            .iter()
+            .map(|client| (*client.key(), client.value().clone()))
+            .collect()
+    }
+
+    /// Get number of clients who are currently locked.
+    pub(crate) fn clients_locked_count(&self) -> usize {
+        self.global
+            .clients
+            .iter()
+            .filter(|client| client.stats.locked)
+            .count()
+    }
+
+    /// Number of connected clients.
+    pub(crate) fn clients_len(&self) -> usize {
+        self.global.clients.len()
+    }
+
+    pub(crate) fn tracker(&self) -> &TaskTracker {
+        &self.global.tracker
+    }
+
+    /// Get number of connected clients.
+    pub(crate) fn len(&self) -> usize {
+        self.global.clients.len()
+    }
+
+    /// New client connected.
+    pub(crate) fn connect(&self, key: BackendKeyData, addr: SocketAddr, params: &Parameters) {
+        let pid = FrontendPid::from(&key);
+        self.global
+            .clients
+            .insert(pid, ConnectedClient::new(key, addr, params));
+    }
+
+    /// Update client parameters.
+    pub(crate) fn update_params(&self, id: FrontendPid, params: Parameters) {
+        if let Some(mut entry) = self.global.clients.get_mut(&id) {
+            entry.paramters = params;
+        }
+    }
+
+    /// Client disconnected.
+    pub(crate) fn disconnect(&self, id: FrontendPid) {
+        self.global.clients.remove(&id);
+    }
+
+    /// Update stats.
+    pub(crate) fn update_stats(&self, id: FrontendPid, stats: Stats) {
+        if let Some(mut entry) = self.global.clients.get_mut(&id) {
+            entry.stats = stats;
+        }
+    }
+
+    /// Verify that a cancel request has a valid secret for the given client.
+    pub(crate) fn verify_cancel(&self, key: &BackendKeyData) -> bool {
+        let pid = FrontendPid::from(key);
+        self.global
+            .clients
+            .get(&pid)
+            .map(|client| client.key.secret.constant_time_eq(&key.secret))
+            .unwrap_or(false)
+    }
+
+    /// Tell clients pgDog is shutting down.
+    pub(crate) fn shutdown(&self) {
+        self.global.shutdown.cancel();
+        self.global.tracker.close();
+    }
+
+    /// Get the shutdown signal.
+    pub(crate) fn shutting_down(&self) -> CancellationToken {
+        self.global.shutdown.clone()
+    }
+
+    /// pgDog is shutting down now.
+    pub(crate) fn offline(&self) -> bool {
+        self.global.shutdown.is_cancelled()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClientComms {
+    comms: Comms,
+    id: FrontendPid,
+}
+
+impl Deref for ClientComms {
+    type Target = Comms;
+
+    fn deref(&self) -> &Self::Target {
+        &self.comms
+    }
+}
+
+impl ClientComms {
+    pub(crate) fn disconnect(&self) {
+        self.comms.disconnect(self.id);
+    }
+
+    pub(crate) fn update_stats(&self, stats: Stats) {
+        self.comms.update_stats(self.id, stats);
+    }
+
+    pub(crate) fn new(id: FrontendPid) -> Self {
+        Self { id, comms: comms() }
+    }
+
+    pub(crate) fn connect(&self, key: BackendKeyData, addr: SocketAddr, params: &Parameters) {
+        self.comms.connect(key, addr, params)
+    }
+
+    pub(crate) fn update_params(&self, params: &Parameters) {
+        self.comms.update_params(self.id, params.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use super::*;
+    use crate::net::{
+        Parameters,
+        messages::{BackendKeyData, ProtocolVersion},
+    };
+
+    fn addr() -> SocketAddr {
+        "127.0.0.1:5432".parse().unwrap()
+    }
+
+    #[test]
+    fn test_verify_cancel_correct_secret() {
+        let comms = Comms::default();
+        let key = BackendKeyData::new_frontend(ProtocolVersion::V3_0, FrontendPid::new());
+        comms.connect(key.clone(), addr(), &Parameters::default());
+        assert!(comms.verify_cancel(&key));
+    }
+
+    #[test]
+    fn test_verify_cancel_wrong_secret() {
+        let comms = Comms::default();
+        let key = BackendKeyData::new_frontend(ProtocolVersion::V3_0, FrontendPid::new());
+        comms.connect(key.clone(), addr(), &Parameters::default());
+
+        // Same pid, different secret.
+        let wrong = BackendKeyData::legacy(key.pid(), 0);
+        assert!(!comms.verify_cancel(&wrong));
+    }
+
+    #[test]
+    fn test_verify_cancel_unknown_pid() {
+        let comms = Comms::default();
+        // Nothing registered — any key must be rejected.
+        assert!(!comms.verify_cancel(&BackendKeyData::new_frontend(
+            ProtocolVersion::V3_0,
+            FrontendPid::new()
+        )));
+    }
+
+    #[test]
+    fn test_verify_cancel_after_disconnect() {
+        let comms = Comms::default();
+        let id = FrontendPid::new();
+        let key = BackendKeyData::new_frontend(ProtocolVersion::V3_0, id);
+        comms.connect(key.clone(), addr(), &Parameters::default());
+        assert!(comms.verify_cancel(&key));
+
+        comms.disconnect(id);
+        assert!(!comms.verify_cancel(&key));
+    }
+}

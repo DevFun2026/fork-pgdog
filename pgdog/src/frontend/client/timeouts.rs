@@ -1,0 +1,88 @@
+use std::time::Duration;
+
+use crate::{config::General, frontend::ClientRequest, state::State};
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Timeouts {
+    pub(super) query_timeout: Duration,
+    pub(super) client_idle_timeout: Duration,
+    pub(super) idle_in_transaction_timeout: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            query_timeout: Duration::MAX,
+            client_idle_timeout: Duration::MAX,
+            idle_in_transaction_timeout: Duration::MAX,
+        }
+    }
+}
+
+impl Timeouts {
+    pub(crate) fn from_config(general: &General) -> Self {
+        Self {
+            query_timeout: general.query_timeout(),
+            client_idle_timeout: general.client_idle_timeout(),
+            idle_in_transaction_timeout: general.client_idle_in_transaction_timeout(),
+        }
+    }
+
+    /// Get active query timeout.
+    pub(crate) fn query_timeout(&self, state: &State) -> Duration {
+        match state {
+            State::Active => self.query_timeout,
+            _ => Duration::MAX,
+        }
+    }
+
+    pub(crate) fn client_idle_timeout(
+        &self,
+        state: &State,
+        client_request: &ClientRequest,
+    ) -> Duration {
+        match state {
+            State::Idle => {
+                if client_request.messages.is_empty() {
+                    self.client_idle_timeout
+                } else {
+                    Duration::MAX
+                }
+            }
+            State::IdleInTransaction => {
+                // Client is sending the request, don't fire.
+                if !client_request.messages.is_empty() {
+                    Duration::MAX
+                } else {
+                    self.idle_in_transaction_timeout
+                }
+            }
+
+            _ => Duration::MAX,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{config::config, net::Query};
+
+    use super::*;
+
+    #[test]
+    fn test_idle_in_transaction_timeout() {
+        let config = config(); // Will be default.
+        let timeout = Timeouts::from_config(&config.config.general);
+
+        let actual =
+            timeout.client_idle_timeout(&State::IdleInTransaction, &ClientRequest::default());
+        assert_eq!(actual, timeout.idle_in_transaction_timeout);
+        assert_eq!(actual.as_millis(), i64::MAX as u128);
+
+        let actual = timeout.client_idle_timeout(
+            &State::IdleInTransaction,
+            &ClientRequest::from(vec![Query::new("SELECT 1").into()]),
+        );
+        assert_eq!(actual, Duration::MAX);
+    }
+}

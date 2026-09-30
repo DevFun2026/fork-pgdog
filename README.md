@@ -1,364 +1,716 @@
-# Project AI Template
+# DevFun2026 private PgDog repository
 
-A provider-neutral project starter for AI-assisted software delivery. Claude
-Code, Gemini via Antigravity CLI (`agy`), and Codex use the same canonical policy, 21 core workflow skills plus 4 on-demand UX/UI skills,
-Project Memory, architecture model, evidence gates, cross-provider review, and
-security/release process.
+This repository imports upstream PgDog while retaining the existing Project AI
+Template and both Git histories. It is an independent private repository, not a
+GitHub fork-network member.
 
-The repository separates two things deliberately:
+- [Import provenance and verification scope](docs/import/PGDOG_IMPORT.md)
+- [Original template README](docs/import/template-original/README.md)
+- [Original upstream agent instructions](docs/import/upstream-original/AGENTS.md)
 
-- `.agent/`, `scripts/agent`, provider adapters, tests, and documentation are
-  **template tooling**.
-- The application code you add beside them is **product code**. The tooling
-  governs and verifies it but is not an application framework or runtime
-  dependency.
+PgDog retains its upstream license; template tooling retains its original
+license and notices. See [third-party notices](THIRD_PARTY_NOTICES.md).
 
-## Requirements
+---
 
-- Git 2.30 or newer.
-- Python 3.11 or newer; the runtime uses only the standard library.
-- macOS or Linux for the shipped shell entry points and CI smoke tests.
-- At least one supported provider CLI only when running real cross-review.
-- `sandbox-exec` on macOS or Bubblewrap (`bwrap`) on Linux for provider-backed
-  review. Review fails closed when the host sandbox is unavailable.
+<p align="center">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="/.github/logo2-white.png" height="128" width="auto">
+      <source media="(prefers-color-scheme: light)" srcset="/.github/logo2_wide.png" height="128" width="auto">
+      <img alt="Fallback image description" src="/.github/logo2-white.png" height="128" width="auto">
+    </picture>
+</p>
 
-Check the local environment without installing anything:
+[![CI](https://github.com/levkk/pgdog/actions/workflows/ci.yml/badge.svg)](https://github.com/levkk/pgdog/actions/workflows/ci.yml)
 
-```sh
-./scripts/agent doctor --providers --json
+PgDog is an open source proxy for scaling PostgreSQL. It supports connection pooling, load balancing queries and sharding entire databases. Written in Rust, PgDog is fast, secure and can manage thousands of connections on commodity hardware.
+
+## Documentation
+
+&#128216; PgDog documentation can be **[found here](https://docs.pgdog.dev/)**. Any questions? Chat with us on **[Discord](https://discord.com/invite/CcBZkjSJdd)**.
+
+##### Enterprise edition
+
+&#127970; Enterprise edition (EE) documentation is available **[here](https://docs.pgdog.dev/enterprise_edition/)**. Changelog is available **[here](CHANGELOG-ENTERPRISE.md)**.
+
+## Quick start
+
+### Kubernetes
+
+Helm chart is **[here](https://github.com/pgdogdev/helm)**. To install it, run:
+
+```bash
+helm repo add pgdogdev https://helm.pgdog.dev
+helm install pgdog pgdogdev/pgdog
 ```
 
-## Start a project
+### AWS
 
-Use GitHub's **Use this template**, or clone and point the remote at your own
-repository:
+If you're using AWS RDS, you can deploy PgDog using one of two supported methods:
 
-```sh
-git clone https://github.com/DevFun2026/Project-AI-Template.git my-project
-cd my-project
+1. [Helm chart](https://github.com/pgdogdev/helm) with [EKS](https://aws.amazon.com/eks/), or a self-hosted Kubernetes cluster
+2. [Terraform module](https://github.com/pgdogdev/pgdog-ecs-terraform) to deploy PgDog on [ECS](https://aws.amazon.com/ecs/)
+
+### Try in Docker
+
+You can try PgDog quickly using Docker. Install [Docker Compose](https://docs.docker.com/compose/) and run:
+
+```
+docker-compose up
 ```
 
-Before initialization, review these choices with the project owner:
+Once started, you can connect to PgDog with psql or any other PostgreSQL client:
 
-- project name and exposure;
-- executable format/lint/test/build/smoke commands;
-- `baseline`, `standard`, or `high` security profile;
-- credential and sensitive-data handling;
-- provider order and review-package byte limit;
-- exact provider command arrays and required security scanners;
-- local memory budget and retention.
-
-Record the approved values in `.agent/config.toml`, or copy and review
-`.agent/templates/init-answers.json`, then run:
-
-```sh
-./scripts/agent init --answers init-answers.json
-./scripts/agent doctor --json
-./scripts/agent adapters check
-./scripts/agent docs check
+```
+PGPASSWORD=postgres psql -h 127.0.0.1 -p 6432 -U postgres
 ```
 
-Without `--answers`, `agent init` validates the existing configuration. With
-`--answers`, it deterministically writes `.agent/config.toml`. It then builds
-generated
-provider adapters and architecture outputs, and initializes private local
-memory. It does not create or modify product source.
+The demo comes with 3 shards and 2 sharded tables:
 
-## Lifecycle
+```sql
+INSERT INTO users (id, email) VALUES (1, 'admin@acme.com');
+INSERT INTO payments (id, user_id, amount) VALUES (1, 1, 100.0);
 
-The canonical entry point is `AGENTS.md`; provider files are intentionally thin.
-For context profiles, ranked memory, generated-copy review deduplication and
-planning tiers, see [Context efficiency](docs/context-efficiency.md).
-Agents discover the applicable `.agent/skills/*/SKILL.md` and follow this flow:
-
-1. Repository discovery and focused Project Memory retrieval.
-2. Brainstorming and explicit approval of consequential choices.
-3. Behavioral specification, architecture, ADR, and threat model.
-4. Dependency-ordered implementation plan.
-5. Test-driven implementation and systematic debugging.
-6. Fresh verification and ordinary code review.
-7. Independent cross-provider review and evidence-based adjudication.
-8. Security review, deterministic documentation sync, and release readiness.
-
-For routine editing, use the quick gate:
-
-```sh
-./scripts/agent verify quick --json
+SELECT * FROM users WHERE id = 1;
+SELECT * FROM payments WHERE user_id = 1;
 ```
 
-A newly cloned template intentionally reports `incomplete` until real project
-commands are configured. Missing or skipped commands never become a pass.
+## Features
 
-## UX/UI when needed
+&#128216; **[Configuration](https://docs.pgdog.dev/configuration/)**
 
-Use `./scripts/agent workflow guide --task interface` to select discovery,
-design-system, frontend-design or UX/UI review. References and artifact templates
-are loaded by phase; backend-only work does not need them. See
-[UX/UI guide](docs/ux-ui.md), [source audit](.agent/sources/UX_UI_AUDIT.md) and
-[third-party notices](THIRD_PARTY_NOTICES.md). Selected documentation is adapted
-with attribution, not installed as an external skill pack.
+All PgDog features are configurable and can be turned on and off. PgDog requires 2 configuration files to operate:
 
-## Project Memory
+1. `pgdog.toml`: hosts, sharding configuration, and other settings
+2. `users.toml`: usernames and passwords
 
-Project Memory avoids rescanning the whole repository every time a new agent or
-session starts. It uses three layers:
+### Example
 
-1. compact bootstrap/index context;
-2. focused search and lineage metadata;
-3. explicitly selected full records.
+Most options have reasonable defaults, so a basic configuration for a single user
+and database running on the same machine is pretty short:
 
-```sh
-./scripts/agent memory init
-./scripts/agent memory bootstrap --query "authentication architecture"
-./scripts/agent memory search "token rotation"
-./scripts/agent memory timeline MEM-EXAMPLE-001
-./scripts/agent memory show MEM-EXAMPLE-001
-./scripts/agent memory doctor --json
+**`pgdog.toml`**
+
+```toml
+[general]
+port = 6432
+default_pool_size = 10
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"
 ```
 
-To checkpoint durable learning, create a JSON file containing every
-`MemoryCandidate` field (`id`, `type`, `title`, `summary`, `details`,
-`components`, `paths`, `evidence`, `source_provider`, `source_session`,
-`branch`, `observed_commit`, `created_at`, `sensitivity`, and
-`reuse_guidance`) and run:
+**`users.toml`**
 
-```sh
-./scripts/agent memory checkpoint --file candidate.json
+```toml
+[[users]]
+name = "alice"
+database = "pgdog"
+password = "hunter2"
 ```
 
-Checkpointing creates an untrusted local candidate. Promotion is separate and
-reviewed:
+If a database in `pgdog.toml` doesn't have a user in `users.toml`, the connection pool for that database will not be created and users won't be able to connect.
 
-```sh
-./scripts/agent memory promote CAND-EXAMPLE-001
+If you'd like to try it out locally, create the database and user like so:
+
+```sql
+CREATE DATABASE pgdog;
+CREATE USER pgdog PASSWORD 'pgdog' LOGIN;
 ```
 
-The SQLite database and run artifacts live under ignored, owner-only
-`.agent/.memory/` and `.agent/.runs/`. Canonical reviewed memory is Markdown in
-`.agent/memory/records/`. Secrets, `<no-memory>` blocks, private records,
-untrusted imports, and stale records are excluded from startup context.
+### Transaction pooling
 
-## Cross-provider review
+&#128216; **[Transactions](https://docs.pgdog.dev/features/transaction-mode)**
 
-The reviewer must differ from the author provider. First run the configured
-merge commands to produce fresh review inputs, then build a bounded package
-without egress:
+Like PgBouncer, PgDog supports transaction (and session) pooling, allowing
+thousands of clients to use just a few PostgreSQL server connections.
 
-Review and security evidence are always anchored to the fetched remote default
-branch (`refs/remotes/origin/HEAD`, with `origin/main` or `origin/master` as
-fallback). The anchor must be a proper ancestor of `HEAD`. A supplied `--base`
-is only an assertion and must resolve to that same SHA; `HEAD` and intermediate
-feature commits are rejected. After cloning, use `git remote set-head origin -a`
-if the remote default-branch reference is missing.
+Unlike PgBouncer, PgDog can parse and handle `SET` statements and startup options, ensuring session state is set correctly when sharing server connections between clients with different parameters.
 
-```sh
-./scripts/agent verify review --json
-./scripts/agent review \
-  --base origin/main \
-  --head HEAD \
-  --author-provider codex \
-  --reviewer-provider claude \
-  --context docs/architecture/system-summary.md
+PgDog also has more advanced connection recovery options, like automatic abandoned transaction rollbacks and connection re-synchronization to avoid churning server connections during an application crash.
+
+### Load balancer
+
+&#128216; **[Load balancer](https://docs.pgdog.dev/features/load-balancer/)**
+
+PgDog is an application layer (OSI Level 7) load balancer for PostgreSQL. It understands the Postgres protocol, can proxy multiple replicas (and primary) and distributes transactions evenly between databases. The load balancer supports 3 strategies: round robin, random and least active connections.
+
+**Example**
+
+The load balancer is enabled automatically when a database has more than one host:
+
+```toml
+[[databases]]
+name = "prod"
+host = "10.0.0.1"
+role = "primary"
+
+[[databases]]
+name = "prod"
+host = "10.0.0.2"
+role = "replica"
 ```
 
-The command returns `manifest_pending` (exit 4) with a package path and SHA-256.
-Inspect the providers, paths, scope, and byte count. Only after exact approval,
-resume the same immutable package:
+#### Health checks
 
-```sh
-./scripts/agent review \
-  --base origin/main \
-  --head HEAD \
-  --author-provider codex \
-  --reviewer-provider claude \
-  --package .agent/.runs/review-UUID \
-  --approve-manifest MANIFEST-SHA256
+&#128216; **[Healthchecks](https://docs.pgdog.dev/features/load-balancer/healthchecks/)**
+
+PgDog maintains a real-time list of healthy hosts. When a database fails a health check, it's removed from the active rotation and queries are re-routed to other replicas. This works like an HTTP load balancer, except it's for your database.
+
+Health checks maximize database availability and protect against bad network connections, temporary hardware failures or misconfiguration.
+
+#### Single endpoint
+
+&#128216; **[Single endpoint](https://docs.pgdog.dev/features/load-balancer/#single-endpoint)**
+
+PgDog uses [`pg_raw_parse`](https://github.com/pgdogdev/pg_raw_parse), which includes the PostgreSQL native parser. By parsing queries, PgDog can detect writes (e.g. `INSERT`, `UPDATE`, `CREATE TABLE`, etc.) and send them to the primary, leaving the replicas to serve reads (`SELECT`). This allows applications to connect to the same PgDog deployment for both reads and writes.
+
+##### Transactions
+
+&#128216; **[Load balancer & transactions](https://docs.pgdog.dev/features/load-balancer/transactions/)**
+
+Transactions can execute multiple statements, so in a primary & replica configuration, PgDog routes them to the primary. Clients can indicate a transaction is read-only, in which case PgDog will send it to a replica:
+
+```sql
+BEGIN READ ONLY;
+-- This goes to a replica.
+SELECT * FROM users LIMIT 1;
+COMMIT;
 ```
 
-Before provider execution, the runtime revalidates diff, context, requirements,
-verification, policy, schema, paths, secrets, size, provider independence, and
-every checksum. The provider runs inside an OS sandbox that can read only the
-approved package, exact external executable/support files, and system runtime
-files. Interpreted/npm-style CLIs receive a read-only mount of their resolved
-external package bundle; repository-contained executables/support files and
-caller-supplied host file/directory grants and inline interpreter/module
-commands are rejected before capability probing. The first package-build call
-does not execute or probe a provider. Only after exact manifest approval does a
-no-network/no-credential capability probe run inside the OS boundary; a
-successful probe is followed by the credentialed review invocation.
-No-network probes also strip proxy variables; credentialed review diagnostics
-redact provider keys and proxy URLs.
-HOME and temporary output are isolated, and process output is file-size bounded.
-Configure command arrays under
-`[review.provider_commands]`. The runtime forwards only a small common network/
-locale environment plus provider-specific API-key variables; unrelated host
-variables and credential files are excluded. Claude receives only `Read`,
-AGY uses a pinned Gemini model and advisory plan mode (the outer OS sandbox
-enforces read-only access), and Codex starts child commands with an empty
-environment policy. Timeout, quota, missing CLI/sandbox, malformed output, or
-checksum drift remains `review_pending`; it never approves a change.
+#### Failover
 
-The `gemini` provider now executes `agy`, not Gemini CLI. Antigravity and Codex
-share generated `.agents/skills`; `.agents/hooks.json` handles AGY memory hooks.
-Automated AGY review uses disposable API-key-mode settings and only
-`GEMINI_API_KEY`, never the host login profile or keychain. See
-[Antigravity setup and migration](docs/antigravity.md) for model selection,
-authentication limitations, and the current CLI contract.
+&#128216; **[Failover](https://docs.pgdog.dev/features/load-balancer/replication-failover/)**
 
-Use `.agent/templates/reviews/adjudication-decisions.json` to record exactly one
-decision per finding, then bind the decisions to the reviewed package:
+PgDog monitors Postgres replication state and can automatically redirect writes to a different database if a replica is promoted. This doesn't replace tools like Patroni that actually orchestrate failovers. You can use PgDog alongside Patroni (or AWS RDS or other managed Postgres host), to gracefully failover live traffic.
 
-```sh
-./scripts/agent adjudicate \
-  --package .agent/.runs/review-UUID \
-  --file adjudication-decisions.json
+**Example**
+
+To enable failover, set all database `role` attributes to `auto` and enable replication monitoring (`lsn_check_delay` setting):
+
+```toml
+[general]
+lsn_check_delay = 0
+
+[[databases]]
+name = "prod"
+host = "10.0.0.1"
+role = "auto"
+
+[[databases]]
+name = "prod"
+host = "10.0.0.2"
+role = "auto"
 ```
 
-Confirmed or unresolved Critical/High findings block merge. Rejections require
-an explicit reason. A clean pass creates an empty bound adjudication artifact.
+### Authentication
 
-## Architecture and whole-system HTML
+&#128216; **[Authentication](https://docs.pgdog.dev/features/authentication/)**
 
-Edit canonical `.agent/project-model/*.toml` and focused Markdown under
-`docs/architecture/` or `docs/security/`, then regenerate:
+PgDog supports five authentication methods:
 
-```sh
-./scripts/agent docs build
-./scripts/agent docs check
+1. Password-based
+2. AWS RDS IAM
+3. Azure Workload Identity
+4. HashiCorp Vault dynamic credentials
+5. HashiCorp Vault static role credentials
+
+#### Password-based authentication
+
+Password-based authentication allows for clients to authenticate to PgDog and for PgDog to authenticate to PostgreSQL. It currently supports the following password hashing algorithms:
+
+- SCRAM-SHA-256
+- MD5
+- Plain
+
+#### RDS IAM backend authentication
+
+PgDog can keep client-to-PgDog authentication unchanged while using AWS RDS IAM tokens for PgDog-to-PostgreSQL authentication on a per-user basis.
+
+**Example**
+
+```toml
+[[users]]
+name = "alice"
+database = "pgdog"
+password = "client-password"
+server_auth = "rds_iam"
+# Optional; PgDog infers region from *.region.rds.amazonaws.com(.cn) hostnames when omitted.
+# server_iam_region = "us-east-1"
 ```
 
-Open `docs/architecture/system.html` in any browser for the self-contained,
-offline whole-system view. It embeds no remote scripts, styles, fonts, or data.
-Generated `system.html` and `system-summary.md` must not be hand-edited.
+When any user has `server_auth = "rds_iam"`, the following settings must be configured as well:
 
-## Merge and release gates
+- `tls_verify` must **not** be `"disabled"`.
+- `passthrough_auth` must be `"disabled"`.
 
-Merge verification requires full configured commands, current documentation
-impact, independent code review, and cross-review evidence:
+#### Azure Workload Identity authentication
 
-```sh
-./scripts/agent verify merge --json
+PgDog can also use Azure Workload Identity for PgDog-to-PostgreSQL authentication, while keeping client-to-PgDog authentication unchanged. This is configured on a per-user basis, similarly to RDS IAM:
+
+**Example**
+
+```toml
+[[users]]
+name = "alice"
+database = "pgdog"
+password = "client-password"
+server_auth = "azure_workload_identity"
 ```
 
-Release adds security clearance, triggered threat-model delta, required scanner
-results, clean-checkout smoke, documentation, release notes,
-migration/backup/rollback, and residual risks:
+When any user has `server_auth = "azure_workload_identity"`, the following settings must be configured as well:
 
-```sh
-./scripts/agent security --base origin/main --head HEAD --json
-./scripts/agent security --base origin/main --head HEAD \
-  --approval-evidence .agent/.runs/security-approval.json \
-  --approval-signature .agent/.runs/security-approval.json.sig --json
-./scripts/agent release run-scanner --scanner dependency
-./scripts/agent release run-scanner --scanner license
-./scripts/agent release run-scanner --scanner sast
-./scripts/agent release record --artifact release-notes \
-  --file docs/releases/release-notes.md
-./scripts/agent release record --artifact migration-rollback \
-  --file docs/releases/migration-rollback.md
-./scripts/agent release record --artifact residual-risks \
-  --file docs/security/residual-risks.md
-bash scripts/release-smoke.sh
-./scripts/agent verify release --json
+- `tls_verify` must **not** be `"disabled"`.
+- `passthrough_auth` must be `"disabled"`.
+
+#### HashiCorp Vault dynamic role authentication
+
+PgDog can fetch dynamic database credentials (username and password) from HashiCorp Vault's database secrets engine, while keeping client-to-PgDog authentication unchanged. Credentials are cached and rotated automatically after a configured percentage of the Vault lease has elapsed.
+
+**Example**
+
+In `users.toml`:
+
+```toml
+[[users]]
+name = "alice"
+database = "pgdog"
+password = "client-password"
+server_auth = "vault_dynamic"
+server_vault_path = "database/creds/pgdog"
+# Refresh credentials after 80% of the lease has elapsed (default).
+# vault_refresh_percent = 80
 ```
 
-The first security command produces a scope-bound incomplete assessment. To
-create clearance, copy `.agent/templates/security/security-approval.json` into
-the ignored `.agent/.runs/` directory, then copy the first command's complete
-`assessment` and `assessment_sha256` values into it. Sign the JSON with
-`ssh-keygen -Y sign -n agent-security-approval`. The reviewer identity/key must already exist in the
-base revision's `.agent/security/allowed_signers`; adding a signer in the same
-change cannot authorize that change. The second form verifies the strict JSON
-schema, complete assessment, author/reviewer independence, detached SSH
-signature, and a freshly recomputed assessment from Git/config. Configure exact
-argument arrays under `[security.scanner_commands]`, dedicated non-mutating
-version commands under `[security.scanner_version_commands]`, and explicit tool
-dependencies under `[security.scanner_support_paths]`; `run-scanner` executes
-without a shell and derives status/tool identity from the process rather than
-accepting a claimed pass. Repository scan-target directories are bound through
-Git identity and are never recursively read as tool identity. Explicit external
-support directories are recursively manifested; direct and flag-value support
-files are checksummed.
-Release/scanner records and clean-smoke evidence are
-bound to the exact HEAD, working-tree diff, configured command/set, tool
-identity, strict result schema, and output checksum, and are rejected when stale
-or tampered.
+In `pgdog.toml`:
 
-Optional unsupported scanners are recorded as `not-configured`. Any scanner
-marked required must pass.
-
-## CI
-
-`.github/workflows/agent-quality.yml` and `.gitlab-ci.yml` run the repository
-runtime instead of reimplementing policy in YAML. Untrusted jobs receive no
-provider secrets. Provider-backed review belongs in a protected/manual job after
-manifest approval. See `docs/ci-integration.md` before making the manual merge
-contract a required check.
-
-Validate release contents from a clean `git archive`:
-
-```sh
-bash scripts/release-smoke.sh
+```toml
+[vault]
+url = "https://vault.internal:8200"
+auth_method = "kubernetes" # or "approle"
+kubernetes_role = "pgdog"
 ```
 
-## Acceptance evidence
+PgDog logs into Vault with Kubernetes auth (using the pod's service account JWT) or AppRole (`approle_role_id` plus `approle_secret_id_file` or the `VAULT_SECRET_ID` environment variable).
 
-The deterministic suite covers the complete starter workflow, all six mock
-cross-provider directions, privacy/security boundaries, generated-file drift,
-and clean-export smoke. The current evidence and the line-by-line review of all
-20 design criteria are committed here:
+When any user has `server_auth = "vault_dynamic"` or `"vault_static"`, the following settings must be configured as well:
 
-- `docs/evidence/template-acceptance.json`
-- `docs/reviews/template-final-review.md`
+- `tls_verify` must **not** be `"disabled"`.
+- `passthrough_auth` must be `"disabled"`.
 
-Real-provider smoke uses a generated public fixture, never repository source.
-At the recorded snapshot, Codex completed a schema-valid read-only review;
-Claude and the old Gemini CLI were capability-compatible but unauthenticated.
-That snapshot is historical, not evidence for the AGY migration. Current AGY
-verification is recorded in [the migration guide](docs/antigravity.md).
-Hosted CI status is also kept separate from local success.
+#### HashiCorp Vault static role authentication
 
-## Failure recovery
+Unlike dynamic credentials, a Vault static database role has a fixed username and only its password rotates, on a schedule Vault manages. PgDog supports two independent uses of a static role, they don't need to point at the same role, and each has its own username setting:
 
-- `incomplete`: supply missing configuration, tool, timeout result, or evidence;
-  do not weaken the gate.
-- `blocked`: fix the policy violation or obtain the required human decision.
-- `review_pending`: reuse the preserved review package with the same approved
-  manifest after provider/environment recovery.
-- adapter drift: edit `.agent/` sources, run `agent adapters build`, then check.
-- docs drift: edit model/Markdown sources, build, then check.
-- memory corruption or staleness: run memory doctor, exclude unsafe records,
-  repair/review, and rebuild the index.
+- `vault_path`: verify the password a client sends to PgDog against Vault's current password for the role, instead of a statically configured password.
+- `server_auth = "vault_static"` with `server_vault_path`: use the role's Vault-managed password for PgDog-to-PostgreSQL connections. Unlike `vault_dynamic`, PgDog doesn't take the username from Vault, it connects as `server_user` or `name`, if `server_user` isn't set.
 
-Never delete `.agent/.runs/review-*` while a review may need to resume. Preserve
-unrelated Git changes during all recovery work.
+**Example**
 
-## Updates and provenance
+In `users.toml`, for a client authenticating as `alice` (verified against a static role registered under that same name) while PgDog connects to Postgres as `pgdog_service` (a separate static role):
 
-Pull template changes into a branch, review `.agent/` policy/runtime changes,
-regenerate adapters/docs, and run the full unit suite plus release smoke before
-merging. Never copy a provider-native generated skill back into canonical
-sources.
-
-Source ideas, reviewed revisions, licenses, and clean-room boundaries are in
-`.agent/sources/SOURCES.md`; notices are in `THIRD_PARTY_NOTICES.md`. Audit them:
-
-```sh
-./scripts/agent licenses audit --json
+```toml
+[[users]]
+name = "alice"
+database = "pgdog"
+vault_path = "database/static-creds/alice"
+server_user = "pgdog_service"
+server_auth = "vault_static"
+server_vault_path = "database/static-creds/pgdog-service"
 ```
 
-## Non-goals
+In `pgdog.toml`, the same `[vault]` section used for dynamic credentials applies.
 
-- No application framework, language stack, cloud, or deployment vendor is
-  selected for product code.
-- No provider CLI, account, credential, scanner, dependency, or plugin is
-  installed automatically.
-- No source is sent to a model without bounded manifest approval.
-- No transcript or model output is promoted directly to canonical memory.
-- No AI/scanner result is described as absolute security or certification.
-- No automatic commit, push, merge, release, migration, deployment, or
-  destructive recovery occurs without the user's authorization.
+Both settings are optional and independent: set only `vault_path` to verify client passwords while keeping any other backend authentication method, or only `server_auth = "vault_static"` to use a static role for backend connections while clients authenticate with a regular password.
+
+### Sharding
+
+&#128216; **[Sharding](https://docs.pgdog.dev/features/sharding/)**
+
+PgDog is able to manage databases with multiple shards. By using the PostgreSQL parser, PgDog extracts sharding keys and determines the best routing strategy for each query.
+
+For cross-shard queries, PgDog assembles and transforms results in memory, sending all rows to the client as if they are coming from a single database.
+
+**Example**
+
+Configuring multiple hosts for the same database with different shard numbers (`shard` setting) enables sharding:
+
+```toml
+[[databases]]
+name = "prod"
+host = "10.0.0.1"
+shard = 0
+
+[[databases]]
+name = "prod"
+host = "10.0.0.2"
+shard = 1
+```
+
+Note: read below for how to configure query routing. At least one sharded table is required for sharding to work as expected.
+
+#### Sharding functions
+
+&#128216; **[Sharding functions](https://docs.pgdog.dev/features/sharding/sharding-functions/)**
+
+PgDog has two main sharding algorithms:
+
+1. PostgreSQL partition functions (`HASH`, `LIST`, `RANGE`)
+2. Using schemas
+
+##### Partition-based sharding
+
+Partition-based sharding functions are taken directly from Postgres source code. This choice intentionally allows to shard data both with PgDog and with Postgres [foreign tables](https://www.postgresql.org/docs/current/sql-createforeigntable.html) and [`postgres_fdw`](https://www.postgresql.org/docs/current/postgres-fdw.html).
+
+**Examples**
+
+The `PARTITION BY HASH` algorithm is used by default when configuring sharded tables:
+
+```toml
+[[sharded_tables]]
+database = "prod"
+column = "user_id"
+```
+
+List-based sharding (same as `PARTITION BY LIST` in Postgres) can be configured as follows:
+
+```toml
+# Sharded table definition still required.
+[[sharded_tables]]
+database = "prod"
+column = "user_id"
+
+# Value-specific shard mappings.
+[[sharded_mapping]]
+database = "prod"
+column = "user_id"
+values = [1, 2, 3, 4]
+shard = 0
+
+[[sharded_mapping]]
+database = "prod"
+column = "user_id"
+values = [5, 6, 7, 8]
+shard = 1
+```
+
+For range-based sharding, replace the `values` setting with a range, for example:
+
+```toml
+start = 0 # include
+end = 5 # exclusive
+```
+
+##### Schema-based sharding
+
+&#128216; **[Schema-based sharding](https://docs.pgdog.dev/configuration/pgdog.toml/sharded_schemas/)**
+
+Schema-based sharding works on the basis of PostgreSQL schemas. Tables under the same schema are placed on the same shard and all queries that refer to those tables are routed to that shard automatically.
+
+**Example**
+
+Configuring sharded schemas uses a different configuration from sharded tables:
+
+```toml
+[[sharded_schemas]]
+database = "prod"
+name = "customer_a"
+shard = 0
+
+[[sharded_schemas]]
+database = "prod"
+name = "customer_b"
+shard = 1
+```
+
+Queries that refer tables in schema `customer_a` will be sent to shard 0. For example, a query that refers to a table by its fully-qualified name will be sent to one shard only:
+
+```sql
+INSERT INTO customer_a.orders (id, user_id, amount)
+VALUES ($1, $2, $3);
+```
+
+Alternatively, the schema name can be specified in the `search_path` session variable:
+
+```sql
+SET search_path TO public, customer_a;
+-- All subsequent queries will be sent to shard 0.
+SELECT * FROM orders LIMIT 1;
+```
+
+You can also set the `search_path` for the duration of a single transaction, using `SET LOCAL`, ensuring only that transaction is sent to the desired shard:
+
+```sql
+-- The entire transaction will be sent to shard 1.
+BEGIN;
+SET LOCAL search_path TO public, customer_b;
+SELECT * FROM orders LIMIT 1;
+COMMIT;
+```
+
+#### Direct-to-shard queries
+
+&#128216; **[Direct-to-shard queries](https://docs.pgdog.dev/features/sharding/query-routing/)**
+
+Queries that contain a sharding key are sent to one database only. This is the best case scenario for sharded databases, since the load is uniformly distributed across the cluster.
+
+**Example**:
+
+```sql
+-- user_id is the sharding key.
+SELECT * FROM users WHERE user_id = $1;
+```
+
+#### Cross-shard queries
+
+- &#128216; **[Cross-shard queries](https://docs.pgdog.dev/features/sharding/cross-shard-queries/)**
+- &#128216; **[SELECT](https://docs.pgdog.dev/features/sharding/cross-shard-queries/select/)**
+- &#128216; **[INSERT](https://docs.pgdog.dev/features/sharding/cross-shard-queries/insert/)**
+- &#128216; **[UPDATE and DELETE](https://docs.pgdog.dev/features/sharding/cross-shard-queries/update/)**
+- &#128216; **[DDL](https://docs.pgdog.dev/features/sharding/cross-shard-queries/ddl/)**
+
+Queries with multiple sharding keys or without one are sent to all databases and results are post-processed and assembled in memory. PgDog then sends the final result to the client.
+
+Currently, support for certain SQL features in cross-shard queries is limited. However, the list of supported ones keeps growing:
+
+| Feature               | Supported | Notes                                                                                        |
+| --------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| Aggregates            | Partial   | `count`, `min`, `max`, `stddev`, `variance`, `sum`, `avg` are supported.                     |
+| `ORDER BY`            | Partial   | Column in `ORDER BY` clause must be present in the result set.                               |
+| `GROUP BY`            | Partial   | Same as `ORDER BY`, referenced columns must be present in result set.                        |
+| Multi-tuple `INSERT`  | Supported | PgDog generates one statement per tuple and executes them automatically.                     |
+| Sharding key `UPDATE` | Supported | PgDog generates a `SELECT`, `INSERT` and `DELETE` statements and execute them automatically. |
+| Subqueries            | No        | The same subquery is executed on all shards.                                                 |
+| CTEs                  | No        | The same CTE is executed on all shards. Data-modifying CTEs on omnisharded tables reach every shard. |
+
+#### Using `COPY`
+
+&#128216; **[Copy](https://docs.pgdog.dev/features/sharding/cross-shard-queries/copy/)**
+
+PgDog has a text, CSV & binary parser and can split rows sent via `COPY` command between all shards automatically. This allows clients to ingest data into sharded PostgreSQL without preprocessing
+
+**Example**
+
+```sql
+COPY orders (id, user_id, amount) FROM STDIN CSV HEADER;
+```
+
+Columns must be specified in the `COPY` statement, so PgDog can infer the sharding key automatically, but are optional in the data file.
+
+#### Consistency (two-phase commit)
+
+&#128216; **[Two-phase commit](https://docs.pgdog.dev/features/sharding/2pc/)**
+
+To make sure cross-shard writes are atomic, PgDog supports Postgres' [two-phase transactions](https://www.postgresql.org/docs/current/two-phase.html). When enabled, PgDog handles `COMMIT` statements sent by clients by executing the 2pc exchange on their behalf:
+
+```sql
+PREPARE TRANSACTION '__pgdog_unique_id';
+COMMIT PREPARED '__pgdog_unique_id';
+```
+
+In case the client disconnects or Postgres crashes, PgDog will automatically rollback the transaction if it's in phase I and commit it if it's in phase II.
+
+#### Unique identifiers
+
+&#128216; **[Unique IDs](https://docs.pgdog.dev/features/sharding/unique-ids/)**
+
+While applications can use `UUID` (v4 and now v7) to generate unique primary keys, PgDog supports creating unique `BIGINT` identifiers, without using a sequence:
+
+```sql
+SELECT pgdog.unique_id();
+```
+
+This uses a timestamp-based algorithm, can produce millions of unique numbers per second and doesn't require an expensive cross-shard index to guarantee uniqueness.
+
+#### Shard key updates
+
+PgDog supports changing the sharding key for a row online. Under the hood, it will execute 3 statements to make it happen:
+
+1. `SELECT` to get the entire row from its original shard
+2. `INSERT` to write the new, changed row to the new shard
+3. `DELETE` to remove it from the old shard
+
+This happens automatically, and the client can retrieve the new row as normal:
+
+```sql
+UPDATE orders SET user_id = 5 WHERE user_id = 1 RETURNING *;
+-- This will return the new row
+```
+
+Note: Only one row can be updated at a time and if a query attempts to update multiple, PgDog will abort the transaction.
+
+To enable shard key updates, add this to `pgdog.toml`:
+
+```toml
+[rewrite]
+enabled = true
+shard_key = "rewrite" # options: ignore (possible data loss), error (block shard key update)
+```
+
+#### Multi-tuple inserts
+
+PgDog can handle multi-tuple `INSERT` queries by sending each tuple to the right shard, e.g.:
+
+```sql
+INSERT INTO payments
+    (id, user_id, amount) -- user_id is the sharding key
+VALUES
+(pgdog.unique_id(), 1, 25.00), -- Tuples go to different shards
+(pgdog.unique_id(), 5, 55.0); -- Each tuple gets a unique primary key because unique ID function is invoked twice
+```
+
+This happens automatically, if enabled:
+
+```toml
+[rewrite]
+enabled = true
+split_inserts = "rewrite" # other options: ignore, error
+```
+
+#### Re-sharding
+
+- &#128216; **[Re-sharding](https://docs.pgdog.dev/features/sharding/resharding/)**
+- &#128216; **[Schema sync](https://docs.pgdog.dev/features/sharding/resharding/schema/)**
+- &#128216; **[Data sync](https://docs.pgdog.dev/features/sharding/resharding/hash/)**
+
+PgDog understands the PostgreSQL logical replication protocol and can orchestrate data splits between databases, in the background and without downtime. This allows to shard existing databases and add more shards to existing clusters in production, without impacting database operations.
+
+The re-sharding process is done in 5 steps:
+
+1. Create new empty cluster with the desired number of shards
+2. Configure it in `pgdog.toml` and run `schema-sync` command to copy table schemas to the new databases
+3. Run `data-sync` command to copy and re-shard table data with logical replication (tables are copied in parallel)
+4. While keeping previous command running (it streams row updates in real-time), run `schema-sync --phase post` to create secondary indexes on the new databases (much faster to do this after data is copied)
+5. Cutover traffic to new cluster with `MAINTENANCE ON`, `RELOAD`, `MAINTENANCE OFF` command sequence
+
+Cutover can be done atomically with multiple PgDog containers because `RELOAD` doesn't resume traffic, `MAINTENANCE OFF` does, so the config is the same in all containers before queries are resumed. No complex synchronization tooling like etcd or Zookeeper is required.
+
+### Monitoring
+
+&#128216; **[Metrics](https://docs.pgdog.dev/features/metrics/)**
+
+PgDog exposes both the standard PgBouncer-style admin database, an OpenMetrics endpoint and can push metrics to an OTEL endpoint. The admin database isn't 100% compatible,
+so we recommend you use either OpenMetrics or OTEL ingestion for monitoring.
+
+We include two examples:
+
+- [Datadog configuration and dashboard](examples/datadog)
+- [Graphana + Prometheus configuration and dashboard](examples/grafana_prometheus)
+
+## Running PgDog locally
+
+Install the latest version of the Rust compiler from [rust-lang.org](https://rust-lang.org).
+Clone this repository and build the project in release mode:
+
+```bash
+cargo build --release
+```
+
+It's important to use the release profile if you're deploying to production or want to run
+performance benchmarks.
+
+#### Try sharding
+
+Sharded database clusters are set in the config. For example, to set up a 2 shard cluster, you can:
+
+**`pgdog.toml`**
+
+```toml
+[[databases]]
+name = "pgdog_sharded"
+host = "127.0.0.1"
+database_name = "shard_0"
+shard = 0
+
+[[databases]]
+name = "pgdog_sharded"
+host = "127.0.0.1"
+database_name = "shard_1"
+shard = 1
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+column = "user_id"
+```
+
+Don't forget to configure a user:
+
+**`users.toml`**
+
+```toml
+[[users]]
+database = "pgdog_sharded"
+name = "pgdog"
+password = "pgdog"
+```
+
+And finally, to make it work locally, create the required databases:
+
+```sql
+CREATE DATABASE shard_0;
+CREATE DATABASE shard_1;
+
+GRANT ALL ON DATABASE shard_0 TO pgdog;
+GRANT ALL ON DATABASE shard_1 TO pgdog;
+```
+
+### Start PgDog
+
+Running PgDog can be done with Cargo:
+
+```bash
+cargo run --release
+```
+
+#### Command-line options
+
+PgDog supports several command-line options:
+
+- `-c, --config <CONFIG>`: Path to the configuration file (default: `"pgdog.toml"`)
+- `-u, --users <USERS>`: Path to the users.toml file (default: `"users.toml"`)
+- `-d, --database_url <DATABASE_URL>`: Connection URL(s). Can be specified multiple times to add multiple database connections. When provided, these URLs override database configurations from the config file.
+
+Example using database URLs directly:
+
+```bash
+cargo run --release -- -d postgres://user:pass@localhost:5432/db1 -d postgres://user:pass@localhost:5433/db2
+```
+
+You can connect to PgDog with `psql` or any other PostgreSQL client:
+
+```bash
+psql postgres://pgdog:pgdog@127.0.0.1:6432/pgdog
+```
+
+## &#128678; Status &#128678;
+
+PgDog is used in production and at scale. Most features are stable, while some are experimental. Check [documentation](https://docs.pgdog.dev/features/) for more details. New sharding features are added almost weekly.
+
+## Performance
+
+&#128216; **[Architecture & benchmarks](https://docs.pgdog.dev/architecture/)**
+
+PgDog is heavily optimized for performance. We use Rust, [Tokio](https://tokio.rs/), [bytes crate](https://docs.rs/bytes/latest/bytes/) to avoid unnecessary memory allocations, and profile for performance regressions on a regular basis.
 
 ## License
 
-Apache-2.0. See `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+PgDog is free and open source software, licensed under the AGPL v3. While often misunderstood, this license is very permissive
+and allows the following without any additional requirements from you or your organization:
+
+- Internal use
+- Private modifications for internal use without sharing any source code
+
+You can freely use PgDog to power your PostgreSQL databases without having to
+share any source code, including proprietary work product or any PgDog modifications you make.
+
+AGPL was written specifically for organizations that offer PgDog _as a public service_ (e.g. database cloud providers) and require
+those organizations to share any modifications they make to PgDog, including new features and bug fixes.
+
+### Enterprise edition
+
+If your organization doesn't allow AGPL software, PgDog is also available under an [enterprise](https://docs.pgdog.dev/enterprise_edition/) license.
+
+## Contributions
+
+Please read our [Contribution Guidelines](CONTRIBUTING.md).

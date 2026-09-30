@@ -1,0 +1,507 @@
+# ------------------------------------------------------------------------------
+# ----- General ----------------------------------------------------------------
+
+[general]
+query_timeout = 2_000
+checkout_timeout = 2_000
+connect_timeout = 2_000
+load_balancing_strategy = "round_robin"
+rollback_timeout = 1_000
+read_write_strategy = "aggressive"
+openmetrics_port = 9090
+openmetrics_namespace = "pgdog_"
+prepared_statements_limit = 500
+prepared_statements = "full"
+prepared_statements_ttl = 300
+prepared_statements_ttl_jitter = 100
+expanded_explain = true
+dns_ttl = 1_000
+background_workers = 2
+query_cache_limit = 500
+pub_sub_channel_size = 4098
+two_phase_commit = false
+healthcheck_port = 8080
+tls_certificate = "integration/tls/cert.pem"
+tls_private_key = "integration/tls/key.pem"
+query_parser_engine = "pg_query_raw"
+system_catalogs = "omnisharded_sticky"
+reload_schema_on_ddl = false
+# idle_healthcheck_delay = 50000000
+unique_id_function = "standard"
+auth_type = "scram"
+workers = 4
+resharding_parallel_copies = 3
+resharding_copy_retry_min_delay = 100
+# log_dedup_window = 30_000
+# log_dedup_threshold =
+
+[memory]
+net_buffer = 8096
+message_buffer = 8096
+
+[rewrite]
+enabled = false
+shard_key = "ignore"
+split_inserts = "error"
+# primary_key = "rewrite"
+non_deterministic_functions = "rewrite"
+
+# ------------------------------------------------------------------------------
+# ----- Database :: pgdog ------------------------------------------------------
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"
+role = "replica"
+read_only = true
+
+# ------------------------------------------------------------------------------
+# ----- Database :: pgdog_sharded ----------------------------------------------
+
+[[databases]]
+name = "pgdog_sharded"
+host = "localhost"
+database_name = "shard_0"
+shard = 0
+
+[[databases]]
+name = "pgdog_sharded"
+host = "localhost"
+database_name = "shard_1"
+shard = 1
+
+[[databases]]
+name = "pgdog_sharded"
+host = "localhost"
+database_name = "shard_0"
+shard = 0
+role = "replica"
+
+[[databases]]
+name = "pgdog_sharded"
+host = "localhost"
+database_name = "shard_1"
+shard = 1
+role = "replica"
+
+# [[databases]]
+# name = "pgdog_sharded"
+# host = "localhost"
+# database_name = "shard_2"
+# shard = 2
+
+# [[databases]]
+# name = "pgdog_sharded"
+# host = "localhost"
+# database_name = "shard_2"
+# shard = 2
+# role = "replica"
+
+# ------------------------------------------------------------------------------
+# ----- Database :: failover ---------------------------------------------------
+
+[[databases]]
+name = "failover"
+host = "127.0.0.1"
+port = 5435
+role = "primary"
+database_name = "pgdog"
+
+[[databases]]
+name = "failover"
+host = "127.0.0.1"
+port = 5436
+role = "replica"
+database_name = "pgdog"
+read_only = true
+
+[[databases]]
+name = "failover"
+host = "127.0.0.1"
+port = 5437
+role = "replica"
+database_name = "pgdog"
+read_only = true
+
+[[databases]]
+name = "failover"
+host = "127.0.0.1"
+port = 5438
+role = "replica"
+database_name = "pgdog"
+read_only = true
+
+[[databases]]
+name = "single_sharded_list"
+host = "127.0.0.1"
+port = 5432
+database_name = "shard_0"
+shard = 0
+
+[[databases]]
+name = "single_sharded_list"
+host = "127.0.0.1"
+port = 5432
+database_name = "shard_1"
+shard = 1
+
+[[sharded_tables]]
+database = "single_sharded_list"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+shard = 0
+
+[[sharded_tables.mapping]]
+values = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+shard = 1
+
+[[sharded_tables]]
+database = "single_sharded_list"
+column = "user_id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+shard = 0
+
+[[sharded_tables.mapping]]
+values = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: BIGINT -------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded"
+column = "id"
+data_type = "bigint"
+primary = true
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+column = "customer_id"
+data_type = "bigint"
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: VARCHAR ------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_varchar"
+column = "id_varchar"
+data_type = "varchar"
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: Timestamp Test -----------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "timestamp_test"
+column = "id"
+data_type = "bigint"
+primary = true
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: Numeric Test -------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_numeric"
+column = "id"
+data_type = "bigint"
+primary = true
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: Float Test ---------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "float_test"
+column = "id"
+data_type = "bigint"
+primary = true
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: Sort Test ----------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sort_test"
+column = "id"
+data_type = "bigint"
+primary = true
+
+# ------------------------------------------------------------------------------
+# ----- Hash Sharded :: UUID ---------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_uuid"
+column = "id_uuid"
+data_type = "uuid"
+
+# ------------------------------------------------------------------------------
+# ----- SQL Regression Sample --------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sql_regression_sample"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+start = 0
+end = 100
+shard = 0
+
+[[sharded_tables.mapping]]
+start = 100
+end = 200
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- SQL Regression Samples -------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sql_regression_samples"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+start = 0
+end = 100
+shard = 0
+
+[[sharded_tables.mapping]]
+start = 100
+end = 200
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- Range Sharded (deprecated config format) :: BIGINT --------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_range_deprecated"
+column = "id"
+data_type = "bigint"
+
+[[sharded_mappings]]
+database = "pgdog_sharded"
+table = "sharded_range_deprecated"
+column = "id"
+kind = "range"
+start = 0
+end = 100
+shard = 0
+
+[[sharded_mappings]]
+database = "pgdog_sharded"
+table = "sharded_range_deprecated"
+column = "id"
+kind = "range"
+start = 100
+end = 200
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- List Sharded (deprecated config format) :: BIGINT ---------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_list_deprecated"
+column = "id"
+data_type = "bigint"
+
+[[sharded_mappings]]
+database = "pgdog_sharded"
+table = "sharded_list_deprecated"
+column = "id"
+kind = "list"
+values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+shard = 0
+
+[[sharded_mappings]]
+database = "pgdog_sharded"
+table = "sharded_list_deprecated"
+column = "id"
+kind = "list"
+values = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- List Sharded :: BIGINT -------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_list"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+shard = 0
+
+[[sharded_tables.mapping]]
+values = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- Range Sharded :: BIGINT ------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_range"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+start = 0
+end = 100
+shard = 0
+
+[[sharded_tables.mapping]]
+start = 100
+end = 200
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- Mapping Hierarchy :: list -> range -> default --------------------------
+# Values 1-3 -> shard 0 (list), 4-6 -> shard 1 (list),
+# [100,200) -> shard 0 (range), [200,300) -> shard 1 (range),
+# everything else -> shard 0 (default).
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_mapping_hierarchy"
+column = "id"
+data_type = "bigint"
+
+[[sharded_tables.mapping]]
+values = [1, 2, 3]
+shard = 0
+
+[[sharded_tables.mapping]]
+values = [4, 5, 6]
+shard = 1
+
+[[sharded_tables.mapping]]
+start = 100
+end = 200
+shard = 0
+
+[[sharded_tables.mapping]]
+start = 200
+end = 300
+shard = 1
+
+[[sharded_tables.mapping]]
+shard = 0
+
+# ------------------------------------------------------------------------------
+# ----- List Sharded :: UUID ---------------------------------------------------
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "sharded_list_uuid"
+column = "id_uuid"
+data_type = "uuid"
+
+[[sharded_tables.mapping]]
+values = ["00000000-0000-0000-0000-000000000000"]
+shard = 0
+
+[[sharded_tables.mapping]]
+values = ["11111111-1111-1111-1111-111111111111"]
+shard = 1
+
+[[sharded_tables]]
+database = "pgdog_sharded"
+name = "hits"
+column = "userid"
+data_type = "bigint"
+primary = true
+
+# ------------------------------------------------------------------------------
+# ----- Omnisharded Tables -----------------------------------------------------
+
+[[omnisharded_tables]]
+database = "pgdog_sharded"
+tables = ["sharded_omni"]
+
+# ------------------------------------------------------------------------------
+# ----- Schema-based sharding --------------------------------------------------
+
+[[omnisharded_tables]]
+database = "pgdog_schema"
+tables = ["sharded_omni"]
+
+[[databases]]
+name = "pgdog_schema"
+host = "127.0.0.1"
+database_name = "shard_0"
+shard = 0
+
+[[databases]]
+name = "pgdog_schema"
+host = "127.0.0.1"
+database_name = "shard_1"
+shard = 1
+
+[[sharded_schemas]]
+database = "pgdog_schema"
+name = "shard_0"
+shard = 0
+
+[[sharded_schemas]]
+database = "pgdog_schema"
+name = "shard_1"
+shard = 1
+
+# By default, all queries go to shard 0
+[[sharded_schemas]]
+database = "pgdog_schema"
+shard = 0
+
+[[databases]]
+name = "pgdog_schema_no_cross"
+host = "127.0.0.1"
+database_name = "shard_0"
+shard = 0
+
+[[databases]]
+name = "pgdog_schema_no_cross"
+host = "127.0.0.1"
+database_name = "shard_1"
+shard = 1
+
+
+[[sharded_schemas]]
+database = "pgdog_schema_no_cross"
+name = "shard_0"
+shard = 0
+
+[[sharded_schemas]]
+database = "pgdog_schema_no_cross"
+name = "shard_1"
+shard = 1
+
+# ------------------------------------------------------------------------------
+# ----- Admin ------------------------------------------------------------------
+
+[admin]
+password = "pgdog"
+
+[[query_parsers]]
+database = "pgdog"
+level = "auto"
+engine = "pg_query_raw"

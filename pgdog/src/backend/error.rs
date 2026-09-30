@@ -1,0 +1,170 @@
+use thiserror::Error;
+
+use crate::net::messages::ErrorResponse;
+
+use super::databases::User;
+
+#[derive(Debug, Error)]
+pub(crate) enum Error {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Tls(#[from] rustls_pki_types::InvalidDnsNameError),
+
+    #[error("net: {0}")]
+    Net(#[from] crate::net::Error),
+
+    #[error("type: {0}")]
+    Type(#[from] pgdog_postgres_types::Error),
+
+    #[error("unexpected message: {0}")]
+    UnexpectedMessage(char),
+
+    #[error("unexpected transaction status: {0}")]
+    UnexpectedTransactionStatus(char),
+
+    #[error("{0}")]
+    ConnectionError(Box<ErrorResponse>),
+
+    #[error("server connection is not synchronized")]
+    NotInSync,
+
+    #[error("server not connected")]
+    NotConnected,
+
+    #[error("multi-shard not connected")]
+    MultiShardNotConnected,
+
+    #[error("multi shard copy not connected")]
+    CopyNotConnected,
+
+    #[error("cluster not connected")]
+    ClusterNotConnected,
+
+    #[error("{0}")]
+    Pool(#[from] crate::backend::pool::Error),
+
+    #[error("{0}")]
+    Admin(#[from] crate::admin::Error),
+
+    #[error("no such user/database: {0}")]
+    NoDatabase(User),
+
+    #[error("database \"{0}\" has no schema owner")]
+    NoSchemaOwner(String),
+
+    #[error("{0}")]
+    ScramAuth(#[from] crate::auth::scram::Error),
+
+    #[error("{0}")]
+    Config(#[from] crate::config::error::Error),
+
+    #[error("{0}")]
+    PreparedStatementError(Box<ErrorResponse>),
+
+    #[error("{0}")]
+    Replication(#[from] crate::backend::replication::Error),
+
+    #[error("{0}")]
+    ExecutionError(Box<ErrorResponse>),
+
+    #[error("{0}")]
+    Auth(#[from] crate::auth::Error),
+
+    #[error("protocol is out of sync")]
+    ProtocolOutOfSync,
+
+    #[error("rollback left server in inconsistent state")]
+    RollbackFailed,
+
+    #[error("router error: {0}")]
+    Router(String),
+
+    #[error("TLS connection required but server does not support TLS")]
+    TlsRequired,
+
+    #[error("{0}")]
+    DnsLookupError(#[from] hickory_resolver::ResolveError),
+
+    #[error("could not resolve to any address for hostname {0}")]
+    DnsResolutionFailed(String),
+
+    #[error("RDS IAM token generation failed: {0}")]
+    RdsIamToken(String),
+
+    #[error("Azure Workload Identity token generation failed: {0}")]
+    AzureWorkloadIdentityToken(String),
+
+    #[error("Vault credentials fetch failed: {0}")]
+    VaultCredentials(String),
+
+    #[error("{0}")]
+    FrontendError(Box<crate::frontend::Error>),
+
+    #[error("{0}")]
+    MultiShard(#[from] crate::backend::pool::connection::multi_shard::Error),
+
+    #[error("2pc commit supported with multi-shard binding only")]
+    TwoPcMultiShardOnly,
+
+    #[error("unsupported aggregation {function}: {reason}")]
+    UnsupportedAggregation { function: String, reason: String },
+
+    #[error("toml: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+
+    #[error("cannot ignore response for message type: {0}")]
+    UnsupportedHandleIgnore(char),
+
+    #[error("missing canonical oid for type {0}")]
+    MissingCanonicalOid(String),
+}
+
+impl From<crate::frontend::Error> for Error {
+    fn from(value: crate::frontend::Error) -> Self {
+        Self::FrontendError(Box::new(value))
+    }
+}
+
+impl Error {
+    /// Checkout timeout.
+    pub(crate) fn no_server(&self) -> bool {
+        use crate::backend::pool::Error as PoolError;
+        match self {
+            // These are recoverable errors.
+            Error::Pool(PoolError::CheckoutTimeout) => true,
+            Error::Pool(PoolError::AllReplicasDown) => true,
+            _ => false,
+        }
+    }
+
+    /// Transient network/pool fault worth retrying.
+    pub(crate) fn is_retryable(&self) -> bool {
+        match self {
+            Self::Io(_) => true,
+            Self::Net(inner) => inner.is_retryable(),
+            Self::Pool(inner) => inner.is_retryable(),
+            // Postgres ErrorResponse wrapped at the backend boundary, e.g. a destination shard
+            // returning FATAL 57P01 mid-replication-apply, or a transient connect-time error.
+            // Delegates to the single SQLSTATE retry list in ErrorResponse::is_retryable.
+            Self::ExecutionError(resp)
+            | Self::ConnectionError(resp)
+            | Self::PreparedStatementError(resp) => resp.is_retryable(),
+            // Connection dropped between operations.
+            Self::NotConnected
+            | Self::MultiShardNotConnected
+            | Self::CopyNotConnected
+            | Self::ClusterNotConnected => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_auth(&self) -> bool {
+        match self {
+            Self::Auth(_) => true,
+            Self::ConnectionError(err) => err.code == "28000" || err.is_bad_password(),
+            _ => false,
+        }
+    }
+}

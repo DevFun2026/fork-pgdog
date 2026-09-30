@@ -1,0 +1,770 @@
+use crate::{
+    frontend::router::parser::rewrite::statement::plan::GeneratedParam,
+    net::{
+        Prepare,
+        messages::{Parse, RowDescription},
+    },
+    stats::memory::MemoryUsage,
+};
+use std::collections::hash_map::HashMap;
+
+use bytes::Bytes;
+use fnv::FnvHashSet as HashSet;
+
+use super::*;
+
+fn cross_shard_variant_name(name: &str) -> String {
+    format!("{name}_cross_shard")
+}
+
+/// Global prepared statements cache.
+///
+/// The cache contains two mappings:
+///
+/// 1. Mapping between unique prepared statement identifiers (query and result data types),
+///    and the global unique prepared statement name used in all server connections.
+///    Statements created by SQL `PREPARE` carry a key of their own, so they are
+///    never handed to a second client.
+///
+/// 2. Mapping between the global unique names and Parse & RowDescription messages
+///    used to prepare the statement on server connections and to decode
+///    results returned by executing those statements in a multi-shard context.
+///
+#[derive(Default, Debug, Clone)]
+pub(crate) struct GlobalCache {
+    statements: HashMap<CacheKey, CachedStmt>,
+    names: HashMap<String, Statement>,
+    cross_shard_variants: HashMap<String, Statement>,
+    unused: HashSet<Counter>,
+    counter: Counter,
+}
+
+impl MemoryUsage for GlobalCache {
+    fn memory_usage(&self) -> usize {
+        self.statements.memory_usage()
+            + self.names.memory_usage()
+            + self.cross_shard_variants.memory_usage()
+            + self.counter.memory_usage()
+            + self.unused.capacity() * 1usize.memory_usage()
+    }
+}
+
+impl GlobalCache {
+    pub(crate) fn existing_cross_shard_variant_name(&self, name: &str) -> Option<String> {
+        let variant_name = cross_shard_variant_name(name);
+        self.cross_shard_variants
+            .contains_key(&variant_name)
+            .then_some(variant_name)
+    }
+
+    /// Record a Parse message with the global cache and return a globally unique
+    /// name PgDog is using for that statement.
+    ///
+    /// If the statement exists, no entry is created
+    /// and the global name is returned instead.
+    pub(crate) fn insert(&mut self, parse: &Parse) -> (bool, String) {
+        let cache_key = CacheKey::Extended {
+            query: parse.query_ref(),
+            data_types: parse.data_types_ref(),
+        };
+
+        if let Some(name) = self.reuse(&cache_key) {
+            return (false, name);
+        }
+
+        let name = self.next_name();
+        let parse = parse.renamed(&name);
+        let cache_key = CacheKey::Extended {
+            query: parse.query_ref(),
+            data_types: parse.data_types_ref(),
+        };
+        let statement = Statement {
+            stmt: StatementType::Parse {
+                parse,
+                rewrite: None,
+                client_params: None,
+            },
+            cache_key: cache_key.clone(),
+            row_description: None,
+        };
+
+        self.insert_internal(&name, cache_key, statement);
+
+        (true, name)
+    }
+
+    /// Insert a statement prepared using the simple protocol into the global cache.
+    /// `original_query` is used as the `CacheKey`
+    /// If `rewritten_query` is...
+    ///     - Some(..): `rewritten_query` is sent to Postgres as the PREPARE inner-query.
+    ///     - None: `original_query` is sent to Postgres as the PREPARE inner-query.
+    pub(super) fn insert_prepare(
+        &mut self,
+        original_query: Bytes,
+        rewritten_query: Option<Bytes>,
+        offset_plan: Option<OffsetPlan>,
+        generated_params: Vec<GeneratedParam>,
+    ) -> (bool, Prepare) {
+        let cache_key = CacheKey::Simple {
+            query: original_query.clone(),
+        };
+
+        if let Some(name) = self.reuse(&cache_key) {
+            return (
+                false,
+                self.prepare(&name)
+                    .expect("prepared to be in cache if reuse is true"),
+            );
+        }
+
+        let name = self.next_name();
+        let prepare = Prepare {
+            name: Bytes::from(name.clone()),
+            query: rewritten_query.unwrap_or(original_query),
+        };
+
+        let statement = Statement {
+            stmt: StatementType::Prepare(PreparedPlan {
+                prepare: prepare.clone(),
+                // The reason this isn't using [`rewrite_plan.offset`] is that in `rewrite_single_prepared`,
+                // for `PrepareStmt`, we don't set `offset` on`RewritePlan` yet. We only attach `offset`
+                // to the plan for `ExecuteStmt`, and we need access to `OffsetPlan` for both here.
+                offset_plan,
+                generated_params,
+            }),
+            row_description: None,
+            cache_key: cache_key.clone(),
+        };
+
+        self.insert_internal(&name, cache_key, statement);
+        (true, prepare)
+    }
+
+    /// Rewrite prepared statement in the global cache.
+    /// `client_params` indicates how many Bind parameters the original statement has.
+    pub(crate) fn rewrite(&mut self, parse: &Parse, client_params: u16) {
+        if let Some(stmt) = self.names.get_mut(parse.name()) {
+            stmt.set_rewrite(parse, client_params);
+        }
+    }
+
+    /// Keep helper-bearing SQL separate from the base statement so direct
+    /// executions and client-visible metadata retain the original shape.
+    pub(crate) fn cross_shard_variant(&mut self, name: &str, query: &str) -> Option<String> {
+        if let Some(variant_name) = self.existing_cross_shard_variant_name(name) {
+            return Some(variant_name);
+        }
+        let client_params = self.client_params(name);
+        let variant_name = cross_shard_variant_name(name);
+
+        let mut parse = self.rewritten_parse(name)?;
+        parse.rename(&variant_name);
+        parse.set_query(query);
+        let cache_key = CacheKey::Extended {
+            query: parse.query_ref(),
+            data_types: parse.data_types_ref(),
+        };
+        self.cross_shard_variants.insert(
+            variant_name.clone(),
+            Statement {
+                stmt: StatementType::Parse {
+                    parse,
+                    rewrite: None,
+                    client_params,
+                },
+                row_description: None,
+                cache_key,
+            },
+        );
+
+        Some(variant_name)
+    }
+
+    /// Number of parameters the client's original statement has
+    /// (if we re-write, we must catch and not send back the extra cols ParameterDescriptions)
+    pub(crate) fn client_params(&self, name: &str) -> Option<u16> {
+        self.cross_shard_variants
+            .get(name)
+            .or_else(|| self.names.get(name))
+            .and_then(|stmt| stmt.client_params())
+    }
+
+    /// Client sent a Describe for a prepared statement and received a RowDescription.
+    /// We record the RowDescription for later use by the results decoder.
+    pub(crate) fn insert_row_description(&mut self, name: &str, row_description: RowDescription) {
+        if let Some(entry) = self
+            .names
+            .get_mut(name)
+            .or_else(|| self.cross_shard_variants.get_mut(name))
+            && entry.row_description.is_none()
+        {
+            entry.row_description = Some(row_description);
+        }
+    }
+
+    /// Get the Parse message for a globally unique prepared statement
+    /// name.
+    ///
+    /// It can be used to prepare this statement on a server connection
+    /// or to inspect the original query.
+    pub(crate) fn parse(&self, name: &str) -> Option<Parse> {
+        self.names.get(name).and_then(|p| p.parse().clone())
+    }
+
+    /// Get the [`Prepare`] message for a globally unique prepare statement name.
+    pub(crate) fn prepare(&self, name: &str) -> Option<Prepare> {
+        self.prepared_plan(name).map(|plan| plan.prepare)
+    }
+
+    /// Fetch the `PreparedPlan`  for a globally unique prepare statement name.
+    pub(crate) fn prepared_plan(&self, name: &str) -> Option<PreparedPlan> {
+        self.names.get(name).and_then(|p| p.prepared_plan())
+    }
+
+    /// Get the rewritten Parse statement.
+    ///
+    /// Used for preparing this statement on a server connection.
+    ///
+    pub(crate) fn rewritten_parse(&self, name: &str) -> Option<Parse> {
+        self.cross_shard_variants
+            .get(name)
+            .or_else(|| self.names.get(name))
+            .and_then(|p| p.rewritten_parse().clone().or(p.parse()))
+    }
+
+    /// Returns true if this prepared statement has been
+    /// rewritten by the rewrite engine.
+    pub(crate) fn is_rewritten(&self, name: &str) -> bool {
+        self.names
+            .get(name)
+            .map(|p| p.rewritten_parse().is_some())
+            .unwrap_or_default()
+    }
+
+    /// Get the RowDescription message for the prepared statement.
+    ///
+    /// It can be used to decode results received from executing the prepared
+    /// statement.
+    pub(crate) fn row_description(&self, name: &str) -> Option<RowDescription> {
+        self.cross_shard_variants
+            .get(name)
+            .or_else(|| self.names.get(name))
+            .and_then(|p| p.row_description.clone())
+    }
+
+    pub(crate) fn cross_shard_variant_needs_row_description(&self, name: &str) -> bool {
+        self.cross_shard_variants
+            .get(name)
+            .is_some_and(|statement| statement.row_description.is_none())
+    }
+
+    /// Number of prepared statements in the local cache.
+    pub(crate) fn len(&self) -> usize {
+        self.statements.len()
+    }
+
+    /// True if the local cache is empty.
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Close prepared statement.
+    pub(crate) fn close(&mut self, name: &str) {
+        if let Some(statement) = self.names.get(name) {
+            let key = statement.cache_key();
+
+            if let Some(entry) = self.statements.get_mut(key) {
+                entry.used = entry.used.saturating_sub(1);
+                if entry.used == 0 {
+                    self.unused.insert(entry.counter);
+                }
+            }
+        }
+    }
+
+    /// Close unused statements until the cache is down to `capacity` entries;
+    /// `0` removes everything not in use. Statements in use stay, and global
+    /// names are never reused.
+    pub(crate) fn close_unused(&mut self, capacity: usize) -> usize {
+        let over = self.len().saturating_sub(capacity);
+
+        // move out of unused to mutate it without borrowing the self to be able to call self.remove later
+        // this helps avoid allocations to remove only part of keys from unused
+        // PERF: the remove though removes once at a time in the loop, that could
+        // defeat this optimization actually
+        let mut unused = std::mem::take(&mut self.unused);
+
+        let removed = unused
+            .extract_if(|counter| {
+                // PERF: the global_name always allocates
+                // do we need to actually store this by String or
+                // can we use buffer
+                self.remove(&global_name(*counter));
+
+                true
+            })
+            .take(over)
+            .count();
+
+        // unused will hold the remaining elements that was not extracted above
+        self.unused = unused;
+
+        removed
+    }
+
+    /// Get all prepared statements in the global cache, keyed by name.
+    pub(crate) fn names(&self) -> &HashMap<String, Statement> {
+        &self.names
+    }
+
+    /// Get all prepared statements in the global cache, keyed by global unique key.
+    pub(crate) fn statements(&self) -> &HashMap<CacheKey, CachedStmt> {
+        &self.statements
+    }
+
+    /// Remove statement from global cache.
+    fn remove(&mut self, name: &str) {
+        if let Some(stmt) = self.names.remove(name) {
+            self.statements.remove(stmt.cache_key());
+            self.cross_shard_variants
+                .remove(&cross_shard_variant_name(name));
+        }
+    }
+
+    fn next_name(&mut self) -> String {
+        self.counter += 1;
+        global_name(self.counter)
+    }
+
+    fn reuse(&mut self, cache_key: &CacheKey) -> Option<String> {
+        if let Some(entry) = self.statements.get_mut(cache_key) {
+            if entry.used == 0 {
+                self.unused.remove(&entry.counter);
+            }
+            entry.used += 1;
+
+            Some(entry.name())
+        } else {
+            None
+        }
+    }
+
+    fn insert_internal(&mut self, name: &str, cache_key: CacheKey, statement: Statement) {
+        self.statements.insert(
+            cache_key,
+            CachedStmt {
+                counter: self.counter,
+                used: 1,
+            },
+        );
+        self.names.insert(name.to_owned(), statement);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::net::messages::Field;
+
+    impl GlobalCache {
+        /// Get the query string stored in the global cache
+        /// for the given globally unique prepared statement name.
+        pub(crate) fn query(&self, name: &str) -> Option<&str> {
+            self.names.get(name).map(|s| s.query())
+        }
+    }
+
+    #[test]
+    fn test_close_unused_zero_keeps_in_use_and_counter() {
+        let mut cache = GlobalCache::default();
+
+        let (_, held) = cache.insert(&Parse::named("s", "SELECT 'held'"));
+        let (_, released) = cache.insert(&Parse::named("s", "SELECT 'released'"));
+        cache.close(&released);
+
+        assert_eq!(cache.close_unused(0), 1, "only the released statement goes");
+        assert!(cache.parse(&held).is_some(), "statements in use survive");
+        assert!(cache.parse(&released).is_none());
+
+        // A reused name could hand a server connection a different query.
+        let (_, next) = cache.insert(&Parse::named("s", "SELECT 'next'"));
+        assert_eq!(next, "__pgdog_3", "global names are never reused");
+    }
+
+    #[test]
+    fn test_cache_key_aliases_the_stored_parse() {
+        let mut cache = GlobalCache::default();
+        let source = Parse::named("client_name", "SELECT $1");
+        let (_, name) = cache.insert(&source);
+
+        let stored = cache.names.get(&name).unwrap();
+        let map_key = cache.statements.keys().next().unwrap();
+        let owned = stored.parse().expect("parse").query_ref();
+
+        assert_eq!(owned.as_ptr(), stored.cache_key.query_ref().as_ptr());
+        assert_eq!(owned.as_ptr(), map_key.query_ref().as_ptr());
+        assert_ne!(owned.as_ptr(), source.query_ref().as_ptr());
+    }
+
+    #[test]
+    fn cross_shard_variant_is_owned_by_base_statement() {
+        let mut cache = GlobalCache::default();
+        let (_, base) = cache.insert(&Parse::named(
+            "client",
+            "SELECT AVG(value) FROM measurements",
+        ));
+
+        let variant = cache
+            .cross_shard_variant(
+                &base,
+                "SELECT AVG(value), COUNT(value) AS __pgdog_count_col0 FROM measurements",
+            )
+            .unwrap();
+        assert_eq!(variant, format!("{base}_cross_shard"));
+        assert_eq!(
+            cache.existing_cross_shard_variant_name(&base).as_deref(),
+            Some(variant.as_str())
+        );
+        assert_eq!(
+            cache.rewritten_parse(&base).unwrap().query(),
+            "SELECT AVG(value) FROM measurements"
+        );
+        assert!(
+            cache
+                .rewritten_parse(&variant)
+                .unwrap()
+                .query()
+                .contains("__pgdog_count_col0")
+        );
+        assert_eq!(cache.len(), 1, "variant is not a second logical statement");
+
+        cache.close(&base);
+        assert_eq!(cache.close_unused(0), 1);
+        assert!(cache.rewritten_parse(&variant).is_none());
+    }
+
+    #[test]
+    fn cross_shard_variant_has_separate_row_description() {
+        let mut cache = GlobalCache::default();
+        let (_, base) = cache.insert(&Parse::named(
+            "client",
+            "SELECT AVG(value) FROM measurements",
+        ));
+        let variant = cache
+            .cross_shard_variant(
+                &base,
+                "SELECT AVG(value), COUNT(value) AS __pgdog_count_col0 FROM measurements",
+            )
+            .unwrap();
+
+        cache.insert_row_description(&base, RowDescription::new(&[Field::double("avg")]));
+        cache.insert_row_description(
+            &variant,
+            RowDescription::new(&[Field::double("avg"), Field::bigint("__pgdog_count_col0")]),
+        );
+
+        assert_eq!(cache.row_description(&base).unwrap().len(), 1);
+        assert_eq!(cache.row_description(&variant).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn cross_shard_variant_preserves_client_parameter_count() {
+        let mut cache = GlobalCache::default();
+        let (_, base) = cache.insert(&Parse::named("client", "SELECT $1"));
+        cache.rewrite(&Parse::named(&base, "SELECT $1, $2::bigint"), 1);
+
+        let variant = cache
+            .cross_shard_variant(&base, "SELECT $1, $2::bigint")
+            .unwrap();
+
+        assert_eq!(cache.client_params(&base), Some(1));
+        assert_eq!(cache.client_params(&variant), Some(1));
+    }
+
+    #[test]
+    fn test_prep_stmt_cache_close() {
+        let mut cache = GlobalCache::default();
+        let parse = Parse::named("test", "SELECT $1");
+        let (new, name) = cache.insert(&parse);
+        assert!(new);
+        assert_eq!(name, "__pgdog_1");
+
+        for _ in 0..25 {
+            let (new, name) = cache.insert(&parse);
+            assert!(!new);
+            assert_eq!(name, "__pgdog_1");
+        }
+        let stmt = cache.names.get("__pgdog_1").unwrap().clone();
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+
+        assert_eq!(entry.used, 26);
+
+        for _ in 0..25 {
+            cache.close("__pgdog_1");
+        }
+
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 1);
+        assert!(cache.unused.is_empty());
+
+        cache.close("__pgdog_1");
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 0);
+        assert!(cache.unused.contains(&1)); // __pgdog_1
+
+        // let (_, name) = cache.insert_prepare(&parse);
+        // cache.close(&name);
+        // assert!(cache.unused.contains(&2)); // __pgdog_2
+    }
+
+    fn used(cache: &GlobalCache, name: &str) -> usize {
+        let statement = cache.names.get(name).unwrap();
+        cache.statements.get(statement.cache_key()).unwrap().used
+    }
+
+    #[test]
+    fn test_simple_prepared_is_never_shared() {
+        let mut cache = GlobalCache::default();
+
+        let query = Bytes::from("PREPARE __pgdog_template_name AS SELECT $1");
+        let parse = Parse::named("client_stmt", "SELECT $1");
+
+        let (_, first) = cache.insert_prepare(query.clone(), None, None, vec![]);
+        let (_, second) = cache.insert_prepare(query, None, None, vec![]);
+
+        assert_eq!(first, second);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(used(&cache, first.name()), 2);
+        assert_eq!(used(&cache, second.name()), 2);
+
+        // A Parse never re-uses a SQL PREPARE statement.
+        let (new, extended) = cache.insert(&parse);
+        assert!(new);
+        assert_ne!(extended, first.name());
+        assert_ne!(extended, second.name());
+        assert_eq!(cache.len(), 2);
+
+        // A Parse re-uses another Parse.
+        let (new_again, shared) = cache.insert(&parse);
+        assert!(!new_again);
+        assert_eq!(shared, extended);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(used(&cache, &extended), 2);
+    }
+
+    #[test]
+    fn test_remove_unused() {
+        let mut cache = GlobalCache::default();
+        let mut names = vec![];
+
+        for stmt in 0..25 {
+            let parse = Parse::named("__sqlx_1", format!("SELECT {}", stmt));
+            let (new, name) = cache.insert(&parse);
+            assert!(new);
+            names.push(name);
+        }
+
+        for name in &names[0..5] {
+            cache.close(name);
+        }
+
+        assert_eq!(cache.close_unused(26), 0);
+        assert_eq!(cache.close_unused(21), 4);
+        assert_eq!(cache.close_unused(20), 1);
+        assert_eq!(cache.close_unused(19), 0);
+        assert_eq!(cache.len(), 20);
+    }
+
+    #[test]
+    fn test_reuse_statement_after_becomes_unused() {
+        let mut cache = GlobalCache::default();
+        let parse = Parse::named("test", "SELECT $1");
+
+        let (new, name) = cache.insert(&parse);
+        assert!(new);
+        assert_eq!(cache.len(), 1);
+
+        cache.close(&name);
+        let stmt = cache.names.get(&name).unwrap().clone();
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 0);
+        assert!(cache.unused.contains(&1));
+
+        let (new_again, name_again) = cache.insert(&parse);
+        assert!(!new_again);
+        assert_eq!(name, name_again);
+        assert!(!cache.unused.contains(&1));
+
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 1);
+    }
+
+    #[test]
+    fn test_close_nonexistent_statement() {
+        let mut cache = GlobalCache::default();
+        let parse = Parse::named("test", "SELECT 1");
+        cache.insert(&parse);
+
+        cache.close("__pgdog_999");
+        assert_eq!(cache.len(), 1);
+        assert!(cache.unused.is_empty());
+    }
+
+    #[test]
+    fn test_close_unused_with_capacity_zero() {
+        let mut cache = GlobalCache::default();
+
+        for i in 0..10 {
+            let parse = Parse::named("test", format!("SELECT {}", i));
+            let (_, name) = cache.insert(&parse);
+            cache.close(&name);
+        }
+
+        assert_eq!(cache.len(), 10);
+        assert_eq!(cache.unused.len(), 10);
+
+        let removed = cache.close_unused(0);
+        assert_eq!(removed, 10);
+        assert_eq!(cache.len(), 0);
+        assert!(cache.unused.is_empty());
+        assert!(cache.names.is_empty());
+        assert!(cache.statements.is_empty());
+    }
+
+    #[test]
+    fn test_close_unused_when_nothing_unused() {
+        let mut cache = GlobalCache::default();
+
+        for i in 0..10 {
+            let parse = Parse::named("test", format!("SELECT {}", i));
+            cache.insert(&parse);
+        }
+
+        assert_eq!(cache.len(), 10);
+        assert!(cache.unused.is_empty());
+
+        let removed = cache.close_unused(5);
+        assert_eq!(removed, 0);
+        assert_eq!(cache.len(), 10);
+    }
+
+    #[test]
+    fn test_close_marks_as_unused() {
+        let mut cache = GlobalCache::default();
+        let parse = Parse::named("test", "SELECT 1");
+
+        let (_, name) = cache.insert(&parse);
+        cache.insert(&parse);
+        cache.insert(&parse);
+
+        let stmt = cache.names.get(&name).unwrap().clone();
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 3);
+
+        cache.close(&name);
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 2);
+        assert!(cache.unused.is_empty());
+
+        cache.close(&name);
+        cache.close(&name);
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 0);
+        assert!(cache.unused.contains(&1));
+
+        cache.close(&name);
+        let entry = cache.statements.get(stmt.cache_key()).unwrap();
+        assert_eq!(entry.used, 0);
+    }
+
+    #[test]
+    fn test_both_maps_cleaned_up_on_removal() {
+        let mut cache = GlobalCache::default();
+        let mut names = vec![];
+
+        for i in 0..5 {
+            let parse = Parse::named("test", format!("SELECT {}", i));
+            let (_, name) = cache.insert(&parse);
+            names.push(name);
+        }
+
+        assert_eq!(cache.len(), 5);
+        assert_eq!(cache.statements.len(), 5);
+        assert_eq!(cache.names.len(), 5);
+
+        for name in &names {
+            cache.close(name);
+        }
+
+        assert_eq!(cache.unused.len(), 5);
+
+        cache.close_unused(0);
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.statements.len(), 0);
+        assert_eq!(cache.names.len(), 0);
+        assert_eq!(cache.unused.len(), 0);
+
+        for name in &names {
+            assert!(cache.parse(name).is_none());
+            assert!(cache.query(name).is_none());
+        }
+    }
+
+    #[test]
+    fn test_complex_interleaved_operations() {
+        let mut cache = GlobalCache::default();
+
+        let parse1 = Parse::named("test", "SELECT 1");
+        let parse2 = Parse::named("test", "SELECT 2");
+        let parse3 = Parse::named("test", "SELECT 3");
+
+        let (_, name1) = cache.insert(&parse1);
+        let (_, name2) = cache.insert(&parse2);
+        let (_, name3) = cache.insert(&parse3);
+
+        cache.insert(&parse1);
+        cache.insert(&parse1);
+
+        assert_eq!(cache.len(), 3);
+
+        cache.close(&name1);
+        cache.close(&name2);
+        cache.close(&name3);
+
+        assert_eq!(cache.unused.len(), 2);
+        assert!(cache.unused.contains(&2));
+        assert!(cache.unused.contains(&3));
+        assert!(!cache.unused.contains(&1));
+
+        cache.close(&name1);
+        cache.close(&name1);
+        assert_eq!(cache.unused.len(), 3);
+        assert!(cache.unused.contains(&1));
+
+        cache.close_unused(2);
+        assert_eq!(cache.len(), 2);
+
+        let parse_exists = cache.parse(&name1).is_some();
+        let parse_new = Parse::named("test", "SELECT 99");
+        let (is_new, new_name) = cache.insert(&parse_new);
+        assert!(is_new);
+
+        cache.close(&new_name);
+        assert_eq!(cache.unused.len(), 3);
+
+        cache.close_unused(1);
+        assert_eq!(cache.len(), 1);
+
+        if parse_exists {
+            assert!(cache.parse(&name1).is_some());
+        }
+
+        cache.close_unused(0);
+        assert_eq!(cache.len(), 0);
+        assert!(cache.statements.is_empty());
+        assert!(cache.names.is_empty());
+        assert!(cache.unused.is_empty());
+    }
+}

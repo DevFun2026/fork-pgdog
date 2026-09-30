@@ -1,0 +1,63 @@
+//! Network errors.
+
+use crate::datum::DataType;
+use std::array::TryFromSliceError;
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("unexpected payload")]
+    UnexpectedPayload,
+
+    #[error("not text encoding")]
+    NotTextEncoding,
+
+    #[error("not utf-8")]
+    Utf8(#[from] std::str::Utf8Error),
+
+    #[error("not an integer")]
+    NotInteger(#[from] std::num::ParseIntError),
+
+    #[error("not a float")]
+    NotFloat(#[from] std::num::ParseFloatError),
+
+    #[error("not a uuid")]
+    NotUuid(#[from] uuid::Error),
+
+    #[error("not a timestamptz")]
+    NotTimestampTz,
+
+    #[error("wrong size slice")]
+    WrongSizeSlice(#[from] TryFromSliceError),
+
+    #[error("wrong size binary ({0}) for type")]
+    WrongSizeBinary(usize),
+
+    #[error("invalid timestamp components")]
+    InvalidTimestamp,
+
+    #[error("array has {0} dimensions, only 1 is supported")]
+    ArrayDimensions(usize),
+
+    #[error("not a boolean")]
+    NotBoolean,
+
+    #[error("not a pg_lsn")]
+    NotPgLsn,
+
+    #[error("lsn decode error")]
+    LsnDecode,
+
+    #[error("expected {0}, got {1}")]
+    IncompatibleTypes(DataType, DataType),
+
+    #[error("invalid operation {op} for {ty}")]
+    InvalidOperation { op: &'static str, ty: DataType },
+
+    #[error("cannot cast from {from} to {to}")]
+    InvalidCast { from: DataType, to: DataType },
+
+    #[error("value out of range for {0}")]
+    NumericOutOfRange(DataType),
+}

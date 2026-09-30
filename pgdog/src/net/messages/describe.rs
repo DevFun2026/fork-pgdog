@@ -1,0 +1,141 @@
+//! Describe (F) message.
+use std::fmt::Debug;
+use std::str::from_utf8;
+use std::str::from_utf8_unchecked;
+
+use super::code;
+use super::prelude::*;
+
+/// Describe (F) message.
+#[derive(Clone, PartialEq)]
+pub(crate) struct Describe {
+    payload: Bytes,
+    original: Option<Bytes>,
+}
+
+impl Debug for Describe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Describe")
+            .field("kind", &self.kind())
+            .field("name", &self.statement())
+            .finish()
+    }
+}
+
+impl FromBytes for Describe {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        let original = bytes.clone();
+        code!(bytes, 'D');
+
+        // Minimum: code(1) + len(4) + kind(1) + null(1) = 7 bytes
+        if original.len() < 7 {
+            return Err(Error::UnexpectedEof);
+        }
+
+        from_utf8(&original[6..original.len() - 1])?;
+
+        Ok(Self {
+            payload: original.clone(),
+            original: Some(original),
+        })
+    }
+}
+
+impl ToBytes for Describe {
+    fn to_bytes(&self) -> Bytes {
+        self.original.as_ref().unwrap_or(&self.payload).clone()
+    }
+}
+
+impl Protocol for Describe {
+    fn code(&self) -> char {
+        'D'
+    }
+}
+
+impl Describe {
+    pub(crate) fn len(&self) -> usize {
+        self.payload.len()
+    }
+
+    pub(crate) fn anonymous(&self) -> bool {
+        self.kind() != 'S' || self.statement().is_empty()
+    }
+
+    pub(crate) fn rename(&mut self, name: impl AsRef<str>) {
+        let mut payload = Payload::named('D');
+        payload.put_u8(self.kind() as u8);
+        payload.put_string(name.as_ref());
+        self.payload = payload.freeze();
+        self.original = None;
+    }
+
+    pub(crate) fn anonymize(&mut self) {
+        if !self.anonymous() {
+            self.rename("");
+        }
+    }
+
+    pub(crate) fn new_statement(name: &str) -> Describe {
+        let mut payload = Payload::named('D');
+        payload.put_u8(b'S');
+        payload.put_string(name);
+        Describe {
+            payload: payload.freeze(),
+            original: None,
+        }
+    }
+
+    pub(crate) fn is_statement(&self) -> bool {
+        self.kind() == 'S'
+    }
+
+    pub(crate) fn is_portal(&self) -> bool {
+        self.kind() == 'P'
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_portal(name: &str) -> Describe {
+        let mut payload = Payload::named('D');
+        payload.put_u8(b'P');
+        payload.put_string(name);
+        Describe {
+            payload: payload.freeze(),
+            original: None,
+        }
+    }
+
+    pub(crate) fn statement(&self) -> &str {
+        // SAFETY: Name is checked for utf-8 in Bytes::from_bytes
+        unsafe { from_utf8_unchecked(&self.payload[6..self.payload.len() - 1]) }
+    }
+
+    pub(crate) fn kind(&self) -> char {
+        self.payload[5] as char
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{
+        backend::pool::{Request, test::pool},
+        net::{ProtocolMessage, messages::ErrorResponse},
+    };
+
+    #[tokio::test]
+    async fn test_describe() {
+        let pool = pool();
+        let mut conn = pool.get(&Request::default()).await.unwrap();
+        let describe = Describe::new_portal("");
+        conn.send(&vec![ProtocolMessage::from(describe.message())].into())
+            .await
+            .unwrap();
+        let res = conn.read().await.unwrap();
+        let err = ErrorResponse::from_bytes(res.to_bytes()).unwrap();
+        assert_eq!(err.code, "34000");
+
+        let describe = Describe::new_statement("test");
+        assert_eq!(describe.len(), describe.to_bytes().len());
+    }
+}

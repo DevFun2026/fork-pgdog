@@ -1,0 +1,116 @@
+//! Service discovery listener.
+
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use rand::Rng;
+use tracing::{debug, error, info};
+
+use std::collections::HashMap;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use tokio::net::UdpSocket;
+use tokio::select;
+use tokio::time::Duration;
+
+use super::{Error, Message, Payload};
+use crate::tasks;
+use crate::util::safe_interval;
+
+/// Service discovery listener.
+#[derive(Clone, Debug)]
+pub(crate) struct Listener {
+    id: u64,
+    inner: Arc<Mutex<Inner>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct State {
+    /// Number of connected clients.
+    pub(crate) clients: u64,
+    /// When we received the last state update.
+    pub(crate) last_message: SystemTime,
+}
+
+#[derive(Debug)]
+struct Inner {
+    peers: HashMap<SocketAddr, State>,
+}
+
+static LISTENER: Lazy<Listener> = Lazy::new(Listener::new);
+
+impl Listener {
+    /// Create new listener.
+    fn new() -> Self {
+        Self {
+            id: rand::rng().random(),
+            inner: Arc::new(Mutex::new(Inner {
+                peers: HashMap::new(),
+            })),
+        }
+    }
+
+    /// Get listener.
+    pub(crate) fn get() -> Self {
+        LISTENER.clone()
+    }
+
+    /// Get peers.
+    pub(crate) fn peers(&self) -> HashMap<SocketAddr, State> {
+        self.inner.lock().peers.clone()
+    }
+
+    /// Run the listener.
+    pub(crate) fn run(&self, address: Ipv4Addr, port: u16) {
+        let listener = self.clone();
+        info!("launching service discovery ({}:{})", address, port);
+        tasks::spawn("service discovery", async move {
+            if let Err(err) = listener.spawn(address, port).await {
+                error!("crashed: {:?}", err);
+            }
+        });
+    }
+
+    /// Run listener.
+    pub(crate) async fn spawn(&self, address: Ipv4Addr, port: u16) -> Result<Self, Error> {
+        let socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).await?;
+        socket.join_multicast_v4(address, "0.0.0.0".parse::<Ipv4Addr>().unwrap())?;
+        socket.multicast_loop_v4()?; // Won't work on IPv6, but nice for debugging.
+
+        let mut buf = vec![0u8; 1024];
+        let mut interval = safe_interval(Duration::from_secs(1));
+        let shutdown = tasks::shutdown_signal();
+
+        loop {
+            select! {
+                _ = shutdown.cancelled() => return Ok(self.clone()),
+                result = socket.recv_from(&mut buf) => {
+                    let (len, addr) = result?;
+                    let message = Message::from_bytes(&buf[..len]).ok();
+                    let now = SystemTime::now();
+
+                    if let Some(message) = message {
+                        debug!("{}: {:#?}", addr, message);
+
+                        if let Payload::Stats {
+                                clients
+                            } = message.payload {
+                            self.inner.lock().peers.insert(addr, State {
+                                clients,
+                                last_message: now,
+                            });
+                        }
+
+                    }
+                }
+
+                _ = interval.tick() => {
+                    let healthcheck = Message::stats(self.id).to_bytes()?;
+                    socket.send_to(&healthcheck, format!("{}:{}", address, port)).await?;
+                    debug!("healtcheck");
+                }
+            }
+        }
+    }
+}

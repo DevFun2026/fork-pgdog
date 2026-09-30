@@ -1,0 +1,467 @@
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::setup::admin_sqlx;
+use parking_lot::Mutex;
+use rust_decimal::prelude::ToPrimitive;
+use sqlx::{Connection, Executor, PgConnection, Pool, Postgres, Row, postgres::PgListener};
+use tokio::{
+    select, spawn,
+    sync::Barrier,
+    time::{sleep, timeout},
+};
+
+#[tokio::test]
+async fn test_notify() {
+    let messages = Arc::new(Mutex::new(vec![]));
+    let mut tasks = vec![];
+    let mut listeners = vec![];
+    let test_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let channels = (0..5)
+        .map(|i| format!("test_notify_{test_id}_{i}"))
+        .collect::<Vec<_>>();
+    let received_barrier = Arc::new(Barrier::new(channels.len() + 1));
+    let release_barrier = Arc::new(Barrier::new(channels.len() + 1));
+
+    for channel in &channels {
+        let task_msgs = messages.clone();
+
+        let mut listener = PgListener::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+            .await
+            .unwrap();
+
+        listener.listen(channel).await.unwrap();
+
+        let received_barrier = received_barrier.clone();
+        let release_barrier = release_barrier.clone();
+        listeners.push(spawn(async move {
+            let mut received = 0;
+            while received < 10 {
+                let msg = listener.recv().await.unwrap();
+                received += 1;
+                task_msgs.lock().push(msg);
+            }
+
+            received_barrier.wait().await;
+            release_barrier.wait().await;
+        }));
+    }
+
+    for i in 0..50 {
+        let channel = channels[i % channels.len()].clone();
+        let handle = spawn(async move {
+            let mut conn = PgConnection::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+                .await
+                .unwrap();
+            conn.execute(format!("NOTIFY {channel}, '{channel}'").as_str())
+                .await
+                .unwrap();
+        });
+
+        tasks.push(handle);
+    }
+
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    received_barrier.wait().await;
+
+    {
+        let messages = messages.lock();
+        assert_eq!(messages.len(), 50);
+        for message in messages.iter() {
+            assert_eq!(message.channel(), message.payload());
+        }
+    }
+
+    assert_listener_stats(&channels, 10).await;
+
+    release_barrier.wait().await;
+    for listener in listeners {
+        listener.await.unwrap();
+    }
+}
+
+#[derive(Debug)]
+struct ListenerStats {
+    listeners: i64,
+    received: i64,
+    dropped: i64,
+}
+
+async fn assert_listener_stats(channels: &[String], expected_received: i64) {
+    let admin = admin_sqlx().await;
+    let stats = wait_for_listener_stats(&admin, channels, expected_received).await;
+
+    for (channel, stats) in channels.iter().zip(stats) {
+        assert_eq!(stats.listeners, 1, "{channel} listener count");
+        assert_eq!(
+            stats.received, expected_received,
+            "{channel} received count"
+        );
+        assert_eq!(stats.dropped, 0, "{channel} dropped count");
+    }
+}
+
+async fn wait_for_listener_stats(
+    admin: &Pool<Postgres>,
+    channels: &[String],
+    expected_received: i64,
+) -> Vec<ListenerStats> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let rows = admin.fetch_all("SHOW LISTENERS").await.unwrap();
+            let stats = channels
+                .iter()
+                .filter_map(|channel| {
+                    rows.iter()
+                        .find(|row| row.get::<String, _>("channel") == *channel)
+                        .map(|row| ListenerStats {
+                            listeners: numeric_column(row, "listeners"),
+                            received: numeric_column(row, "received"),
+                            dropped: numeric_column(row, "dropped"),
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            if stats.len() == channels.len()
+                && stats
+                    .iter()
+                    .all(|stats| stats.listeners >= 1 && stats.received >= expected_received)
+            {
+                return stats;
+            }
+
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+fn numeric_column(row: &sqlx::postgres::PgRow, column: &str) -> i64 {
+    row.get::<rust_decimal::Decimal, _>(column)
+        .to_i64()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_notify_only_delivered_after_transaction_commit() {
+    let messages = Arc::new(Mutex::new(vec![]));
+
+    // Set up a listener for the test channel
+    let mut listener = PgListener::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    listener.listen("test_tx_notify").await.unwrap();
+
+    let listener_messages = messages.clone();
+    let listener_task = spawn(async move {
+        loop {
+            select! {
+                msg = listener.recv() => {
+                    let msg = msg.unwrap();
+                    listener_messages.lock().push((msg.channel().to_string(), msg.payload().to_string()));
+                }
+            }
+        }
+    });
+
+    // Give the listener a moment to be fully set up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Start a transaction and send a NOTIFY inside it
+    let mut conn = PgConnection::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    // Begin transaction
+    conn.execute("BEGIN").await.unwrap();
+
+    // Send NOTIFY inside the transaction
+    conn.execute("NOTIFY test_tx_notify, 'inside_transaction'")
+        .await
+        .unwrap();
+
+    // Wait a bit to ensure that if NOTIFY were delivered immediately, we'd see it
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // At this point, the NOTIFY should NOT have been delivered yet
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered before transaction commit"
+    );
+
+    // Commit the transaction
+    conn.execute("COMMIT").await.unwrap();
+
+    // Wait for the NOTIFY to be delivered after commit
+    let result = timeout(Duration::from_secs(5), async {
+        loop {
+            if !messages.lock().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "NOTIFY should be delivered after transaction commit"
+    );
+    assert_eq!(
+        messages.lock().len(),
+        1,
+        "Exactly one NOTIFY should be delivered"
+    );
+
+    let messages_guard = messages.lock();
+    let (channel, payload) = &messages_guard[0];
+    assert_eq!(channel, "test_tx_notify");
+    assert_eq!(payload, "inside_transaction");
+
+    listener_task.abort();
+}
+
+#[tokio::test]
+async fn test_notify_not_delivered_after_transaction_rollback() {
+    let messages = Arc::new(Mutex::new(vec![]));
+
+    // Set up a listener for the test channel
+    let mut listener = PgListener::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    listener.listen("test_tx_rollback_notify").await.unwrap();
+
+    let listener_messages = messages.clone();
+    let listener_task = spawn(async move {
+        loop {
+            select! {
+                msg = listener.recv() => {
+                    let msg = msg.unwrap();
+                    listener_messages.lock().push((msg.channel().to_string(), msg.payload().to_string()));
+                }
+            }
+        }
+    });
+
+    // Give the listener a moment to be fully set up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Start a transaction and send a NOTIFY inside it
+    let mut conn = PgConnection::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    // Begin transaction
+    conn.execute("BEGIN").await.unwrap();
+
+    // Send NOTIFY inside the transaction
+    conn.execute("NOTIFY test_tx_rollback_notify, 'inside_rolled_back_transaction'")
+        .await
+        .unwrap();
+
+    // Wait a bit to ensure that if NOTIFY were delivered immediately, we'd see it
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // At this point, the NOTIFY should NOT have been delivered yet
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered before transaction commit"
+    );
+
+    // Rollback the transaction
+    conn.execute("ROLLBACK").await.unwrap();
+
+    // Wait to see if any NOTIFY gets delivered (it shouldn't)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The NOTIFY should NOT be delivered after rollback
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered after transaction rollback"
+    );
+
+    listener_task.abort();
+}
+
+#[tokio::test]
+async fn test_notify_not_delivered_after_transaction_error() {
+    let messages = Arc::new(Mutex::new(vec![]));
+
+    // Set up a listener for the test channel
+    let mut listener = PgListener::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    listener.listen("test_tx_error_notify").await.unwrap();
+
+    let listener_messages = messages.clone();
+    let listener_task = spawn(async move {
+        loop {
+            select! {
+                msg = listener.recv() => {
+                    let msg = msg.unwrap();
+                    listener_messages.lock().push((msg.channel().to_string(), msg.payload().to_string()));
+                }
+            }
+        }
+    });
+
+    // Give the listener a moment to be fully set up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Start a transaction and send a NOTIFY inside it
+    let mut conn = PgConnection::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    // Begin transaction
+    conn.execute("BEGIN").await.unwrap();
+
+    // Send NOTIFY inside the transaction
+    conn.execute("NOTIFY test_tx_error_notify, 'before_error'")
+        .await
+        .unwrap();
+
+    // Wait a bit to ensure that if NOTIFY were delivered immediately, we'd see it
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // At this point, the NOTIFY should NOT have been delivered yet
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered before transaction commit"
+    );
+
+    // Execute a statement with syntax error - this should cause transaction to fail
+    let result = conn.execute("INVALID SQL SYNTAX HERE").await;
+    assert!(result.is_err(), "Invalid SQL should cause an error");
+
+    conn.execute("ROLLBACK").await.unwrap();
+
+    // Wait to see if any NOTIFY gets delivered (it shouldn't)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The NOTIFY should NOT be delivered after transaction error
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered when transaction experiences an error"
+    );
+
+    listener_task.abort();
+}
+
+#[tokio::test]
+async fn test_notify_not_delivered_after_constraint_violation() {
+    let messages = Arc::new(Mutex::new(vec![]));
+
+    // Set up a listener for the test channel
+    let mut listener = PgListener::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    listener
+        .listen("test_constraint_error_notify")
+        .await
+        .unwrap();
+
+    let listener_messages = messages.clone();
+    let listener_task = spawn(async move {
+        loop {
+            select! {
+                msg = listener.recv() => {
+                    let msg = msg.unwrap();
+                    listener_messages.lock().push((msg.channel().to_string(), msg.payload().to_string()));
+                }
+            }
+        }
+    });
+
+    // Give the listener a moment to be fully set up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Create a connection and set up a test table with constraints
+    let mut conn = PgConnection::connect("postgres://pgdog:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    // Clean up any existing test table
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS test_notify_constraint")
+        .await;
+
+    // Create a test table with a unique constraint
+    conn.execute("CREATE TABLE test_notify_constraint (id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
+        .await
+        .unwrap();
+
+    // Insert initial data
+    conn.execute("INSERT INTO test_notify_constraint (id, name) VALUES (1, 'test')")
+        .await
+        .unwrap();
+
+    // Begin transaction
+    conn.execute("BEGIN").await.unwrap();
+
+    // Send NOTIFY inside the transaction
+    conn.execute("NOTIFY test_constraint_error_notify, 'before_constraint_violation'")
+        .await
+        .unwrap();
+
+    // Wait a bit to ensure that if NOTIFY were delivered immediately, we'd see it
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // At this point, the NOTIFY should NOT have been delivered yet
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered before transaction commit"
+    );
+
+    // Execute a statement that violates the unique constraint
+    let result = conn
+        .execute("INSERT INTO test_notify_constraint (id, name) VALUES (2, 'test')")
+        .await;
+    assert!(
+        result.is_err(),
+        "Constraint violation should cause an error"
+    );
+
+    conn.execute("ROLLBACK").await.unwrap();
+
+    // Wait to see if any NOTIFY gets delivered (it shouldn't)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The NOTIFY should NOT be delivered after constraint violation
+    assert_eq!(
+        messages.lock().len(),
+        0,
+        "NOTIFY should not be delivered when transaction experiences a constraint violation"
+    );
+
+    // Clean up
+    let _ = conn.execute("DROP TABLE test_notify_constraint").await;
+    listener_task.abort();
+}
+
+#[tokio::test]
+async fn test_listen_session_mode() {
+    let mut conn = PgConnection::connect("postgres://pgdog_session:pgdog@127.0.0.1:6432/pgdog")
+        .await
+        .unwrap();
+
+    conn.execute("LISTEN test_session_channel").await.unwrap();
+    conn.execute("UNLISTEN test_session_channel").await.unwrap();
+}

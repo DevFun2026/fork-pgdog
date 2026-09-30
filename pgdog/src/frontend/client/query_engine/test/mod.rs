@@ -1,0 +1,64 @@
+use pgdog_config::General;
+
+use crate::{
+    backend::databases::reload_from_existing,
+    config::{config, load_test, load_test_sharded, set},
+    frontend::Client,
+    net::{Parameters, Stream},
+};
+
+mod advisory_lock;
+mod advisory_unlock;
+mod close_parse;
+mod close_parse_global_cache;
+mod cross_shard_disabled;
+mod discard;
+mod extended;
+mod extended_anonymous;
+mod extended_transaction;
+mod fatal_error;
+mod graceful_disconnect;
+mod graceful_shutdown;
+mod idle_in_transaction_recovery;
+mod lock_session;
+mod manual_lock;
+mod multi_binding;
+mod multi_statement;
+mod omni;
+mod pipeline_execution;
+pub(crate) mod prelude;
+mod prepared_syntax_error;
+mod pub_sub;
+mod replicas;
+mod rewrite_extended;
+mod rewrite_insert_split;
+mod rewrite_offset;
+mod rewrite_projection;
+mod rewrite_simple_prepared;
+mod schema_changed;
+mod set;
+mod set_schema_sharding;
+mod sharded;
+mod sharded_prepared;
+mod spliced;
+mod temp_table;
+mod test_omnisharded;
+mod transaction_state;
+mod two_pc_single_shard;
+
+pub(super) fn test_client() -> Client {
+    load_test();
+    Client::new_test(Stream::dev_null(), Parameters::default())
+}
+
+pub(super) fn test_sharded_client() -> Client {
+    load_test_sharded();
+    Client::new_test(Stream::dev_null(), Parameters::default())
+}
+
+pub(super) fn change_config(f: impl FnOnce(&mut General)) {
+    let mut config = (*config()).clone();
+    f(&mut config.config.general);
+    set(config).unwrap();
+    reload_from_existing().unwrap();
+}

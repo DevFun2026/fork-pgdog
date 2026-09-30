@@ -1,12 +1,14 @@
 # Third-Party Notices
 
-This repository is licensed under Apache-2.0. It contains original
-implementation and documentation informed by the public projects listed in
-`.agent/sources/SOURCES.md`.
+This repository contains imported PgDog source and the original Project AI
+Template tooling. PgDog retains its upstream AGPL-3.0 license in `LICENSE`;
+upstream component-specific notices and licenses remain in their original paths.
+The template tooling retains its original Apache-2.0 license, preserved in
+`docs/import/template-original/LICENSE`, and its original `NOTICE`.
 
-No third-party executable code, binary launcher, hook, visual asset or runtime
-package is vendored. Selected UX/UI documentation is adapted, not claimed as
-independently authored. Other notices below describe conceptual references.
+The remaining notices below describe the template tooling and its references,
+not the imported PgDog source. The original complete template notices are
+preserved in `docs/import/template-original/THIRD_PARTY_NOTICES.md`.
 
 ## Adapted documentation
 

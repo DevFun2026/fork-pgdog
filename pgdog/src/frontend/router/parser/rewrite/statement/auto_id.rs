@@ -1,0 +1,719 @@
+//! Auto-inject generated IDs for missing BIGINT primary keys in INSERT statements.
+
+use indexmap::IndexSet;
+use itertools::*;
+use pg_raw_parse::{ConstValue, Node, NodeMut, make, nodes};
+use pgdog_config::RewriteMode;
+
+use super::{Error, StatementRewrite};
+use crate::frontend::router::parser::{StatementParser, Table};
+
+impl StatementRewrite<'_> {
+    /// Handle BIGINT primary key columns in INSERT statements based on config.
+    ///
+    /// Behavior depends on `rewrite.primary_key` setting:
+    /// - `ignore`: Do nothing
+    /// - `error`: Return an error if a BIGINT primary key is missing
+    /// - `rewrite`: Auto-inject pgdog.unique_id() for missing columns,
+    ///   or replace DEFAULT values with pgdog.unique_id()
+    /// - `rewrite_omni`: Rewrite only omnisharded tables using pgdog.unique_id()
+    /// - `rewrite_omni_global`: Rewrite only omnisharded tables using
+    ///   pgdog.nextval('[schema_]table_column_seq')
+    ///
+    /// This runs before function replacement so injected calls will be
+    /// processed by the unique_id and nextval rewriters.
+    pub(super) fn inject_auto_id<'a>(
+        &mut self,
+        mut node: nodes::InsertStmtMut<'a, '_>,
+        mem: make::MemoryToken<'a>,
+    ) -> Result<(), Error> {
+        let mode = self.schema.rewrite.primary_key;
+
+        if mode == RewriteMode::Ignore || self.schema.shards == 1 {
+            return Ok(());
+        }
+
+        let (table, is_sharded) = self.get_insert_table(&node);
+
+        let Some(relation) = self.db_schema.table(table, self.user, self.search_path) else {
+            return Ok(());
+        };
+
+        // Get the columns specified in the INSERT (preserving order)
+        let insert_columns: IndexSet<&str> = self.get_insert_column_names_ordered(&node);
+
+        // Find BIGINT primary key columns
+        let bigint_pk_columns: Vec<&str> = relation
+            .columns()
+            .values()
+            .filter(|col| col.is_primary_key && is_bigint_type(&col.data_type))
+            .map(|col| col.column_name.as_str())
+            .collect();
+
+        if bigint_pk_columns.is_empty() {
+            return Ok(());
+        }
+
+        // Find positions of present PK columns (for DEFAULT replacement)
+        let (present_pk_positions, missing_columns): (Vec<_>, Vec<_>) =
+            bigint_pk_columns.into_iter().partition_map(|pk_col| {
+                insert_columns
+                    .get_index_of(&pk_col)
+                    .map(|pos| Either::Left((pos, pk_col)))
+                    .unwrap_or(Either::Right(pk_col))
+            });
+
+        let rewrite = mode == RewriteMode::Rewrite
+            || matches!(
+                mode,
+                RewriteMode::RewriteOmni | RewriteMode::RewriteOmniGlobal
+            ) && !is_sharded;
+
+        let sequence_prefix =
+            (mode == RewriteMode::RewriteOmniGlobal && !is_sharded).then(|| match table.schema {
+                Some(schema) => format!("{schema}_{}", table.name),
+                None => table.name.to_owned(),
+            });
+
+        // Replace DEFAULT values for present columns (only in rewrite mode).
+        if rewrite {
+            let replaced = self.replace_set_to_default_at_positions(
+                &mut node,
+                mem,
+                &present_pk_positions,
+                sequence_prefix.as_deref(),
+            );
+            if replaced > 0 {
+                self.rewritten = true;
+            }
+        }
+
+        if missing_columns.is_empty() {
+            return Ok(());
+        }
+
+        if mode == RewriteMode::Error {
+            return Err(Error::MissingPrimaryKey);
+        }
+
+        if rewrite {
+            for column in missing_columns {
+                self.inject_column_with_auto_id(&mut node, mem, column, sequence_prefix.as_deref());
+            }
+            self.rewritten = true;
+        }
+
+        Ok(())
+    }
+
+    /// Get the table from an INSERT statement.
+    pub(crate) fn get_insert_table<'a>(&self, insert: &'a nodes::InsertStmt) -> (Table<'a>, bool) {
+        let relation = insert.relation().expect("INSERT always has table");
+        let is_sharded = StatementParser::new(insert.into(), None, self.schema).is_sharded(
+            self.db_schema,
+            self.user,
+            self.search_path,
+        );
+
+        (Table::from(relation), is_sharded)
+    }
+
+    /// Get the column names specified in the INSERT statement, preserving order.
+    fn get_insert_column_names_ordered<'a>(
+        &self,
+        insert: &'a nodes::InsertStmt,
+    ) -> IndexSet<&'a str> {
+        insert
+            .cols()
+            .iter()
+            .map(|col| match col {
+                Node::ResTarget(res) => res.name().expect("ResTarget always has a name in INSERT"),
+                _ => unreachable!("InsertStmt.cols is always ResTarget"),
+            })
+            .collect()
+    }
+
+    /// Replace SetToDefault nodes at the specified column positions with generated IDs.
+    fn replace_set_to_default_at_positions<'a, 'b>(
+        &mut self,
+        insert: &mut nodes::InsertStmtMut<'a, 'b>,
+        mem: make::MemoryToken<'a>,
+        positions: &[(usize, &str)],
+        sequence_prefix: Option<&str>,
+    ) -> usize {
+        let NodeMut::SelectStmt(mut select_stmt) = insert.select_stmt_mut() else {
+            return 0; // DEFAULT VALUES
+        };
+
+        let mut replaced = 0;
+        for list in select_stmt.values_lists_mut() {
+            let mut list = list.expect_node_list();
+            for (pos, column) in positions {
+                if matches!(list.get(*pos), Some(Node::SetToDefault(..))) {
+                    list.set(
+                        *pos,
+                        Self::auto_id_func_call(mem, column, sequence_prefix).uncast(),
+                    );
+                    replaced += 1;
+                }
+            }
+        }
+
+        replaced
+    }
+
+    /// Inject a column with a generated ID as the value.
+    fn inject_column_with_auto_id<'a>(
+        &mut self,
+        insert: &mut nodes::InsertStmtMut<'a, '_>,
+        mem: make::MemoryToken<'a>,
+        column_name: &str,
+        sequence_prefix: Option<&str>,
+    ) {
+        insert.cols_mut().push(
+            mem,
+            mem.make_res_target(Some(column_name), mem.empty(), mem.none())
+                .uncast(),
+        );
+
+        let NodeMut::SelectStmt(mut select_stmt) = insert.select_stmt_mut() else {
+            panic!("Attempted to add an auto ID to DEFAULT VALUES")
+        };
+
+        for list in select_stmt.values_lists_mut().into_iter() {
+            list.expect_node_list().push(
+                mem,
+                Self::auto_id_func_call(mem, column_name, sequence_prefix).uncast(),
+            )
+        }
+    }
+
+    /// Create a pgdog.nextval() or pgdog.unique_id() call for a primary key column.
+    fn auto_id_func_call<'a>(
+        mem: make::MemoryToken<'a>,
+        column: &str,
+        sequence_prefix: Option<&str>,
+    ) -> make::Unique<'a, &'a nodes::FuncCall> {
+        let (function, args) = match sequence_prefix {
+            Some(prefix) => (
+                "nextval",
+                mem.make_list(&[mem
+                    .make_a_const(ConstValue::String(&format!("{prefix}_{column}_seq")))
+                    .uncast()]),
+            ),
+            None => ("unique_id", mem.empty()),
+        };
+        mem.make_func_call(
+            mem.make_list(&[
+                mem.make_string(Some("pgdog")).uncast(),
+                mem.make_string(Some(function)).uncast(),
+            ]),
+            args,
+            Default::default(),
+        )
+    }
+}
+
+/// Check if a data type is a BIGINT variant.
+fn is_bigint_type(data_type: &str) -> bool {
+    matches!(
+        data_type.to_lowercase().as_str(),
+        "bigint" | "int8" | "bigserial" | "serial8"
+    )
+}
+
+#[cfg(test)]
+mod split_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::super::{RewritePlan, nextval::SequenceCall};
+    use crate::frontend::client::QueryTimestamps;
+    use crate::frontend::router::parser::rewrite::statement::plan::GeneratedParam;
+    use crate::frontend::router::sharding::ShardedTable;
+    use indexmap::IndexMap;
+    use pgdog_config::{Rewrite, SystemCatalogsBehavior};
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::backend::schema::columns::StatsColumn as SchemaColumn;
+    use crate::backend::schema::{Relation, Schema};
+    use crate::backend::{ShardedTables, ShardingSchema};
+    use crate::config::PreparedStatementsLevel;
+    use crate::frontend::PreparedStatements;
+    use crate::frontend::router::parser::StatementRewriteContext;
+    use crate::test_utils::set_env_var;
+
+    pub(super) fn make_schema_with_bigint_pk() -> Schema {
+        let mut columns = IndexMap::new();
+        columns.insert(
+            "id".to_string(),
+            SchemaColumn {
+                table_catalog: "test".into(),
+                table_schema: "public".into(),
+                table_name: "users".into(),
+                column_name: "id".into(),
+                column_default: String::new(),
+                is_nullable: false,
+                data_type: "bigint".into(),
+                ordinal_position: 1,
+                is_primary_key: true,
+                foreign_keys: Vec::new(),
+            }
+            .into(),
+        );
+        columns.insert(
+            "name".to_string(),
+            SchemaColumn {
+                table_catalog: "test".into(),
+                table_schema: "public".into(),
+                table_name: "users".into(),
+                column_name: "name".into(),
+                column_default: String::new(),
+                is_nullable: true,
+                data_type: "text".into(),
+                ordinal_position: 2,
+                is_primary_key: false,
+                foreign_keys: Vec::new(),
+            }
+            .into(),
+        );
+        let relation = Relation::test_table("public", "users", columns);
+        let relations = HashMap::from([(("public".into(), "users".into()), relation)]);
+        Schema::from_parts(vec!["public".into()], relations)
+    }
+
+    fn make_schema_with_non_bigint_pk() -> Schema {
+        let mut columns = IndexMap::new();
+        columns.insert(
+            "id".to_string(),
+            SchemaColumn {
+                table_catalog: "test".into(),
+                table_schema: "public".into(),
+                table_name: "users".into(),
+                column_name: "id".into(),
+                column_default: String::new(),
+                is_nullable: false,
+                data_type: "uuid".into(),
+                ordinal_position: 1,
+                is_primary_key: true,
+                foreign_keys: Vec::new(),
+            }
+            .into(),
+        );
+        columns.insert(
+            "name".to_string(),
+            SchemaColumn {
+                table_catalog: "test".into(),
+                table_schema: "public".into(),
+                table_name: "users".into(),
+                column_name: "name".into(),
+                column_default: String::new(),
+                is_nullable: true,
+                data_type: "text".into(),
+                ordinal_position: 2,
+                is_primary_key: false,
+                foreign_keys: Vec::new(),
+            }
+            .into(),
+        );
+        let relation = Relation::test_table("public", "users", columns);
+        let relations = HashMap::from([(("public".into(), "users".into()), relation)]);
+        Schema::from_parts(vec!["public".into()], relations)
+    }
+
+    fn sharding_schema_with_mode(mode: RewriteMode) -> ShardingSchema {
+        ShardingSchema {
+            rewrite: Rewrite {
+                primary_key: mode,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn rewrite_sql_with_mode(
+        sql: &str,
+        db_schema: &Schema,
+        mode: RewriteMode,
+    ) -> Result<(String, RewritePlan), Error> {
+        let schema = sharding_schema_with_mode(mode);
+        rewrite_sql_with_sharding_schema(sql, db_schema, &schema)
+    }
+
+    #[test]
+    fn test_rewrite_mode_injects_auto_id() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        assert_eq!(plan.generated_params.len(), 1); // confirms unique_id was processed
+        assert!(sql.contains("id"));
+        // pgdog.unique_id() should be replaced with actual bigint value
+        assert!(!sql.contains("pgdog.unique_id"));
+        assert!(sql.contains("::bigint")); // value is cast to bigint
+    }
+
+    #[test]
+    fn test_error_mode_returns_error() {
+        let db_schema = make_schema_with_bigint_pk();
+        let result = rewrite_sql_with_mode(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            RewriteMode::Error,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("primary key is missing"),
+            "Expected MissingPrimaryKey error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ignore_mode_does_nothing() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            RewriteMode::Ignore,
+        )
+        .unwrap();
+
+        assert_eq!(plan.generated_params.len(), 0);
+        assert!(!sql.contains("id,"));
+    }
+
+    #[test]
+    fn test_no_inject_when_pk_present() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (id, name) VALUES (1, 'test')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        assert_eq!(plan.generated_params.len(), 0);
+        assert!(!sql.contains("pgdog.unique_id"));
+    }
+
+    #[test]
+    fn test_no_inject_for_non_bigint_pk() {
+        let db_schema = make_schema_with_non_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        assert_eq!(plan.generated_params.len(), 0);
+        assert!(!sql.contains("pgdog.unique_id"));
+    }
+
+    #[test]
+    fn test_no_inject_for_unknown_table() {
+        let db_schema = Schema::default();
+        let (_, plan) = rewrite_sql_with_mode(
+            "INSERT INTO unknown (name) VALUES ('test')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        assert_eq!(plan.generated_params.len(), 0);
+    }
+
+    #[test]
+    fn test_inject_with_multi_row_insert() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (name) VALUES ('a'), ('b')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        // One auto ID per row
+        assert_eq!(plan.generated_params.len(), 2);
+        assert!(sql.contains("id"));
+    }
+
+    #[test]
+    fn test_error_mode_ok_when_pk_present() {
+        let db_schema = make_schema_with_bigint_pk();
+        let result = rewrite_sql_with_mode(
+            "INSERT INTO users (id, name) VALUES (1, 'test')",
+            &db_schema,
+            RewriteMode::Error,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_replace_default_with_unique_id() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (id, name) VALUES (DEFAULT, 'test')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        // DEFAULT should be replaced with unique_id
+        assert!(!sql.to_uppercase().contains("DEFAULT"));
+        assert!(sql.contains("::bigint")); // value is cast to bigint
+        assert_eq!(plan.generated_params.len(), 1);
+    }
+
+    #[test]
+    fn test_replace_default_multi_row() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (id, name) VALUES (DEFAULT, 'a'), (DEFAULT, 'b')",
+            &db_schema,
+            RewriteMode::Rewrite,
+        )
+        .unwrap();
+
+        // Both DEFAULT values should be replaced
+        assert!(!sql.to_uppercase().contains("DEFAULT"));
+        assert_eq!(plan.generated_params.len(), 2);
+    }
+
+    #[test]
+    fn test_error_mode_preserves_default() {
+        let db_schema = make_schema_with_bigint_pk();
+        let (sql, _plan) = rewrite_sql_with_mode(
+            "INSERT INTO users (id, name) VALUES (DEFAULT, 'test')",
+            &db_schema,
+            RewriteMode::Error,
+        )
+        .unwrap();
+
+        // DEFAULT should NOT be replaced in error mode
+        assert!(sql.to_uppercase().contains("DEFAULT"));
+    }
+
+    fn sharding_schema_with_sharded_users(mode: RewriteMode) -> ShardingSchema {
+        ShardingSchema {
+            shards: 3,
+            tables: ShardedTables::new(
+                vec![ShardedTable {
+                    column: "id".into(),
+                    name: Some("users".into()),
+                    ..Default::default()
+                }],
+                vec![],
+                false,
+                SystemCatalogsBehavior::default(),
+            ),
+            rewrite: Rewrite {
+                primary_key: mode,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn rewrite_sql_with_sharding_schema(
+        sql: &str,
+        db_schema: &Schema,
+        schema: &ShardingSchema,
+    ) -> Result<(String, RewritePlan), Error> {
+        let mut prepared = PreparedStatements::default();
+        rewrite_sql_with_prepared_statements(sql, db_schema, schema, &mut prepared)
+    }
+
+    fn rewrite_sql_with_prepared_statements(
+        sql: &str,
+        db_schema: &Schema,
+        schema: &ShardingSchema,
+        prepared: &mut PreparedStatements,
+    ) -> Result<(String, RewritePlan), Error> {
+        let _guard = set_env_var("NODE_ID", "pgdog-1");
+        let ast = pg_raw_parse::parse(sql).unwrap();
+        let mut rewriter = StatementRewrite::new(StatementRewriteContext {
+            extended: false,
+            prepared: false,
+            prepared_statements: prepared,
+            schema,
+            db_schema,
+            user: "",
+            search_path: None,
+            timezone: None,
+            query_timestamps: QueryTimestamps::default(),
+        });
+        let mut plan = Default::default();
+        let ast = make::try_owned(|mem| {
+            let mut copy = mem.make_unique(&*ast.into_inner());
+            plan = rewriter.maybe_rewrite(copy.as_mut().into_iter().next().unwrap(), mem)?;
+            Ok::<_, Error>(copy)
+        })?;
+        let sql = pg_raw_parse::deparse_stmts(&*ast)?;
+        Ok((sql, plan))
+    }
+
+    #[test]
+    fn test_prepare_execute_rewrite_injects_auto_id() {
+        let db_schema = make_schema_with_bigint_pk();
+        let schema = sharding_schema_with_mode(RewriteMode::Rewrite);
+        let mut prepared = PreparedStatements::default();
+        prepared.set_level(PreparedStatementsLevel::Full);
+
+        let (prepare_sql, prepare_plan) = rewrite_sql_with_prepared_statements(
+            "PREPARE stmt(text) AS INSERT INTO users (name) VALUES ($1)",
+            &db_schema,
+            &schema,
+            &mut prepared,
+        )
+        .unwrap();
+
+        assert_eq!(prepare_plan.params, 1);
+        assert_eq!(prepare_plan.generated_params.len(), 1);
+        assert!(prepare_sql.contains("(name, id)"));
+        assert!(prepare_sql.contains("$2::bigint"));
+
+        let (execute_sql, _) = rewrite_sql_with_prepared_statements(
+            "EXECUTE stmt('alice')",
+            &db_schema,
+            &schema,
+            &mut prepared,
+        )
+        .unwrap();
+        let ast = pg_raw_parse::parse(&execute_sql).unwrap();
+        let Node::ExecuteStmt(execute) = ast.stmts().next().unwrap() else {
+            panic!("expected EXECUTE statement");
+        };
+
+        assert_eq!(execute.params().len(), 2);
+        assert!(matches!(
+            execute.params().first(),
+            Some(Node::A_Const(value))
+                if matches!(value.val(), Some(pg_raw_parse::ConstValue::String("alice")))
+        ));
+        assert!(matches!(
+            execute.params().get(1),
+            Some(Node::A_Const(value))
+                if matches!(value.val(), Some(pg_raw_parse::ConstValue::Float(id))
+                    if id.parse::<i64>().is_ok())
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_omni_skips_sharded_table() {
+        let db_schema = make_schema_with_bigint_pk();
+        let schema = sharding_schema_with_sharded_users(RewriteMode::RewriteOmni);
+        let (sql, plan) = rewrite_sql_with_sharding_schema(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            &schema,
+        )
+        .unwrap();
+
+        // users is sharded, so RewriteOmni should NOT inject auto id
+        assert_eq!(plan.generated_params.len(), 0);
+        assert!(!sql.contains("::bigint"));
+    }
+
+    #[test]
+    fn test_rewrite_omni_injects_for_non_sharded_table() {
+        let db_schema = make_schema_with_bigint_pk();
+        // No sharded tables configured, so "users" is not sharded
+        let schema = ShardingSchema {
+            shards: 3,
+            rewrite: Rewrite {
+                primary_key: RewriteMode::RewriteOmni,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (sql, plan) = rewrite_sql_with_sharding_schema(
+            "INSERT INTO users (name) VALUES ('test')",
+            &db_schema,
+            &schema,
+        )
+        .unwrap();
+
+        // users is NOT sharded, so RewriteOmni should inject auto id
+        assert_eq!(plan.generated_params.len(), 1);
+        assert!(sql.contains("::bigint"));
+    }
+
+    #[test]
+    fn test_rewrite_omni_global_uses_column_sequence() {
+        let db_schema = make_schema_with_bigint_pk();
+        let schema = ShardingSchema {
+            shards: 3,
+            ..sharding_schema_with_mode(RewriteMode::RewriteOmniGlobal)
+        };
+
+        for (table, sequence) in [
+            ("users", "users_id_seq"),
+            ("public.users", "public_users_id_seq"),
+        ] {
+            for (columns, values, expected_values) in [
+                (
+                    "name",
+                    "('a'), ('b')",
+                    format!(
+                        "('a', pgdog.nextval('{sequence}')), ('b', pgdog.nextval('{sequence}'))"
+                    ),
+                ),
+                (
+                    "name, id",
+                    "('a', DEFAULT), ('b', 42), ('c', DEFAULT)",
+                    format!(
+                        "('a', pgdog.nextval('{sequence}')), ('b', 42), ('c', pgdog.nextval('{sequence}'))"
+                    ),
+                ),
+            ] {
+                let (sql, plan) = rewrite_sql_with_sharding_schema(
+                    &format!("INSERT INTO {table} ({columns}) VALUES {values}"),
+                    &db_schema,
+                    &schema,
+                )
+                .expect("rewrite succeeds");
+
+                assert_eq!(
+                    sql,
+                    format!("INSERT INTO {table} (name, id) VALUES {expected_values}")
+                );
+                let unique_ids = plan
+                    .generated_params
+                    .iter()
+                    .filter(|param| matches!(param, GeneratedParam::UniqueId))
+                    .count();
+                assert_eq!(unique_ids, 0);
+                assert_eq!(
+                    plan.generated_params,
+                    vec![GeneratedParam::Sequence(SequenceCall::Nextval(sequence.to_owned())); 2]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rewrite_omni_global_skips_sharded_table() {
+        let db_schema = make_schema_with_bigint_pk();
+        let schema = sharding_schema_with_sharded_users(RewriteMode::RewriteOmniGlobal);
+        for original in [
+            "INSERT INTO users (name) VALUES ('test')",
+            "INSERT INTO users (id, name) VALUES (DEFAULT, 'test')",
+        ] {
+            let (sql, plan) = rewrite_sql_with_sharding_schema(original, &db_schema, &schema)
+                .expect("rewrite succeeds");
+
+            assert_eq!(sql, original);
+            assert!(plan.generated_params.is_empty());
+        }
+    }
+}

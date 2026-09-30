@@ -1,0 +1,59 @@
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub(crate) enum Error {
+    #[error(transparent)]
+    Enterprise(#[from] super::super::ee::Error),
+
+    #[error("unique_id generation failed: {0}")]
+    UniqueId(#[from] crate::unique_id::Error),
+
+    #[error("parser: {0}")]
+    Parser(#[from] pg_raw_parse::Error),
+
+    #[error("sharding key assignment unsupported: {0}")]
+    UnsupportedShardingKeyUpdate(String),
+
+    #[error("net: {0}")]
+    Net(#[from] crate::net::Error),
+
+    #[error("missing parameter: ${0}")]
+    MissingParameter(u16),
+
+    #[error("empty query")]
+    EmptyQuery,
+
+    #[error("missing column: ${0}")]
+    MissingColumn(usize),
+
+    #[error("WHERE clause is required")]
+    WhereClauseMissing,
+
+    #[error("{0}")]
+    Type(#[from] pgdog_postgres_types::Error),
+
+    #[error("primary key is missing")]
+    MissingPrimaryKey,
+
+    #[error("missing AST on request")]
+    MissingAst,
+
+    #[error("prepared statement '{0}' does not exist")]
+    ExecuteMissingPrepare(String),
+
+    #[error("missing or invalid parameters in Execute")]
+    IncorrectExecuteParameters,
+
+    #[error(
+        "TimeZone {0} is not supported for time functions on omnisharded tables, only IANA names like UTC or America/New_York are (other formats are future work)"
+    )]
+    UnsupportedTimeZone(String),
+
+    #[error("could not determine the session TimeZone for time functions on omnisharded tables")]
+    UnknownTimeZone,
+
+    #[error(
+        "could not determine how to parse the argument passed in {0}; it is likely not supported yet"
+    )]
+    UnsupportedArgument(String),
+}

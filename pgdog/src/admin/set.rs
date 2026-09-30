@@ -1,0 +1,236 @@
+use crate::{
+    backend::databases,
+    config::{self, RewriteMode, config},
+    frontend::PreparedStatements,
+};
+
+use super::prelude::*;
+use pg_raw_parse::{
+    Node,
+    raw::VariableSetKind::{VAR_RESET, VAR_RESET_ALL},
+};
+use serde::de::DeserializeOwned;
+
+pub(crate) struct Set {
+    name: String,
+    value: String,
+}
+
+pub(super) fn is_set_statement(sql: &str) -> bool {
+    is_set_or_error(sql).unwrap_or_default()
+}
+
+fn is_set_or_error(sql: &str) -> Result<bool, Error> {
+    let stmt = pg_raw_parse::parse(sql).map_err(|_| Error::Syntax)?;
+    let root = stmt.stmts().next().ok_or(Error::Syntax)?;
+
+    Ok(if let Node::VariableSetStmt(stmt) = root {
+        !matches!(stmt.kind, VAR_RESET_ALL | VAR_RESET)
+    } else {
+        false
+    })
+}
+
+#[async_trait]
+impl Command for Set {
+    fn name(&self) -> String {
+        "SET".into()
+    }
+
+    fn parse(sql: &str) -> Result<Self, Error> {
+        let stmt = pg_raw_parse::parse(sql).map_err(|_| Error::Syntax)?;
+        let root = stmt.stmts().next().ok_or(Error::Syntax)?;
+        match root {
+            Node::VariableSetStmt(stmt) => {
+                let name = stmt.name().ok_or(Error::Syntax)?.to_owned();
+
+                let setting = stmt.args().first().ok_or(Error::Syntax)?;
+                match setting {
+                    Node::A_Const(a_const) if let Some(val) = a_const.val() => Ok(Self {
+                        name,
+                        value: val.to_string(),
+                    }),
+
+                    _ => Err(Error::Syntax),
+                }
+            }
+
+            _ => Err(Error::Syntax),
+        }
+    }
+
+    async fn execute(&self) -> Result<Vec<Message>, Error> {
+        let _lock = databases::lock();
+        let mut config = (*config()).clone();
+        match self.name.as_str() {
+            "query_timeout" => {
+                config.config.general.query_timeout = self.value.parse()?;
+            }
+
+            "checkout_timeout" => {
+                config.config.general.checkout_timeout = self.value.parse()?;
+            }
+
+            "auth_type" => {
+                config.config.general.auth_type = Self::from_json(&self.value)?;
+            }
+
+            "passthrough_auth" => {
+                config.config.general.passthrough_auth = Self::from_json(&self.value)?;
+            }
+
+            "read_write_strategy" => {
+                config.config.general.read_write_strategy = Self::from_json(&self.value)?;
+            }
+
+            "read_write_split" => {
+                config.config.general.read_write_split = Self::from_json(&self.value)?;
+            }
+
+            "load_balancing_strategy" => {
+                config.config.general.load_balancing_strategy = Self::from_json(&self.value)?;
+            }
+
+            "prepared_statements_limit" => {
+                config.config.general.prepared_statements_limit = self.value.parse()?;
+                PreparedStatements::global()
+                    .write()
+                    .close_unused(config.config.general.prepared_statements_limit);
+            }
+
+            "prepared_statements" => {
+                config.config.general.prepared_statements = Self::from_json(&self.value)?;
+            }
+
+            "cross_shard_disabled" => {
+                config.config.general.cross_shard_disabled = Self::from_json(&self.value)?;
+            }
+
+            "two_phase_commit" => {
+                config.config.general.two_phase_commit = Self::from_json(&self.value)?;
+            }
+
+            "two_phase_commit_auto" => {
+                config.config.general.two_phase_commit_auto = Self::from_json(&self.value)?;
+            }
+
+            "rewrite_shard_key_updates" => {
+                config.config.rewrite.shard_key = self
+                    .value
+                    .parse::<RewriteMode>()
+                    .map_err(|_| Error::Syntax)?;
+            }
+
+            "rewrite_split_inserts" => {
+                config.config.rewrite.split_inserts = self
+                    .value
+                    .parse::<RewriteMode>()
+                    .map_err(|_| Error::Syntax)?;
+            }
+
+            "rewrite_primary_key" => {
+                config.config.rewrite.primary_key = self
+                    .value
+                    .parse::<RewriteMode>()
+                    .map_err(|_| Error::Syntax)?;
+            }
+
+            "rewrite_omni_non_deterministic_functions" => {
+                config.config.rewrite.non_deterministic_functions = self
+                    .value
+                    .parse::<RewriteMode>()
+                    .map_err(|_| Error::Syntax)?;
+            }
+
+            "rewrite_enabled" => {
+                config.config.rewrite.enabled = Self::from_json(&self.value)?;
+            }
+
+            "healthcheck_interval" => {
+                config.config.general.healthcheck_interval = self.value.parse()?;
+            }
+
+            "idle_healthcheck_interval" => {
+                config.config.general.idle_healthcheck_interval = self.value.parse()?;
+            }
+
+            "idle_healthcheck_delay" => {
+                config.config.general.idle_healthcheck_delay = self.value.parse()?;
+            }
+
+            "ban_timeout" => {
+                config.config.general.ban_timeout = self.value.parse()?;
+            }
+
+            "tls_client_required" => {
+                config.config.general.tls_client_required = Self::from_json(&self.value)?;
+            }
+
+            "query_parser" => {
+                config.config.general.query_parser = Self::from_json(&self.value)?;
+            }
+
+            "client_idle_in_transaction_timeout" => {
+                config.config.general.client_idle_in_transaction_timeout = self.value.parse()?;
+            }
+
+            "reload_schema_on_ddl" => {
+                config.config.general.reload_schema_on_ddl = Self::from_json(&self.value)?;
+            }
+
+            "connection_recovery" => {
+                config.config.general.connection_recovery = Self::from_json(&self.value)?;
+            }
+
+            "client_connection_recovery" => {
+                config.config.general.client_connection_recovery = Self::from_json(&self.value)?;
+            }
+
+            "default_pool_size" => {
+                config.config.general.default_pool_size = self.value.parse()?;
+            }
+
+            "connect_timeout" => {
+                config.config.general.connect_timeout = self.value.parse()?;
+            }
+
+            "canonicalize_type_information" => {
+                config.config.general.canonicalize_type_information = Self::from_json(&self.value)?;
+            }
+
+            "dry_run" => {
+                config.config.general.dry_run = Self::from_json(&self.value)?;
+            }
+
+            _ => return Ok(vec![]),
+        }
+
+        config::set(config)?;
+        databases::init()?;
+
+        Ok(vec![])
+    }
+}
+
+impl Set {
+    fn from_json<T: DeserializeOwned>(value: &str) -> serde_json::Result<T> {
+        let value = match value {
+            "true" | "false" => value.to_string(),
+            _ => format!(r#""{}""#, value),
+        };
+        serde_json::from_str::<T>(&value)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_set_command() {
+        let cmd = "SET query_timeout TO 5000";
+        let cmd = Set::parse(cmd).unwrap();
+        assert_eq!(cmd.name, "query_timeout");
+        assert_eq!(cmd.value, "5000");
+    }
+}

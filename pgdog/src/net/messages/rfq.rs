@@ -1,0 +1,83 @@
+//! ReadyForQuery (B) message.
+
+use crate::net::messages::{code, prelude::*};
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) enum TransactionState {
+    Idle,
+    Error,
+    InTrasaction,
+}
+
+// ReadyForQuery (F).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReadyForQuery {
+    pub(crate) status: char,
+}
+
+impl ReadyForQuery {
+    /// New idle message.
+    pub(crate) fn idle() -> Self {
+        ReadyForQuery { status: 'I' }
+    }
+
+    /// In transaction message.
+    pub(crate) fn in_transaction(in_transaction: bool) -> Self {
+        if in_transaction {
+            ReadyForQuery { status: 'T' }
+        } else {
+            Self::idle()
+        }
+    }
+
+    pub(crate) fn error() -> Self {
+        ReadyForQuery { status: 'E' }
+    }
+
+    /// Get transaction state.
+    pub(crate) fn state(&self) -> Result<TransactionState, Error> {
+        match self.status {
+            'E' => Ok(TransactionState::Error),
+            'T' => Ok(TransactionState::InTrasaction),
+            'I' => Ok(TransactionState::Idle),
+            c => Err(Error::UnknownTransactionStateIdentifier(c)),
+        }
+    }
+}
+
+impl ToBytes for ReadyForQuery {
+    fn to_bytes(&self) -> bytes::Bytes {
+        let mut payload = Payload::named(self.code());
+        payload.put_u8(self.status as u8);
+
+        payload.freeze()
+    }
+}
+
+impl FromBytes for ReadyForQuery {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        code!(bytes, 'Z');
+
+        let _len = bytes.get_i32();
+        let status = bytes.get_u8() as char;
+
+        Ok(Self { status })
+    }
+}
+
+impl Protocol for ReadyForQuery {
+    fn code(&self) -> char {
+        'Z'
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::ReadyForQuery;
+
+    impl ReadyForQuery {
+        pub(crate) fn is_transaction_aborted(&self) -> bool {
+            self.status == 'E'
+        }
+    }
+}

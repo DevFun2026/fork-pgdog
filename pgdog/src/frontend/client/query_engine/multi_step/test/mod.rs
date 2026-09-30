@@ -1,0 +1,19 @@
+use tokio::{io::AsyncWriteExt, net::TcpStream};
+
+use crate::{
+    frontend::client::test::read_messages,
+    net::{Query, ToBytes},
+};
+
+pub(crate) mod insert;
+pub(crate) mod prepared;
+pub(crate) mod simple;
+pub(crate) mod update;
+
+async fn truncate_table(table: &str, stream: &mut TcpStream) {
+    let query = Query::new(format!("TRUNCATE {}", table)).to_bytes();
+    stream.write_all(&query).await.unwrap();
+    stream.flush().await.unwrap();
+
+    read_messages(stream, &['C', 'Z']).await;
+}

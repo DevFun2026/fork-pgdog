@@ -1,0 +1,80 @@
+use super::*;
+use crate::frontend::router::{parser::Shard, round_robin};
+
+impl QueryParser {
+    /// Handle SHOW command.
+    pub(super) fn show(
+        &mut self,
+        stmt: &nodes::VariableShowStmt,
+        context: &mut QueryParserContext,
+    ) -> Result<Command, Error> {
+        match stmt.name() {
+            Some("pgdog.shards") => Ok(Command::InternalField {
+                name: "shards".into(),
+                value: context.shards.to_string(),
+            }),
+            Some("pgdog.unique_id") => Ok(Command::UniqueId),
+            _ => {
+                context
+                    .shards_calculator
+                    .push(ShardWithPriority::new_rr_no_table(Shard::Direct(
+                        round_robin::next(context.shards),
+                    )));
+                let route = Route::write(context.shards_calculator.shard().clone())
+                    .with_read(context.read_only);
+                Ok(Command::Query(route))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_show {
+    use crate::backend::Cluster;
+    use crate::config::config;
+    use crate::frontend::client::{QueryTimestamps, Sticky};
+    use crate::frontend::router::QueryParser;
+    use crate::frontend::router::parser::{AstContext, Cache, Shard};
+    use crate::frontend::{BufferedQuery, ClientRequest, PreparedStatements, RouterContext};
+    use crate::net::Parameters;
+    use crate::net::messages::Query;
+
+    #[test]
+    fn show_runs_on_a_direct_shard_round_robin() {
+        let c = Cluster::new_test(&config());
+        let mut parser = QueryParser::default();
+        let params = Parameters::default();
+        let ctx = AstContext::from_cluster(&c, &params, QueryTimestamps::default());
+
+        // First call
+        let query = "SHOW TRANSACTION ISOLATION LEVEL";
+        let buffered = BufferedQuery::Query(Query::new(query));
+        let ast = Cache::get()
+            .query(&buffered, &ctx, &mut PreparedStatements::default())
+            .unwrap();
+        let mut buffer = ClientRequest::from(vec![Query::new(query).into()]);
+        buffer.ast = Some(ast);
+        let context = RouterContext::new(&buffer, &c, &params, None, Sticky::new()).unwrap();
+
+        let first = parser.parse(context).unwrap().clone();
+        let first_shard = first.route().shard();
+        assert!(matches!(first_shard, Shard::Direct(_)));
+
+        // Second call
+        let query = "SHOW TRANSACTION ISOLATION LEVEL";
+        let buffered = BufferedQuery::Query(Query::new(query));
+        let ast = Cache::get()
+            .query(&buffered, &ctx, &mut PreparedStatements::default())
+            .unwrap();
+        let mut buffer = ClientRequest::from(vec![Query::new(query).into()]);
+        buffer.ast = Some(ast);
+        let context = RouterContext::new(&buffer, &c, &params, None, Sticky::new()).unwrap();
+
+        let second = parser.parse(context).unwrap().clone();
+        let second_shard = second.route().shard();
+        assert!(matches!(second_shard, Shard::Direct(_)));
+
+        // Round robin shard routing
+        assert!(second_shard != first_shard);
+    }
+}
