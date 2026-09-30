@@ -14,7 +14,7 @@ smoke = []
 enabled = true
 require_independent_provider = true
 max_package_bytes = 500000
-max_estimated_tokens = 64000
+max_estimated_tokens = 96000
 provider_order = ["claude", "codex", "gemini"]
 
 [review.provider_commands]
