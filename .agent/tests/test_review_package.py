@@ -189,6 +189,8 @@ class ReviewPackageTests(unittest.TestCase):
         self.assertEqual(proof["count"], 1)
         self.assertEqual(proof["groups"], [{"from": "", "to": "applications/pgdog/", "paths": ["src/demo.txt"]}])
         self.assertEqual(package.manifest.scope, (destination,))
+        self.assertEqual(json.loads((package.path / "manifest.json").read_text())["scope"],
+                         {"applications/pgdog/": ["src/demo.txt"]})
         self.assertEqual(load_package(package.path, root=self.root).manifest, package.manifest)
 
     def test_sensitive_rename_only_sends_metadata_and_explicit_context_stays_denied(self):

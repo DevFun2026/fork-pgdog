@@ -15,6 +15,9 @@ mode changes and symlinks are never omitted by this rule. `entries_sha256` binds
 the lexically sorted `[source, destination, mode, blob]` rows encoded as compact
 ASCII-escaped JSON. Version 1 also retains the full scope and full-diff SHA-256.
 The loader independently recomputes every mapping and hash from Git trees.
+For these versioned packages, `scope` is a prefix-to-suffix-list object: concatenate
+each key and each listed suffix to recover the full changed-path scope. This
+factors repeated directories only; no scope entry is dropped.
 
 Sensitive filenames may appear only as metadata for these verified moves.
 Their contents are not sent, explicit sensitive context stays denied, and any

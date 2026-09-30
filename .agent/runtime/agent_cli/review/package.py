@@ -288,7 +288,20 @@ def load_package(path: Path, *, root: Path) -> ReviewPackage:
                     or raw["estimated_tokens"] <= 0):
                 raise ValueError("invalid projection manifest fields")
         files = tuple(ManifestFile(**item) for item in raw.pop("files"))
-        raw["scope"] = tuple(raw["scope"])
+        if "verified_renames" in raw:
+            if not isinstance(raw["scope"], dict):
+                raise ValueError("invalid compact scope")
+            paths = []
+            for prefix, suffixes in raw["scope"].items():
+                if (not isinstance(prefix, str) or (prefix and not prefix.endswith("/"))
+                        or not isinstance(suffixes, list) or not all(isinstance(s, str) for s in suffixes)):
+                    raise ValueError("invalid compact scope paths")
+                paths.extend(prefix + suffix for suffix in suffixes)
+            raw["scope"] = tuple(sorted(paths))
+        else:
+            if not isinstance(raw["scope"], list):
+                raise ValueError("invalid legacy scope")
+            raw["scope"] = tuple(raw["scope"])
         if "omitted_generated" in raw:
             raw["omitted_generated"] = tuple(tuple(pair) for pair in raw["omitted_generated"])
         manifest = ReviewManifest(files=files, **raw)

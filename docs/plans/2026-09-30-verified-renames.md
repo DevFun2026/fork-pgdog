@@ -11,6 +11,8 @@ identical Git blob ID AND mode may have its rename-only patch omitted. Both
 paths remain visible through a prefix-compressed path table in the manifest.
 Groups with more than eight entries use nested directory keys and null file
 leaves to avoid repeated prefixes; the table still enumerates every file.
+The full scope uses prefix-to-suffix lists on disk and expands to the original
+complete sorted tuple during validation; legacy manifests retain their encoding.
 A SHA-256 over sorted `[source, destination, mode, blob]` JSON rows binds the
 proof; the full Git diff digest and full destination scope remain bound too.
 Loading a package independently recomputes every proof from the two commits.

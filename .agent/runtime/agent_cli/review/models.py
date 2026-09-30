@@ -50,6 +50,14 @@ class ReviewManifest:
         result = asdict(self)
         if self.verified_renames is None:
             result.pop("verified_renames")
+        else:
+            # Scope is still complete; factor only repeated directory prefixes.
+            groups: dict[str, list[str]] = {}
+            for path in self.scope:
+                parts = path.split("/")
+                prefix = "/".join(parts[:2]) + "/" if len(parts) > 2 else ""
+                groups.setdefault(prefix, []).append(path[len(prefix):])
+            result["scope"] = groups
         if self.full_diff_sha256 is None:
             # Preserve checksums for pre-projection manifests.
             for key in ("full_diff_sha256", "omitted_generated", "estimated_tokens"):
