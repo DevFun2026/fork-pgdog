@@ -28,6 +28,9 @@ jobs:
       - name: Run merge commands without claiming independent review
         if: ${{ !cancelled() }}
         run: ./scripts/agent verify review --timeout 3600 --json
+      - name: Report public failure identifiers
+        if: failure()
+        run: python3 scripts/ci-test-summary.py
       - name: Retain command evidence
         if: always()
         uses: actions/upload-artifact@v4
