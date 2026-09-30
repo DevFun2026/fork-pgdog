@@ -74,7 +74,7 @@ scanner list. EKS/Vault connectivity and production audit guarantees are unteste
 A reviewer capability probe does not send repository content. Actual review needs
 fresh passing `review` command evidence and user approval of the exact manifest.
 The initial import is approximately 9.3 MB of diff, exceeding the current 500 KB
-and 64,000 estimated-token limits. Do not switch the trusted base to an intermediate
+and 96,000 estimated-token limits. Do not switch the trusted base to an intermediate
 commit, truncate the import, or auto-approve a manifest. A separately approved
 large-import review procedure is needed if the full import cannot fit.
 
@@ -123,3 +123,21 @@ completed segment to be recycled: a live phase record legitimately retains its
 identity dependencies. Rotation support is compiled only for tests. The client-ID
 fixture still holds and checks 500 clients, with at most 32 concurrent connection
 handshakes to fit macOS's observed listen backlog of 128.
+
+
+## CI trigger policy and regression checks
+
+GitHub validation workflows run on pull requests or manual dispatch only.
+Publishing and benchmark follow-up workflows require manual dispatch. GitLab
+runs only for merge-request or manual web pipelines. Pushes do not trigger CI.
+
+Auto-primary success fixtures use the same one-second checkout budget as the
+other PostgreSQL fixtures. The former 50 ms override also bounded real database
+connection startup and intermittently expired under Linux coverage. The explicit
+no-primary timeout test retains its 10 ms budget and timeout assertion.
+
+Native AGY terminal responses may contain repeated result JSON objects with
+`toolAction`/`toolSummary` display strings. The parser requires every object to
+agree with the strict `structured_output`, rejecting conflicts, extra fields,
+trailing prose and malformed output. Native login review remains explicitly
+approved and bound to its package; a parsed old review does not approve new code.

@@ -1,6 +1,6 @@
 # PgDog fork and verification workflow
 
-Generated: 2026-09-30T10:33:36+07:00 | Commit: 7d551d9aeb86
+Generated: 2026-09-30T14:33:07+07:00 | Commit: e394507e6774
 
 ## Components
 
@@ -39,6 +39,6 @@ Generated: 2026-09-30T10:33:36+07:00 | Commit: 7d551d9aeb86
 
 ## Environments
 
-- **github-actions** — GitHub Actions: GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.
-- **gitlab-ci** — GitLab CI: Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.
+- **github-actions** — GitHub Actions: Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.
+- **gitlab-ci** — GitLab CI: Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.
 - **local** — Local developer environment: macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.

@@ -1,11 +1,15 @@
 # This is just the workflow Bencher has in its docs; haven't customized it yet
 # <https://bencher.dev/docs/how-to/github-actions/#pull-requests-on-bare-metal>
 on:
-  repository_dispatch:
-    types: [bencher_run]
-
+  workflow_dispatch:
+    inputs:
+      job_uuid:
+        description: Bencher job UUID to collect
+        required: true
+        type: string
 jobs:
   attach_pr_benchmarks:
+    if: github.repository == 'pgdogdev/pgdog'
     name: Post PR Benchmark Results from Bencher Bare Metal
     permissions:
       checks: write
@@ -15,7 +19,7 @@ jobs:
       - uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a
       - name: Post PR Benchmark Results with Bencher
         env:
-          JOB_UUID: ${{ github.event.client_payload.bencher.job }}
+          JOB_UUID: ${{ inputs.job_uuid }}
         run: |
           bencher run \
           --project pgdog \

@@ -1,13 +1,6 @@
 name: fmt
 on:
-  push:
-    branches:
-      - main
-      - main-ent
-    paths:
-      - ".github/workflows/fmt.yml"
-      - "**/*.rs"
-      - "integration/**"
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
