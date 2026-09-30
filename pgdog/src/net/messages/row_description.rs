@@ -1,0 +1,279 @@
+//! RowDescription (B) message.
+
+use std::collections::{BTreeSet, HashMap};
+use std::ops::Deref;
+use std::sync::Arc;
+
+use crate::net::c_string_buf;
+use crate::stats::memory::MemoryUsage;
+
+use super::{DataType, code};
+use super::{Format, prelude::*};
+
+/// Column field description.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Field {
+    /// Name of the field.
+    pub(crate) name: String,
+    /// Table OID.
+    pub(crate) table_oid: i32,
+    /// Column number.
+    pub(crate) column: i16,
+    /// Type OID.
+    pub(crate) type_oid: i32,
+    /// Type size.
+    pub(crate) type_size: i16,
+    /// Type modifier.
+    pub(crate) type_modifier: i32,
+    /// Format code.
+    pub(crate) format: i16,
+}
+
+impl MemoryUsage for Field {
+    fn memory_usage(&self) -> usize {
+        self.name.capacity()
+            + self.table_oid.memory_usage()
+            + self.column.memory_usage()
+            + self.type_oid.memory_usage()
+            + self.type_size.memory_usage()
+            + self.type_modifier.memory_usage()
+            + self.format.memory_usage()
+    }
+}
+
+impl Field {
+    /// Numeric field (text format).
+    pub(crate) fn numeric(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 1700,
+            type_size: -1,
+            type_modifier: -1,
+            format: 0, // Use text format for NUMERIC.
+        }
+    }
+
+    /// Numeric field (binary format).
+    #[cfg(test)]
+    pub(crate) fn numeric_binary(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 1700,
+            type_size: -1,
+            type_modifier: -1,
+            format: 1, // Enable binary format for NUMERIC.
+        }
+    }
+
+    /// Text field.
+    pub(crate) fn text(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 25,
+            type_size: -1,
+            type_modifier: -1,
+            format: 0, // We always use text format.
+        }
+    }
+
+    /// Boolean field.
+    pub(crate) fn bool(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 16,
+            type_size: 1,
+            type_modifier: -1,
+            format: 0, // We always use text format.
+        }
+    }
+
+    pub(crate) fn bigint(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 20,
+            type_size: 8,
+            type_modifier: -1,
+            format: 0, // We always use text format.
+        }
+    }
+
+    /// Timestamp field.
+    #[cfg(test)]
+    pub(crate) fn timestamp(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 1114, // PostgreSQL OID for timestamp without time zone
+            type_size: 8,
+            type_modifier: -1,
+            format: 0, // We always use text format.
+        }
+    }
+
+    /// Float8/Double Precision field (text format).
+    #[cfg(test)]
+    pub(crate) fn double(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            table_oid: 0,
+            column: 0,
+            type_oid: 701, // PostgreSQL OID for float8/double precision
+            type_size: 8,
+            type_modifier: -1,
+            format: 0, // Text format
+        }
+    }
+
+    /// Get the column data type.
+    pub(crate) fn data_type(&self) -> DataType {
+        DataType::from_oid(self.type_oid)
+    }
+
+    pub(crate) fn format(&self) -> Format {
+        match self.format {
+            0 => Format::Text,
+            _ => Format::Binary,
+        }
+    }
+}
+
+/// RowDescription message.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct RowDescription {
+    /// Fields.
+    pub(crate) fields: Arc<Vec<Field>>,
+}
+
+impl MemoryUsage for RowDescription {
+    fn memory_usage(&self) -> usize {
+        self.fields.iter().map(|f| f.memory_usage()).sum::<usize>()
+    }
+}
+
+impl RowDescription {
+    /// Create new row description from fields.
+    pub(crate) fn new(fields: &[Field]) -> Self {
+        Self {
+            fields: Arc::new(fields.to_vec()),
+        }
+    }
+
+    /// Get field info.
+    pub(crate) fn field(&self, index: usize) -> Option<&Field> {
+        self.fields.get(index)
+    }
+
+    /// Get field index name, O(n).
+    pub(crate) fn field_index(&self, name: &str) -> Option<usize> {
+        for (index, field) in self.fields.iter().enumerate() {
+            if field.name == name {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
+    /// Return a new row description without the specified columns (0-based indexes).
+    pub(crate) fn drop_columns(&self, drop: impl IntoIterator<Item = usize>) -> Self {
+        let indices = drop.into_iter().collect::<BTreeSet<_>>();
+
+        let fields = self
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, field)| {
+                if indices.contains(&idx) {
+                    None
+                } else {
+                    Some(field.clone())
+                }
+            })
+            .collect();
+
+        Self {
+            fields: Arc::new(fields),
+        }
+    }
+
+    /// Replaces the data types of each field using the given mapping.
+    /// Returns whether any changes actually occurred.
+    pub(crate) fn rewrite_data_types(&mut self, mapping: &HashMap<u32, u32>) -> bool {
+        let mut changed = false;
+        for field in Arc::make_mut(&mut self.fields) {
+            if let Some(&canonical) = mapping.get(&(field.type_oid as u32)) {
+                changed = true;
+                field.type_oid = canonical as i32;
+            }
+        }
+
+        changed
+    }
+}
+
+impl Deref for RowDescription {
+    type Target = Vec<Field>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+
+impl FromBytes for RowDescription {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        code!(bytes, 'T');
+        let _len = bytes.get_i32();
+
+        let fields = (0..bytes.get_i16())
+            .map(|_| Field {
+                name: c_string_buf(&mut bytes),
+                table_oid: bytes.get_i32(),
+                column: bytes.get_i16(),
+                type_oid: bytes.get_i32(),
+                type_size: bytes.get_i16(),
+                type_modifier: bytes.get_i32(),
+                format: bytes.get_i16(),
+            })
+            .collect();
+
+        Ok(Self {
+            fields: Arc::new(fields),
+        })
+    }
+}
+
+impl ToBytes for RowDescription {
+    fn to_bytes(&self) -> Bytes {
+        let mut payload = Payload::named(self.code());
+        payload.put_i16(self.fields.len() as i16);
+
+        for field in self.fields.iter() {
+            payload.put_string(&field.name);
+            payload.put_i32(field.table_oid);
+            payload.put_i16(field.column);
+            payload.put_i32(field.type_oid);
+            payload.put_i16(field.type_size);
+            payload.put_i32(field.type_modifier);
+            payload.put_i16(field.format);
+        }
+
+        payload.freeze()
+    }
+}
+
+impl Protocol for RowDescription {
+    fn code(&self) -> char {
+        'T'
+    }
+}

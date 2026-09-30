@@ -1,0 +1,579 @@
+use tracing::{info, trace};
+
+use crate::{
+    frontend::{
+        client::{TransactionType, transaction_type::Transaction},
+        router::parser::{explain_trace::ExplainTrace, rewrite::statement::plan::RewriteResult},
+    },
+    net::{
+        DataRow, FromBytes, Message, Protocol, ProtocolMessage, Query, ReadyForQuery,
+        RowDescription, ToBytes, TransactionState,
+    },
+    state::State,
+    util::safe_timeout,
+};
+
+use tracing::{debug, error};
+
+use super::hooks::schema::schema_changed;
+use super::*;
+
+impl QueryEngine {
+    /// Handle query from client.
+    pub(super) async fn execute(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        // FIXME(sage): `mut` only used to set the route on same shard insert split. Should be done
+        // earlier
+        client_request: &mut ClientRequest,
+        query_planner: Option<RewriteResult>,
+    ) -> Result<(), Error> {
+        // Check that we're not in a transaction error state.
+        if !self
+            .transaction_error_check(context, client_request)
+            .await?
+        {
+            return Ok(());
+        }
+
+        // Skip statements inside a simple pipeline
+        // if we are inside an errored-out transaction.
+        if self.in_simple_pipeline_error(context) {
+            return Ok(());
+        }
+
+        // Check if we need to do 2pc automatically
+        // for single-statement writes.
+        self.two_pc_check(context, client_request);
+
+        // We need to run a query now.
+        if context.in_transaction() || client_request.route().is_lock_session() {
+            // Connect to one shard if not sharded or to all shards
+            // for a cross-shard transaction.
+            //
+            // We also do this for advisory locks. Otherwise, we'd be pinned to one shard,
+            // and if we get a hash for a different one next query around, we'd be stuck
+            // at a point where we would have to refuse it (thus, maintaining all
+            // connections gives us freedom to fix that)
+            if !self
+                .connect_transaction(context, client_request.route())
+                .await?
+            {
+                return Ok(());
+            }
+        } else if !self.connect(context, client_request.route()).await? {
+            return Ok(());
+        }
+
+        // Check we can run this query.
+        if !self.cross_shard_check(context, client_request).await? {
+            return Ok(());
+        }
+
+        self.hooks.after_connected(context, &self.backend)?;
+
+        // Set response format.
+        for msg in &client_request.messages {
+            if let ProtocolMessage::Bind(bind) = msg {
+                self.backend.bind(bind)?
+            }
+        }
+
+        let cancellation_token = self.backend.cancellation_token();
+
+        let query_timeout = context.timeouts.query_timeout(&State::Active);
+
+        let result = tokio::select! {
+            result = safe_timeout(
+                query_timeout,
+                self.client_server_exchange(context, client_request, query_planner),
+            ) => {
+                result
+            }
+            // If the cluster's cancellation token triggers, exit early. Currently used for admin FORCE_RELOAD.
+            // If this returns an Error, it'll be propagated up to Client's Box::pin(self.run())
+            // which will disconnect the client (and QueryEngine transactions)
+            _ = cancellation_token.cancelled() => {
+                // Postgres is still running the query. Send a cancellation request before we stop on our end.
+                if let Err(err) = self.backend.cancel_query().await {
+                    // Tell the administrator that we failed to cancel the query.
+                    error!("failed to cancel query on admin termination: {err}");
+                }
+                self.backend.force_close();
+                return Err(Error::AdminTermination);
+            }
+        };
+
+        match result {
+            Ok(response) => response?,
+            Err(err) => {
+                // Close the conn, it could be stuck executing a query
+                // or dead.
+                self.backend.force_close();
+                return Err(err.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn client_server_exchange(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &mut ClientRequest,
+        rewrite_result: Option<RewriteResult>,
+    ) -> Result<(), Error> {
+        match rewrite_result {
+            Some(RewriteResult::InsertSplit(requests)) => {
+                Box::pin(
+                    multi_step::InsertMulti::from_engine(self, requests)
+                        .execute(context, client_request),
+                )
+                .await?;
+            }
+
+            Some(RewriteResult::InPlace { .. }) | None => {
+                self.backend
+                    .handle_client_request(client_request, &mut self.router, self.streaming)
+                    .await?;
+
+                while self.backend.has_more_messages()
+                    && !self.backend.in_copy_mode()
+                    && !self.streaming
+                {
+                    let message = self.read_server_message().await?;
+                    self.process_server_message(context, message).await?;
+                }
+            }
+
+            Some(RewriteResult::ShardingKeyUpdate(sharding_key_update)) => {
+                Box::pin(
+                    multi_step::UpdateMulti::new(self, &sharding_key_update)
+                        .execute(context, client_request),
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn read_server_message(&mut self) -> Result<Message, Error> {
+        Ok(self.backend.read().await?)
+    }
+
+    pub(crate) async fn process_server_message(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        mut message: Message,
+    ) -> Result<(), Error> {
+        self.streaming = message.streaming();
+
+        let code = message.code();
+        let payload = if code == 'T' {
+            Some(message.payload())
+        } else {
+            None
+        };
+        let has_more_messages = self.backend.has_more_messages();
+
+        if let Some(bytes) = payload
+            && let Some(state) = self.pending_explain.as_mut()
+        {
+            match RowDescription::from_bytes(bytes) {
+                Ok(row_description) => {
+                    state.capture_row_description(row_description);
+                }
+                _ => {
+                    state.annotated = true;
+                }
+            }
+        }
+
+        if code == 'C' {
+            self.emit_explain_rows(context).await?;
+        }
+
+        if code == 'E' {
+            if let Some(state) = self.pending_explain.as_mut() {
+                state.annotated = true;
+            }
+            self.pending_explain = None;
+        }
+
+        // Messages that we need to send to the client immediately.
+        // ReadyForQuery (B) | CopyInResponse (B) | ErrorResponse(B) | NoticeResponse(B) | NotificationResponse (B)
+        let flush = matches!(code, 'Z' | 'G' | 'E' | 'N' | 'A')
+            || !has_more_messages
+            || message.streaming();
+
+        // Server finished executing a query.
+        // ReadyForQuery (B)
+        if code == 'Z' {
+            self.stats.query();
+
+            let mut two_pc_auto = false;
+            let state = ReadyForQuery::from_bytes(message.to_bytes())?.state()?;
+
+            match state {
+                TransactionState::Error => {
+                    let error_state = match context.transaction.map(|t| t.transaction_type()) {
+                        Some(TransactionType::ReadOnly) => {
+                            Some(Transaction::new(TransactionType::ErrorReadOnly))
+                        }
+                        Some(TransactionType::ReadWrite | TransactionType::Implicit) => {
+                            Some(Transaction::new(TransactionType::ErrorReadWrite))
+                        }
+                        _ => None,
+                    };
+                    context.transaction = error_state;
+                    if self.two_pc.auto() {
+                        self.end_two_pc(true).await?;
+                        // TODO: this records a 2pc transaction in client
+                        // stats anyway but not on the servers. Is this what we want?
+                        two_pc_auto = true;
+                    }
+                }
+
+                TransactionState::Idle => {
+                    context.transaction = None;
+                }
+
+                TransactionState::InTrasaction => {
+                    if self.two_pc.auto() {
+                        self.end_two_pc(false).await?;
+                        two_pc_auto = true;
+                    }
+                    match context.transaction.map(|t| t.transaction_type()) {
+                        // Query parser is disabled, so the server is responsible for telling us
+                        // we started a transaction.
+                        None => {
+                            context.transaction =
+                                Some(Transaction::new(TransactionType::ReadWrite));
+                        }
+
+                        // Restore transaction state after rollback to savepoint.
+                        Some(TransactionType::ErrorReadOnly) => {
+                            context.transaction = Some(Transaction::new(TransactionType::ReadOnly));
+                        }
+
+                        Some(TransactionType::ErrorReadWrite) => {
+                            context.transaction =
+                                Some(Transaction::new(TransactionType::ReadWrite));
+                        }
+
+                        _ => (),
+                    }
+                }
+            }
+
+            if two_pc_auto {
+                // In auto mode, 2pc transaction was started automatically
+                // without the client's knowledge. We need to return a regular RFQ
+                // message and close the transaction.
+                context.transaction = None;
+                message = ReadyForQuery::in_transaction(false).message();
+            }
+
+            self.stats.idle(context.in_transaction());
+            // N.B. Call this before self.cleanup_backend(), since `cleanup_backend()` resets
+            // the router and the command state.
+            self.advisory_locks
+                .merge(self.router.command().route().advisory_locks());
+
+            if let Some(change) = self.router.command().route().temp_table_change.as_ref() {
+                self.temp_tables.update(change, context.in_transaction());
+            }
+
+            self.check_lock();
+
+            if !context.in_transaction() {
+                self.stats.transaction(two_pc_auto);
+            }
+        }
+
+        self.stats.sent(message.len());
+
+        // Do this before flushing, because flushing can take time.
+        self.cleanup_backend(context).await?;
+
+        // Pipelined requests only return
+        // one ReadyForQuery message.
+        let drop_message = message.code() == 'Z'
+            && !context.pipeline.is_done()
+            && context.pipeline.is_simple()
+            && !context.in_error(); // On error, pipeline is done executing.
+        if !drop_message {
+            trace!("{:#?} >>> {:?}", message, context.stream.peer_addr());
+
+            if flush {
+                context.stream.send_flush(&message).await?;
+            } else {
+                context.stream.send(&message).await?;
+            }
+        }
+
+        if code == 'Z' {
+            self.pending_explain = None;
+        }
+        self.hooks.on_server_message(context, &message)?;
+
+        Ok(())
+    }
+
+    async fn emit_explain_rows(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+    ) -> Result<(), Error> {
+        if let Some(state) = self.pending_explain.as_mut() {
+            if !state.should_emit() {
+                return Ok(());
+            }
+
+            if state.row_description.is_none() {
+                return Ok(());
+            }
+
+            for line in state.lines.clone() {
+                let mut row = DataRow::new();
+                row.add(line);
+                let message = row.message();
+                let len = message.len();
+                context.stream.send(&message).await?;
+                self.stats.sent(len);
+            }
+
+            state.annotated = true;
+        }
+
+        Ok(())
+    }
+
+    pub(super) async fn cleanup_backend(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+    ) -> Result<(), Error> {
+        if self.backend.done() {
+            let changed_params = self.backend.changed_params();
+
+            // Release the connection back into the pool before flushing data to client.
+            // Flushing can take a minute and we don't want to block the connection from being reused.
+            if !self.backend.session_mode() && context.pipeline.is_done() {
+                self.backend.disconnect();
+            }
+
+            // Detect schema change and relaod the config so we get new schema.
+            if self.router.schema_changed()
+                && self
+                    .backend
+                    .cluster()
+                    .map(|cluster| cluster.reload_schema())
+                    .unwrap_or_default()
+            {
+                info!(
+                    "schema change detected, reloading config [{}]",
+                    self.backend.cluster()?.identifier(),
+                );
+                schema_changed().await?;
+            }
+
+            self.router.reset();
+
+            debug!(
+                "transaction finished [{:.3}ms]",
+                self.stats.last_transaction_time.as_secs_f64() * 1000.0
+            );
+
+            // Update client params with values
+            // sent from the server using ParameterStatus(B) messages.
+            if !changed_params.is_empty() {
+                for (name, value) in changed_params.iter() {
+                    debug!("setting client's \"{}\" to {}", name, value);
+                    context.params.insert(name.clone(), value.clone());
+                }
+                self.comms.update_params(context.params);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Perform cross-shard check.
+    async fn cross_shard_check(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &ClientRequest,
+    ) -> Result<bool, Error> {
+        // Admin database queries are not checked.
+        if context.admin {
+            return Ok(true);
+        }
+
+        // Check for cross-shard queries.
+        if context.cross_shard_disabled.is_none() {
+            context.cross_shard_disabled = Some(
+                self.backend
+                    .cluster()
+                    .map(|c| c.cross_shard_disabled())
+                    .unwrap_or_default(),
+            );
+        }
+
+        let cross_shard_disabled = context.cross_shard_disabled.unwrap_or_default();
+
+        debug!("cross-shard queries disabled: {}", cross_shard_disabled);
+
+        // This check is disabled.
+        if !cross_shard_disabled {
+            return Ok(true);
+        }
+        let query_is_cross_shard = client_request.route().is_cross_shard();
+
+        // The query is direct-to-shard, we're good.
+        if !query_is_cross_shard {
+            return Ok(true);
+        }
+
+        let connected_shards = self.backend.connected_servers();
+        let is_executable = client_request.is_executable();
+
+        // This is a Parse-only request, so it's safe
+        // to route it to any shard - it won't do any damage
+        // and we need a real response from a server.
+        if !is_executable {
+            return Ok(true);
+        }
+
+        // Only run check if we are not connected yet or we are actually connected
+        // to more than one shard.
+        //
+        // The connected_shards > 1 check is only relevant for session mode - we stay connected
+        // until client disconnects. We don't want this check to trigger on queries that we think
+        // should be cross-shard (e.g. BEGIN, COMMIT) but aren't really.
+        if connected_shards == 0 || connected_shards > 1 {
+            let query = client_request.query()?;
+            self.error_response(
+                context,
+                client_request,
+                ErrorResponse::cross_shard_disabled(query.as_ref().map(|q| q.query())),
+            )
+            .await?;
+
+            if self.backend.connected() && self.backend.done() {
+                self.backend.disconnect();
+            }
+
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn two_pc_check(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &ClientRequest,
+    ) {
+        let enabled = self
+            .backend
+            .cluster()
+            .map(|c| c.two_pc_auto_enabled())
+            .unwrap_or_default();
+
+        if enabled
+            && client_request.route().should_2pc()
+            && self.begin_stmt.is_none()
+            && client_request.is_executable()
+            && !context.in_transaction()
+        {
+            debug!("[2pc] enabling automatic transaction");
+            self.two_pc.set_auto();
+            self.begin_stmt = Some(BufferedQuery::Query(Query::new("BEGIN")));
+        }
+    }
+
+    async fn transaction_error_check(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &ClientRequest,
+    ) -> Result<bool, Error> {
+        let shards = match self.backend.shards() {
+            Ok(shards) => shards,
+            _ => {
+                return Ok(true);
+            }
+        };
+        if shards > 1 // This check only matters for cross-shard queries
+            && context.in_error()
+            && !context.rollback
+            && client_request.is_executable()
+            && !client_request.route().rollback_savepoint()
+        {
+            let error = ErrorResponse::in_failed_transaction();
+
+            self.error_response(context, client_request, error).await?;
+
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
+
+    pub(super) async fn error_response(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        client_request: &ClientRequest,
+        mut error: ErrorResponse,
+    ) -> Result<(), Error> {
+        error!("{:?} [{:?}]", error.message, context.stream.peer_addr());
+
+        // Attach query context.
+        if error.detail.is_none() {
+            let query = client_request.query()?.map(|q| q.query().to_owned());
+            error.detail = Some(query.unwrap_or_default());
+        }
+
+        self.hooks.on_engine_error(context, &error)?;
+
+        let bytes_sent = context
+            .stream
+            .error(error, context.in_transaction())
+            .await?;
+        self.stats.sent(bytes_sent);
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub(super) struct ExplainResponseState {
+    lines: Vec<String>,
+    row_description: Option<RowDescription>,
+    annotated: bool,
+    supported: bool,
+}
+
+impl ExplainResponseState {
+    pub(crate) fn new(trace: ExplainTrace) -> Self {
+        Self {
+            lines: trace.render_lines(),
+            row_description: None,
+            annotated: false,
+            supported: false,
+        }
+    }
+
+    pub(crate) fn capture_row_description(&mut self, row_description: RowDescription) {
+        self.supported = row_description.fields.len() == 1
+            && matches!(row_description.field(0).map(|f| f.type_oid), Some(25));
+        if self.supported {
+            self.row_description = Some(row_description);
+        } else {
+            self.annotated = true;
+        }
+    }
+
+    pub(crate) fn should_emit(&self) -> bool {
+        self.supported && !self.annotated
+    }
+}

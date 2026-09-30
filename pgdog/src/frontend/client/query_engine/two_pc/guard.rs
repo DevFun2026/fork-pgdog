@@ -1,0 +1,13 @@
+use crate::frontend::client::query_engine::two_pc::{TwoPcTransaction, manager::Manager};
+
+#[derive(Debug)]
+pub(crate) struct TwoPcGuard {
+    pub(super) transaction: TwoPcTransaction,
+    pub(super) manager: Manager,
+}
+
+impl Drop for TwoPcGuard {
+    fn drop(&mut self) {
+        self.manager.return_guard(self);
+    }
+}

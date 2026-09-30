@@ -1,0 +1,436 @@
+//! ErrorResponse (B) message.
+use std::fmt::Display;
+
+use std::time::Duration;
+
+use super::prelude::*;
+use crate::{net::c_string_buf, state::State};
+
+use crate::frontend::Error as FrontendError;
+
+/// ErrorResponse (B) message.
+#[derive(Debug, Clone)]
+pub(crate) struct ErrorResponse {
+    pub(crate) severity: String,
+    pub(crate) code: String,
+    pub(crate) message: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) context: Option<String>,
+    pub(crate) file: Option<String>,
+    pub(crate) routine: Option<String>,
+}
+
+impl Default for ErrorResponse {
+    fn default() -> Self {
+        Self {
+            severity: "ERROR".into(),
+            code: String::default(),
+            message: String::default(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+}
+
+impl ErrorResponse {
+    /// True if this error response signals an invalid password (SQLSTATE 28P01).
+    pub(crate) fn is_bad_password(&self) -> bool {
+        self.code == "28P01"
+    }
+
+    /// Authentication error.
+    pub(crate) fn auth(user: &str, database: &str) -> ErrorResponse {
+        ErrorResponse {
+            severity: "FATAL".into(),
+            code: "28000".into(),
+            message: format!(
+                "password for user \"{}\" and database \"{}\" is wrong, or the database does not exist",
+                user, database
+            ),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn cross_shard_disabled(query: Option<&str>) -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: "cross-shard queries are disabled".into(),
+            detail: Some(format!(
+                "query doesn't have a sharding key{}",
+                if let Some(query) = query {
+                    format!(": {}", query)
+                } else {
+                    "".into()
+                }
+            )),
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    // Cross-shard queries are disabled.
+    // User specified an unmapped sharding key in list-based/range-based sharding,
+    // and, if not stopped, the query would be cross-shard.
+    pub(crate) fn unmapped_sharding_key_in_cross_shard_disabled(
+        sharding_key: &str,
+    ) -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: "unmapped sharding key was specified".into(),
+            detail: Some(format!("sharding key '{}' is not mapped", sharding_key)),
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn set_shard_after_connect(name: &str) -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: format!(
+                "cannot use \"SET {}\" after connecting to a server; \
+                 set it before running any queries",
+                name
+            ),
+            routine: Some("client::QueryEngine::set".into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn omni_write_with_directive() -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: "cannot write to an omnisharded table with a shard directive".into(),
+            detail: Some(
+                "the write must reach every shard, but a pgdog_shard or pgdog_sharding_key \
+                 comment, or SET pgdog.shard or pgdog.sharding_key, routes it to one"
+                    .into(),
+            ),
+            routine: Some("client::QueryEngine::route_query".into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn direct_shard_mismatch() -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: "cannot switch shards in a direct-to-shard transaction".into(),
+            routine: Some("client::QueryEngine::route_query".into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn sharding_key_lookup(reason: &str) -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: format!("sharding key lookup failed: {}", reason),
+            routine: Some("client::QueryEngine::route_query".into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn transaction_statement_mode() -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: "transaction control statements are not supported in statement pooler mode"
+                .into(),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn client_idle_timeout(duration: Duration, state: &State) -> ErrorResponse {
+        ErrorResponse {
+            severity: "FATAL".into(),
+            code: "57P05".into(),
+            message: format!(
+                "disconnecting {} client",
+                if state == &State::IdleInTransaction {
+                    "idle in transaction"
+                } else {
+                    "idle"
+                }
+            ),
+            detail: Some(format!(
+                "{} of {}ms expired",
+                if state == &State::IdleInTransaction {
+                    "client_idle_in_transaction_timeout"
+                } else {
+                    "client_idle_timeout"
+                },
+                duration.as_millis()
+            )),
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    /// Connection error.
+    pub(crate) fn connection(user: &str, database: &str) -> ErrorResponse {
+        ErrorResponse {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message: format!(
+                r#"connection pool for user "{}" and database "{}" is down"#,
+                user, database
+            ),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    /// Pooler is shutting down.
+    pub(crate) fn shutting_down() -> ErrorResponse {
+        ErrorResponse {
+            severity: "FATAL".into(),
+            code: "57P01".into(),
+            message: "PgDog is shutting down".into(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    /// Terminating due to admin command (e.g. FORCE_RELOAD)
+    pub(crate) fn admin_termination() -> ErrorResponse {
+        ErrorResponse {
+            severity: "FATAL".into(),
+            code: "57P01".into(),
+            message: "terminating connection due to administrator command".into(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn syntax<T: Into<String>>(err: T) -> ErrorResponse {
+        Self {
+            severity: "ERROR".into(),
+            code: "42601".into(),
+            message: err.into(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn protocol_violation(err: &str) -> ErrorResponse {
+        Self {
+            severity: "ERROR".into(),
+            code: "08P01".into(),
+            message: err.into(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn tls_required() -> ErrorResponse {
+        Self {
+            severity: "FATAL".into(),
+            code: "08004".into(),
+            message: "only TLS connections are allowed".into(),
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn from_err(err: &impl std::error::Error) -> Self {
+        let message = err.to_string();
+        Self {
+            severity: "ERROR".into(),
+            code: "58000".into(),
+            message,
+            detail: None,
+            context: None,
+            file: None,
+            routine: None,
+        }
+    }
+
+    pub(crate) fn from_client_err(err: &FrontendError) -> Self {
+        use crate::backend::Error as BackendError;
+        if let FrontendError::Backend(BackendError::ExecutionError(err)) = err {
+            *(err.clone())
+        } else if let FrontendError::AdminTermination = err {
+            // Allows us to set a custom code (to identically represent the same Postgres error)
+            ErrorResponse::admin_termination()
+        } else {
+            Self {
+                severity: "FATAL".into(),
+                code: "58000".into(),
+                message: err.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+
+    /// Whether this Postgres error is transient and the operation can be retried.
+    pub(crate) fn is_retryable(&self) -> bool {
+        matches!(
+            self.code.as_str(),
+            // Connection exceptions — server unreachable or dropped the connection.
+            // 08P01 (protocol_violation) is intentionally excluded: that signals a
+            // client-side bug and retrying would just repeat the same violation.
+            "08000" | "08001" | "08003" | "08004" | "08006" | "08007"
+            // Serialization conflict / deadlock — Postgres aborts one txn; retry succeeds.
+            | "40001" | "40P01"
+            // Operator-intervention: admin shutdown, crash, or startup not ready.
+            | "57P01" | "57P02" | "57P03"
+            // Too many connections — transient resource limit.
+            | "53300"
+            // Lock timeout — another transaction holds the lock; retry after reconnect.
+            | "55P03"
+        )
+    }
+
+    pub(crate) fn no_transaction() -> Self {
+        Self {
+            severity: "WARNING".into(),
+            code: "25P01".into(),
+            message: "there is no transaction in progress".into(),
+            routine: Some("EndTransactionBlock".into()),
+            file: Some("xact.c".into()),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn discard_all_in_transaction() -> Self {
+        Self {
+            severity: "ERROR".into(),
+            code: "25001".into(),
+            message: "DISCARD ALL cannot run inside a transaction block".into(),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn in_failed_transaction() -> Self {
+        Self {
+            severity: "ERROR".into(),
+            code: "25P02".into(),
+            message:
+                "current transaction is aborted, commands ignored until end of transaction block"
+                    .into(),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn query_too_large(size: usize, limit: usize) -> Self {
+        Self {
+            severity: "FATAL".into(),
+            code: "54000".into(),
+            message: "query size exceeds query_size_limit".into(),
+            detail: Some(format!(
+                "message is {} bytes, query_size_limit is {} bytes",
+                size, limit
+            )),
+            ..Default::default()
+        }
+    }
+}
+
+impl Display for ErrorResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {} {}", self.severity, self.code, self.message)?;
+        if let Some(ref detail) = self.detail {
+            write!(f, "\n{}", detail)?
+        }
+        Ok(())
+    }
+}
+
+impl FromBytes for ErrorResponse {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        let _code = bytes.get_u8();
+        let _len = bytes.get_i32();
+
+        let mut error_response = ErrorResponse::default();
+
+        while bytes.has_remaining() {
+            let field = bytes.get_u8() as char;
+            let value = c_string_buf(&mut bytes);
+
+            match field {
+                'S' => error_response.severity = value,
+                'C' => error_response.code = value,
+                'M' => error_response.message = value,
+                'D' => error_response.detail = Some(value),
+                'W' => error_response.context = Some(value),
+                'F' => error_response.file = Some(value),
+                'R' => error_response.routine = Some(value),
+                _ => continue,
+            }
+        }
+
+        Ok(error_response)
+    }
+}
+
+impl ToBytes for ErrorResponse {
+    fn to_bytes(&self) -> Bytes {
+        let mut payload = Payload::named(self.code());
+
+        payload.put_u8(b'S');
+        payload.put_string(&self.severity);
+
+        payload.put_u8(b'V');
+        payload.put_string(&self.severity);
+
+        payload.put_u8(b'C');
+        payload.put_string(&self.code);
+
+        payload.put_u8(b'M');
+        payload.put_string(&self.message);
+
+        if let Some(ref detail) = self.detail {
+            payload.put_u8(b'D');
+            payload.put_string(detail);
+        }
+
+        if let Some(ref context) = self.context {
+            payload.put_u8(b'W');
+            payload.put_string(context);
+        }
+
+        if let Some(ref file) = self.file {
+            payload.put_u8(b'F');
+            payload.put_string(file);
+        }
+
+        if let Some(ref routine) = self.routine {
+            payload.put_u8(b'R');
+            payload.put_string(routine);
+        }
+
+        payload.put_u8(0);
+
+        payload.freeze()
+    }
+}
+
+impl Protocol for ErrorResponse {
+    fn code(&self) -> char {
+        'E'
+    }
+}

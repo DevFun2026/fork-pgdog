@@ -1,0 +1,403 @@
+use std::{fmt::Debug, ops::Deref};
+use tokio_util::sync::CancellationToken;
+
+use bytes::{BufMut, Bytes, BytesMut};
+use pgdog_config::RewriteMode;
+use rand::{Rng, rng};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+};
+
+use crate::{
+    backend::databases::{reload_from_existing, shutdown},
+    config::{config, load_test_replicas, load_test_sharded, load_test_sharded_3, set},
+    frontend::{
+        Client,
+        client::query_engine::QueryEngine,
+        router::{parser::Shard, sharding::ContextBuilder},
+    },
+    net::{
+        DataRow, ErrorResponse, Message, Parameters, Protocol, ProtocolVersion, Query,
+        RowDescription, Stream,
+    },
+};
+
+/// Try to convert a Message to the specified type.
+/// If conversion fails and the message is an ErrorResponse, panic with its contents.
+#[cfg(test)]
+#[macro_export]
+macro_rules! expect_message {
+    ($message:expr_2021, $ty:ty) => {{
+        use $crate::net::Protocol;
+        let message: $crate::net::Message = $message;
+        match <$ty as TryFrom<$crate::net::Message>>::try_from(message.clone()) {
+            Ok(val) => val,
+            Err(_) => {
+                match <$crate::net::ErrorResponse as TryFrom<$crate::net::Message>>::try_from(
+                    message.clone(),
+                ) {
+                    Ok(err) => panic!("expected {}, got ErrorResponse: {:?}", stringify!($ty), err),
+                    Err(_) => panic!(
+                        "expected {}, got message with code '{}'",
+                        stringify!($ty),
+                        message.code()
+                    ),
+                }
+            }
+        }
+    }};
+}
+
+/// Read one protocol message from a TCP stream.
+pub(crate) async fn read_message(conn: &mut TcpStream) -> Message {
+    let code = conn.read_u8().await.expect("code");
+    let len = conn.read_i32().await.expect("len");
+    let mut rest = vec![0u8; len as usize - 4];
+    conn.read_exact(&mut rest).await.expect("read_exact");
+
+    let mut payload = BytesMut::new();
+    payload.put_u8(code);
+    payload.put_i32(len);
+    payload.put(Bytes::from(rest));
+
+    Message::new(payload.freeze())
+}
+
+/// Send a protocol message to a TCP stream.
+pub(crate) async fn send_message(conn: &mut TcpStream, message: impl Protocol) {
+    let message = message.to_bytes();
+    conn.write_all(&message).await.expect("write_all");
+    conn.flush().await.expect("flush");
+}
+
+/// Read messages until the given code appears.
+pub(crate) async fn read_until(
+    conn: &mut TcpStream,
+    code: char,
+) -> Result<Vec<Message>, ErrorResponse> {
+    let mut result = vec![];
+    loop {
+        let message = read_message(conn).await;
+        result.push(message.clone());
+
+        if message.code() == code {
+            break;
+        }
+
+        if message.code() == 'E' && code != 'E' {
+            let error = ErrorResponse::try_from(message).unwrap();
+            return Err(error);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Create a loopback TCP pair and a `Client` connected to one end.
+async fn new_client_pair(params: Parameters) -> (TcpStream, Client) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let connect_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let stream = Stream::plain(stream, 4096);
+        Client::new_test(stream, params)
+    });
+
+    let conn = TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
+    let client = connect_handle.await.unwrap();
+
+    (conn, client)
+}
+
+/// Test client.
+#[derive(Debug)]
+pub(crate) struct TestClient {
+    pub(crate) client: Client,
+    pub(crate) engine: QueryEngine,
+    pub(crate) conn: TcpStream,
+    pub(crate) leak_pool: bool,
+}
+
+impl TestClient {
+    /// Create new test client after the login phase
+    /// is complete.
+    ///
+    /// Config needs to be loaded.
+    ///
+    pub(crate) async fn new(params: Parameters) -> Self {
+        let (conn, client) = new_client_pair(params).await;
+
+        Self {
+            conn,
+            engine: QueryEngine::from_client(&client).expect("create query engine from client"),
+            client,
+            leak_pool: false,
+        }
+    }
+
+    /// New sharded client with parameters.
+    pub(crate) async fn new_sharded(params: Parameters) -> Self {
+        load_test_sharded();
+        Self::new(params).await
+    }
+
+    /// New 3-shard client with parameters.
+    pub(crate) async fn new_sharded_3(params: Parameters) -> Self {
+        load_test_sharded_3();
+        Self::new(params).await
+    }
+
+    pub(crate) fn leak_pool(mut self) -> Self {
+        self.leak_pool = true;
+        self
+    }
+
+    /// New client with replicas but not sharded.
+    pub(crate) async fn new_replicas(params: Parameters) -> Self {
+        load_test_replicas();
+        Self::new(params).await
+    }
+
+    pub(crate) async fn new_cross_shard_disabled_replicas(params: Parameters) -> Self {
+        load_test_replicas();
+
+        let mut config = config().deref().clone();
+        config.config.general.cross_shard_disabled = true;
+        set(config).unwrap();
+        reload_from_existing().unwrap();
+
+        Self::new(params).await
+    }
+
+    /// New sharded client with two-phase commit enabled.
+    pub(crate) async fn new_sharded_two_pc(params: Parameters) -> Self {
+        load_test_sharded();
+
+        let mut config = config().deref().clone();
+        config.config.general.two_phase_commit = true;
+        set(config).unwrap();
+        reload_from_existing().unwrap();
+
+        Self::new(params).await
+    }
+
+    /// New client with cross-shard-queries disabled.
+    pub(crate) async fn new_cross_shard_disabled(params: Parameters) -> Self {
+        load_test_sharded();
+
+        let mut config = config().deref().clone();
+        config.config.general.cross_shard_disabled = true;
+        set(config).unwrap();
+        reload_from_existing().unwrap();
+
+        Self::new(params).await
+    }
+
+    /// Create client that will rewrite all queries.
+    pub(crate) async fn new_rewrites(params: Parameters) -> Self {
+        load_test_sharded();
+
+        let mut config = config().deref().clone();
+        config.config.rewrite.enabled = true;
+        config.config.rewrite.shard_key = RewriteMode::Rewrite;
+        config.config.rewrite.split_inserts = RewriteMode::Rewrite;
+
+        set(config).unwrap();
+        reload_from_existing().unwrap();
+
+        Self::new(params).await
+    }
+
+    pub(crate) fn with_full_prepared_statements(self) -> Self {
+        let mut config = config().deref().clone();
+        config.config.general.prepared_statements = pgdog_config::PreparedStatementsLevel::Full;
+        set(config).unwrap();
+        reload_from_existing().unwrap();
+        self
+    }
+
+    /// Send message to client.
+    pub(crate) async fn send(&mut self, message: impl Protocol) {
+        send_message(&mut self.conn, message).await;
+    }
+
+    /// Send a simple query and panic on any errors.
+    pub(crate) async fn send_simple(&mut self, message: impl Protocol) {
+        self.try_send_simple(message).await.unwrap()
+    }
+
+    /// Try to send a simple query and return the error, if any.
+    pub(crate) async fn try_send_simple(
+        &mut self,
+        message: impl Protocol,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.send(message).await;
+        self.try_process().await
+    }
+
+    /// Read a message received from the servers.
+    pub(crate) async fn read(&mut self) -> Message {
+        read_message(&mut self.conn).await
+    }
+
+    /// Inspect client state.
+    pub(crate) fn client(&mut self) -> &mut Client {
+        &mut self.client
+    }
+
+    /// Process a request.
+    pub(crate) async fn try_process(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.client
+            .buffer(self.engine.stats().state, &CancellationToken::new())
+            .await?;
+        self.client.client_messages(&mut self.engine).await?;
+
+        Ok(())
+    }
+
+    /// Read all messages until an expected last message.
+    pub(crate) async fn read_until(&mut self, code: char) -> Result<Vec<Message>, ErrorResponse> {
+        read_until(&mut self.conn, code).await
+    }
+
+    /// Check if the backend is connected.
+    pub(crate) fn backend_connected(&mut self) -> bool {
+        self.engine.backend().connected()
+    }
+
+    /// Check if the backend is locked to this client.
+    pub(crate) fn backend_locked(&mut self) -> bool {
+        self.engine.backend().locked()
+    }
+
+    /// Get the PostgreSQL backend pid for the currently routed server.
+    pub(crate) async fn backend_pid(&mut self) -> i32 {
+        self.send_simple(Query::new("SELECT pg_backend_pid()"))
+            .await;
+        expect_message!(self.read().await, RowDescription);
+        let row = expect_message!(self.read().await, DataRow);
+        let pid = row
+            .get_int(0, true)
+            .expect("backend pid should be returned") as i32;
+        self.read_until('Z').await.unwrap();
+        pid
+    }
+
+    /// The shard an ID lands on.
+    pub(crate) fn shard_for_id(&mut self, id: i64) -> Shard {
+        let cluster = self.engine.backend().cluster().unwrap();
+
+        ContextBuilder::new(cluster.sharded_tables().tables().first().unwrap())
+            .data(id)
+            .shards(cluster.shards().len())
+            .build()
+            .unwrap()
+            .apply()
+            .unwrap()
+    }
+
+    /// Generate a random ID for a given shard.
+    pub(crate) fn random_id_for_shard(&mut self, shard: usize) -> i64 {
+        loop {
+            let id: i64 = rng().random();
+
+            if self.shard_for_id(id) == Shard::Direct(shard) {
+                return id;
+            }
+        }
+    }
+}
+
+impl Drop for TestClient {
+    fn drop(&mut self) {
+        if !self.leak_pool {
+            shutdown();
+        }
+    }
+}
+
+/// Test client that spawns the client into an async task,
+/// running the full `spawn_internal` code path (including error handling).
+/// Interaction happens purely over the wire.
+pub(crate) struct SpawnedClient {
+    pub(crate) conn: TcpStream,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl SpawnedClient {
+    async fn new(params: Parameters) -> Self {
+        let (conn, client) = new_client_pair(params).await;
+
+        let handle = tokio::spawn(async move {
+            client.spawn_test().await;
+        });
+
+        Self {
+            conn,
+            handle: Some(handle),
+        }
+    }
+
+    pub(crate) async fn new_default(params: Parameters) -> Self {
+        crate::config::load_test();
+        Self::new(params).await
+    }
+
+    /// Spawn a client through the full login path, including authentication.
+    ///
+    /// Config needs to be loaded.
+    pub(crate) async fn new_with_login(params: Parameters) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = tokio::spawn(async move {
+            let (stream, addr) = listener.accept().await.unwrap();
+            let stream = Stream::plain(stream, 4096);
+            Client::spawn(stream, params, addr, config(), ProtocolVersion::V3_0)
+                .await
+                .unwrap();
+        });
+
+        let conn = TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
+
+        Self {
+            conn,
+            handle: Some(handle),
+        }
+    }
+
+    pub(crate) async fn new_sharded(params: Parameters) -> Self {
+        load_test_sharded();
+        Self::new(params).await
+    }
+
+    pub(crate) async fn send(&mut self, message: impl Protocol) {
+        send_message(&mut self.conn, message).await;
+    }
+
+    pub(crate) async fn read(&mut self) -> Message {
+        read_message(&mut self.conn).await
+    }
+
+    pub(crate) async fn read_until(&mut self, code: char) -> Vec<Message> {
+        read_until(&mut self.conn, code).await.unwrap()
+    }
+
+    /// Wait for the client task to finish.
+    pub(crate) async fn join(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.await.unwrap();
+        }
+    }
+}
+
+impl Drop for SpawnedClient {
+    fn drop(&mut self) {
+        shutdown();
+    }
+}

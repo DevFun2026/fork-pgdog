@@ -1,0 +1,8 @@
+[general]
+tls_certificate = "integration/tls/server.crt"
+tls_private_key = "integration/tls/server.key"
+tls_client_ca_certificate = "integration/tls/ca.crt"
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"

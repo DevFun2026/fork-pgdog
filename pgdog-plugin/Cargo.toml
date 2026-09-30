@@ -1,0 +1,28 @@
+[package]
+name = "pgdog-plugin"
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+authors = ["Lev Kokotov <lev.kokotov@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/pgdogdev/pgdog"
+homepage = "https://pgdog.dev"
+description = "PgDog plugin interface and helpers"
+include = ["src/", "include/", "build.rs", "LICENSE", "README.md"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+libloading = "0.8"
+pg_raw_parse.workspace = true
+pgdog-postgres-types.workspace = true
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[build-dependencies]
+bindgen = "0.71.0"
+
+[features]
+default = []

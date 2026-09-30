@@ -1,0 +1,27 @@
+{
+  "name": "pg_tests",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha",
+    "lint": "eslint test/",
+    "prisma:generate": "prisma generate"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "pg": "^8.14.1",
+    "pg-cursor": "^2.22.0",
+    "pg-hstore": "^2.3.4",
+    "postgres": "^3.4.7",
+    "sequelize": "^6.32.1"
+  },
+  "devDependencies": {
+    "eslint": "^10.0.0",
+    "mocha": "^11.1.0",
+    "prisma": "^6.5.0"
+  }
+}

@@ -1,0 +1,108 @@
+//! Connection pool errors.
+use thiserror::Error;
+
+use crate::net::BackendPid;
+
+#[derive(Debug, Error, PartialEq, Clone, Copy)]
+pub(crate) enum Error {
+    #[error("checkout timeout")]
+    CheckoutTimeout,
+
+    #[error("connect timeout")]
+    ConnectTimeout,
+
+    #[error("server error")]
+    ServerError,
+
+    #[error("manual ban")]
+    ManualBan,
+
+    #[error("no such shard: {0}")]
+    NoShard(usize),
+
+    #[error("healthcheck error")]
+    HealthcheckError,
+
+    #[error("server closed")]
+    ServerClosed,
+
+    #[error("pool is shut down")]
+    Offline,
+
+    #[error("no primary")]
+    NoPrimary,
+
+    #[error("no databases")]
+    NoDatabases,
+
+    #[error("all replicas down")]
+    AllReplicasDown,
+
+    #[error("pub/sub disabled")]
+    PubSubDisabled,
+
+    #[error("pool is not healthy")]
+    PoolUnhealthy,
+
+    #[error("checked in untracked connection: {0}")]
+    UntrackedConnCheckin(BackendPid),
+
+    #[error("fast shutdown failed")]
+    FastShutdown,
+
+    #[error("replica lag")]
+    ReplicaLag,
+
+    #[error("initial health check has not been successfully performed")]
+    InitialHealthCheck,
+}
+
+impl Error {
+    /// Transient availability fault worth retrying.
+    ///
+    /// Non-retryable: config errors, admin decisions, programming errors.
+    /// Everything else (timeouts, server faults, lag, health misses) is transient.
+    pub(crate) fn is_retryable(&self) -> bool {
+        !matches!(
+            self,
+            // Config / wiring errors — retrying changes nothing.
+            Self::NoShard(_)
+                | Self::NoDatabases
+                | Self::PubSubDisabled
+                // Admin decisions — respect them.
+                | Self::ManualBan
+                // Programming errors.
+                | Self::UntrackedConnCheckin(_)
+                // Deliberate shutdown.
+                | Self::FastShutdown
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retryable() {
+        assert!(Error::CheckoutTimeout.is_retryable());
+        assert!(Error::ConnectTimeout.is_retryable());
+        assert!(Error::NoPrimary.is_retryable());
+        assert!(Error::AllReplicasDown.is_retryable());
+        assert!(Error::ServerError.is_retryable());
+        assert!(Error::HealthcheckError.is_retryable());
+        assert!(Error::ServerClosed.is_retryable());
+        assert!(Error::Offline.is_retryable());
+        assert!(Error::ReplicaLag.is_retryable());
+        assert!(Error::PoolUnhealthy.is_retryable());
+    }
+
+    #[test]
+    fn not_retryable() {
+        assert!(!Error::ManualBan.is_retryable());
+        assert!(!Error::NoDatabases.is_retryable());
+        assert!(!Error::PubSubDisabled.is_retryable());
+        assert!(!Error::FastShutdown.is_retryable());
+        assert!(!Error::NoShard(0).is_retryable());
+    }
+}

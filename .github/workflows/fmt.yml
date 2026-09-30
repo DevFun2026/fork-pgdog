@@ -1,0 +1,33 @@
+name: fmt
+on:
+  push:
+    branches:
+      - main
+      - main-ent
+    paths:
+      - ".github/workflows/fmt.yml"
+      - "**/*.rs"
+      - "integration/**"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/fmt.yml"
+      - "**/*.rs"
+      - "integration/**"
+
+jobs:
+  fmt:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install CI deps
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 5
+          command: bash integration/ci/install-deps.sh
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings

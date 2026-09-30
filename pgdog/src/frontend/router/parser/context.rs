@@ -1,0 +1,145 @@
+//! Shortcut the parser given the cluster config.
+
+use pgdog_config::Role;
+
+use crate::frontend::client::TransactionType;
+use crate::frontend::router::parser::ShardsWithPriority;
+use crate::frontend::router::sharding::PendingLookup;
+use crate::{
+    backend::ShardingSchema,
+    config::{MultiTenant, ReadWriteStrategy},
+    frontend::{BufferedQuery, RouterContext},
+};
+
+use super::Error;
+
+/// Query parser context.
+///
+/// Contains a lot of info we collect from the router context
+/// and its inputs.
+///
+#[derive(Clone)]
+pub(crate) struct QueryParserContext<'a> {
+    /// Cluster is read-only, i.e. has no primary.
+    pub(super) read_only: bool,
+    /// Cluster has no replicas, only a primary.
+    pub(super) write_only: bool,
+    /// Number of shards in the cluster.
+    pub(super) shards: usize,
+    /// Are there any sharding tables in the database?
+    pub(super) sharded_tables: bool,
+    /// Which tables are sharded and using which columns.
+    pub(super) sharding_schema: ShardingSchema,
+    /// Context created by the router.
+    pub(super) router_context: RouterContext<'a>,
+    /// How aggressively we want to send reads to replicas.
+    pub(super) rw_strategy: &'a ReadWriteStrategy,
+    /// Route reads to the primary by default unless an explicit role hint says otherwise.
+    pub(super) prefer_primary: bool,
+    /// Route all queries to replicas by default unless an explicit role hint says otherwise.
+    pub(super) prefer_replica: bool,
+    /// Do we need the router at all? Shortcut to bypass this for unsharded
+    /// clusters with databases that only read or write.
+    pub(super) router_needed: bool,
+    /// Are we running multi-tenant checks?
+    pub(super) multi_tenant: &'a Option<MultiTenant>,
+    /// Dry run enabled?
+    pub(super) dry_run: bool,
+    /// Expanded EXPLAIN annotations enabled?
+    pub(super) expanded_explain: bool,
+    /// Shards calculator.
+    pub(super) shards_calculator: ShardsWithPriority,
+    /// Sharding key lookups that missed the cache while routing;
+    /// returned to the query engine on the route.
+    pub(super) pending_lookups: Vec<PendingLookup>,
+    /// Lookups for bare sharding keys (a comment directive or `SET
+    /// pgdog.sharding_key`) that missed the cache. Kept separate until
+    /// the statement is classified: they don't apply to omnisharded
+    /// writes, which route to every shard regardless of the key.
+    pub(super) bare_key_lookups: Vec<PendingLookup>,
+}
+
+impl<'a> QueryParserContext<'a> {
+    /// Create query parser context from router context.
+    pub(crate) fn new(router_context: RouterContext<'a>) -> Result<Self, Error> {
+        let mut shards_calculator = ShardsWithPriority::default();
+        let mut bare_key_lookups = Vec::new();
+
+        let sharded_tables = !router_context.cluster.sharded_tables().tables().is_empty();
+        let sharding_schema = router_context.cluster.sharding_schema();
+
+        router_context.parameter_hints.compute_shard(
+            &mut shards_calculator,
+            &mut bare_key_lookups,
+            &router_context.resolved_lookups,
+            &sharding_schema,
+        )?;
+
+        Ok(Self {
+            read_only: router_context.cluster.read_only(),
+            write_only: router_context.cluster.write_only(),
+            shards: router_context.cluster.shards().len(),
+            sharded_tables,
+            sharding_schema,
+            rw_strategy: router_context.cluster.read_write_strategy(),
+            prefer_primary: router_context.cluster.prefer_primary(),
+            prefer_replica: router_context.cluster.prefer_replica(),
+            router_needed: router_context.cluster.router_needed(),
+            multi_tenant: router_context.cluster.multi_tenant(),
+            dry_run: router_context.cluster.dry_run(),
+            expanded_explain: router_context.cluster.expanded_explain(),
+            router_context,
+            shards_calculator,
+            pending_lookups: Vec::new(),
+            bare_key_lookups,
+        })
+    }
+
+    /// Write override enabled?
+    pub(super) fn write_override(&self) -> bool {
+        let role = self.router_context.parameter_hints.compute_role();
+        // Readonly clusters cannot pin ordinary transactions to a writer.
+        let txn_write = matches!(
+            self.router_context
+                .transaction()
+                .map(|t| t.transaction_type()),
+            Some(TransactionType::ReadWrite | TransactionType::Implicit)
+        ) && self.rw_conservative()
+            && !self.read_only;
+        // prefer_primary defaults reads to the primary; an explicit replica hint opts out.
+        txn_write
+            || role == Some(Role::Primary)
+            || (self.prefer_primary && role != Some(Role::Replica))
+    }
+
+    /// Are we using the conservative read/write separation strategy?
+    pub(super) fn rw_conservative(&self) -> bool {
+        self.rw_strategy == &ReadWriteStrategy::Conservative
+    }
+
+    /// Get the query we're parsing, if any.
+    pub(super) fn query(&self) -> Result<&BufferedQuery, Error> {
+        self.router_context.query.as_ref().ok_or(Error::EmptyQuery)
+    }
+
+    /// Multi-tenant checks.
+    pub(super) fn multi_tenant(&self) -> &Option<MultiTenant> {
+        self.multi_tenant
+    }
+
+    pub(super) fn expanded_explain(&self) -> bool {
+        self.expanded_explain
+    }
+
+    /// Are we running in session mode?
+    ///
+    /// In session mode, queries are forwarded to the server without
+    /// parsing or validation beyond what's required for routing.
+    pub(super) fn is_session_mode(&self) -> bool {
+        self.router_context.cluster.pooler_mode() == crate::config::PoolerMode::Session
+    }
+
+    pub(super) fn is_canonicalizing_oids(&self) -> bool {
+        self.router_context.cluster.is_canonicalizing_oids()
+    }
+}

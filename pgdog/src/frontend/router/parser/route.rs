@@ -1,0 +1,830 @@
+use std::{fmt::Display, ops::Deref};
+
+use super::{
+    Aggregate, DistinctBy, Limit, OrderBy, explain_trace::ExplainTrace,
+    rewrite::statement::projection::ProjectionRewritePlan, statement::AdvisoryLocks,
+};
+use crate::frontend::{client::query_engine::TempTableChange, router::sharding::PendingLookup};
+use lazy_static::lazy_static;
+
+/// The shard destination for a query.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq, Hash, Default)]
+pub(crate) enum Shard {
+    /// Connect to one shard (aka direct-to-shard).
+    ///
+    /// Shards are numbered 0 to n - 1, inclusively.
+    Direct(usize),
+    /// Multiple shards, enumerated.
+    ///
+    /// Used to connect to specific shard numbers, 0 to n - 1 inclusively.
+    /// Rarely used.
+    Multi(Vec<usize>),
+
+    /// Connect to all shards.
+    #[default]
+    All,
+}
+
+impl Display for Shard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Direct(shard) => shard.to_string(),
+                Self::Multi(shards) => format!("{:?}", shards),
+                Self::All => "all".into(),
+            }
+        )
+    }
+}
+
+impl Shard {
+    /// Returns true if this is an all-shard query.
+    pub(crate) fn is_all(&self) -> bool {
+        matches!(self, Shard::All)
+    }
+
+    /// Returns true if this is a direct-to-shard mapping.
+    pub(crate) fn is_direct(&self) -> bool {
+        matches!(self, Self::Direct(_))
+    }
+}
+
+impl From<Option<usize>> for Shard {
+    fn from(value: Option<usize>) -> Self {
+        if let Some(value) = value {
+            Shard::Direct(value)
+        } else {
+            Shard::All
+        }
+    }
+}
+
+impl From<usize> for Shard {
+    fn from(value: usize) -> Self {
+        Shard::Direct(value)
+    }
+}
+
+impl From<Vec<usize>> for Shard {
+    fn from(value: Vec<usize>) -> Self {
+        Shard::Multi(value)
+    }
+}
+
+/// Path a query should take and any transformations
+/// that should be applied to the response.
+#[derive(Debug, Clone, Default, derive_builder::Builder)]
+pub(crate) struct Route {
+    /// Computed shard. This is where the query carrying
+    /// this route will go no matter what.
+    shard: ShardWithPriority,
+    /// Is this query a read, e.g. SELECT. This is the primary/replica
+    /// routing decision: a `SELECT` inside a read/write transaction is
+    /// marked as a write under the conservative read/write strategy so it
+    /// runs on the primary, without becoming a mutation.
+    read: bool,
+    /// Does this statement change data or schema. Unlike `read`, this is a
+    /// property of the statement itself and is what decides whether an
+    /// omnisharded statement must reach every shard.
+    ///
+    /// Conservatively `true` for every non-`SELECT` command built with
+    /// [`Route::write`] (DML, DDL, `SET`, `SHOW`, `BEGIN`, ...). For a
+    /// `SELECT` it is a best-effort classification of the statement text:
+    /// data-modifying CTEs, locking clauses (`FOR UPDATE`), the write
+    /// functions in `function.rs` (`nextval`, `setval`) and advisory locks.
+    /// A user-defined function with side effects is not detected and is
+    /// treated as a read.
+    mutates: bool,
+    /// `ORDER BY` clause, transformed into something
+    /// we can quickly use to sort the result.
+    order_by: Vec<OrderBy>,
+    /// `GROUP BY` clause, transformed into something
+    /// we can quickly use to aggregate the result.
+    aggregate: Aggregate,
+    /// `LIMIT` clause, transformed into something
+    /// we can quickly use to limit the resutl set.
+    limit: Limit,
+    /// Advisory locks requested by this query, if any.
+    advisory_locks: AdvisoryLocks,
+    /// `DISTINCT` clause, if set.
+    distinct: Option<DistinctBy>,
+    /// Temporary columns projected for cross-shard result processing.
+    pub(crate) projection_rewrite_plan: ProjectionRewritePlan,
+    /// Our query explain plan. We attach
+    /// this to the `EXPLAIN` output.
+    explain: Option<ExplainTrace>,
+    /// This query is a `ROLLBACK SAVEPOINT` command.
+    /// Nasty one.
+    rollback_savepoint: bool,
+    /// This query will be routed using schema-based sharding
+    /// and will only go to one shard, always.
+    search_path_driven: bool,
+    /// This query is being run on a database that solely has `sharded_schemas` configured.
+    pub(crate) sharded_schema_only: bool,
+    /// This query is a DDL statement. We will need to
+    /// reload the schema from Postgres once this runs.
+    schema_changed: bool,
+    /// This query is only touching omnisharded tables
+    /// and requires special checks to be executed.
+    omnisharded: bool,
+    /// Sharding key lookups that missed the cache while routing.
+    /// The query engine resolves them and routes the query again;
+    /// the query doesn't execute while any are unresolved.
+    pending_lookups: Vec<PendingLookup>,
+    /// The temporary table being created/dropped if present
+    pub(in crate::frontend) temp_table_change: Option<TempTableChange>,
+}
+
+impl Display for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "shard={}, role={}",
+            self.shard.deref(),
+            if self.read { "replica" } else { "primary" }
+        )
+    }
+}
+
+impl Route {
+    /// Create new route for a `SELECT` query.
+    pub(crate) fn select(
+        shard: ShardWithPriority,
+        order_by: Vec<OrderBy>,
+        aggregate: Aggregate,
+        limit: Limit,
+        distinct: Option<DistinctBy>,
+    ) -> Self {
+        Self {
+            shard,
+            order_by,
+            read: true,
+            aggregate,
+            limit,
+            distinct,
+            ..Default::default()
+        }
+    }
+
+    /// A query that should go to a replica.
+    pub(crate) fn read(shard: ShardWithPriority) -> Self {
+        Self {
+            shard,
+            read: true,
+            ..Default::default()
+        }
+    }
+
+    /// A write query.
+    pub(crate) fn write(shard: ShardWithPriority) -> Self {
+        Self {
+            shard,
+            mutates: true,
+            ..Default::default()
+        }
+    }
+
+    /// Returns true if this is a query that
+    /// can be sent to a replica.
+    pub(crate) fn is_read(&self) -> bool {
+        self.read
+    }
+
+    /// Returns true if this query can only be sent
+    /// to a primary.
+    pub(crate) fn is_write(&self) -> bool {
+        !self.is_read()
+    }
+
+    /// Returns true if the statement changes data or schema, independently
+    /// of where it is routed. A read forced onto the primary by a
+    /// read/write transaction is not a mutation.
+    ///
+    /// For `SELECT` this is best-effort: see the `mutates` field docs for
+    /// what is and isn't detected.
+    pub(crate) fn mutates(&self) -> bool {
+        self.mutates
+    }
+
+    /// Set whether the statement changes data or schema.
+    pub(crate) fn with_mutates(mut self, mutates: bool) -> Self {
+        self.mutates = mutates;
+        self
+    }
+
+    /// Sharding key lookups that missed the cache while routing.
+    pub(crate) fn pending_lookups(&self) -> &[PendingLookup] {
+        &self.pending_lookups
+    }
+
+    pub(crate) fn set_pending_lookups(&mut self, pending_lookups: Vec<PendingLookup>) {
+        self.pending_lookups = pending_lookups;
+    }
+
+    /// Get shard if any.
+    pub(crate) fn shard(&self) -> &Shard {
+        &self.shard
+    }
+
+    pub(crate) fn shard_with_priority(&self) -> &ShardWithPriority {
+        &self.shard
+    }
+
+    /// Returns true if this query should go to all shards.
+    pub(crate) fn is_all_shards(&self) -> bool {
+        matches!(*self.shard, Shard::All)
+    }
+
+    /// Returns true if this query should be sent to multiple
+    /// but not all shards.
+    pub(crate) fn is_multi_shard(&self) -> bool {
+        matches!(*self.shard, Shard::Multi(_))
+    }
+
+    /// Returns true if this query should be sent to
+    /// more than one shard.
+    pub(crate) fn is_cross_shard(&self) -> bool {
+        self.is_all_shards() || self.is_multi_shard()
+    }
+
+    pub(crate) fn order_by(&self) -> &[OrderBy] {
+        &self.order_by
+    }
+
+    pub(crate) fn set_order_by(&mut self, order_by: Vec<OrderBy>) {
+        self.order_by = order_by;
+    }
+
+    pub(crate) fn aggregate(&self) -> &Aggregate {
+        &self.aggregate
+    }
+
+    /// Set shard on this route, along with reasoning
+    /// for that shard selection.
+    pub(crate) fn set_shard(&mut self, shard: ShardWithPriority) {
+        self.shard = shard;
+    }
+
+    /// Same as [`Self::set_shard`].
+    pub(crate) fn with_shard(mut self, shard: ShardWithPriority) -> Self {
+        self.set_shard(shard);
+        self
+    }
+
+    /// Set the omnisharded flag on this route.
+    pub(crate) fn with_omnisharded(mut self, omnisharded: bool) -> Self {
+        self.omnisharded = omnisharded;
+        self
+    }
+
+    /// Return true if the statement is touching only omnisharded tables.
+    ///
+    /// Indicates that this route is only touching omnisharded tables
+    /// and can be load-balanced across shards or has to be sent to all shards
+    /// if it's a write.
+    ///
+    pub(crate) fn is_omnisharded(&self) -> bool {
+        self.omnisharded
+    }
+
+    pub(crate) fn is_schema_changed(&self) -> bool {
+        self.schema_changed
+    }
+
+    pub(crate) fn with_schema_changed(mut self, changed: bool) -> Self {
+        self.schema_changed = changed;
+        self
+    }
+
+    pub(crate) fn set_search_path_driven(&mut self, schema_driven: bool) {
+        self.search_path_driven = schema_driven;
+    }
+
+    pub(crate) fn is_search_path_driven(&self) -> bool {
+        self.search_path_driven
+    }
+
+    /// Whether an omnisharded mutation must reach every shard to remain consistent.
+    ///
+    /// Only statements that change data or schema (`mutates`) need full
+    /// coverage. A read of an omnisharded table can be served by any single
+    /// shard, even when a read/write transaction routes it to the primary
+    /// (`is_write()`), because every shard holds the same rows.
+    ///
+    /// If the database is configured *only* with schema sharding, we don't run any checks.
+    pub(crate) fn requires_full_shard_coverage(&self) -> bool {
+        self.is_omnisharded() && self.mutates() && !self.sharded_schema_only
+    }
+
+    /// Return true if this route requires result set manipulation to
+    /// return correct results.
+    ///
+    /// This is the case if the statement has any of the following:
+    ///
+    /// 1. `ORDER BY` clause
+    /// 2. `GROUP BY` clause
+    /// 3. `DISTINCT` clause
+    /// 4. `LIMIT` or `OFFSET` clause
+    ///
+    pub(crate) fn requires_post_processing(&self) -> bool {
+        !self.order_by().is_empty()
+            || !self.aggregate().is_empty()
+            || self.distinct().is_some()
+            || self.limit().offset.is_some()
+    }
+
+    pub(crate) fn limit(&self) -> &Limit {
+        &self.limit
+    }
+
+    pub(crate) fn set_limit(&mut self, limit: Limit) {
+        self.limit = limit;
+    }
+
+    pub(crate) fn with_read(mut self, read: bool) -> Self {
+        self.set_read(read);
+        self
+    }
+
+    pub(crate) fn set_read(&mut self, read: bool) {
+        self.read = read;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn explain(&self) -> Option<&ExplainTrace> {
+        self.explain.as_ref()
+    }
+
+    pub(crate) fn set_explain(&mut self, trace: ExplainTrace) {
+        self.explain = Some(trace);
+    }
+
+    pub(crate) fn take_explain(&mut self) -> Option<ExplainTrace> {
+        self.explain.take()
+    }
+
+    pub(crate) fn with_rollback_savepoint(mut self, rollback: bool) -> Self {
+        self.rollback_savepoint = rollback;
+        self
+    }
+
+    pub(crate) fn rollback_savepoint(&self) -> bool {
+        self.rollback_savepoint
+    }
+
+    pub(crate) fn with_advisory_locks(mut self, locks: AdvisoryLocks) -> Self {
+        self.advisory_locks = locks;
+        self
+    }
+
+    pub(crate) fn advisory_locks(&self) -> &AdvisoryLocks {
+        &self.advisory_locks
+    }
+
+    /// Returns true when this statement has an advisory lock function that acquires a lock.
+    pub(crate) fn is_lock_session(&self) -> bool {
+        self.advisory_locks.has_lock()
+    }
+
+    /// True when the statement only releases advisory locks — safe to unpin.
+    #[cfg(test)]
+    pub(crate) fn is_unlock_session(&self) -> bool {
+        !self.advisory_locks.is_empty() && !self.advisory_locks.has_lock()
+    }
+
+    pub(crate) fn distinct(&self) -> &Option<DistinctBy> {
+        &self.distinct
+    }
+
+    pub(crate) fn should_2pc(&self) -> bool {
+        self.is_cross_shard() && self.is_write()
+    }
+
+    pub(super) fn with_temp_table_change(mut self, temp_table: Option<TempTableChange>) -> Self {
+        self.temp_table_change = temp_table;
+        self
+    }
+}
+
+/// Shard source.
+///
+/// N.B. Ordering here matters. Don't move these around,
+/// unless you're changing the algorithm.
+///
+/// These are ranked from least priority to highest
+/// priority.
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Default)]
+pub(crate) enum ShardSource {
+    #[default]
+    DefaultUnset,
+    Table(TableReason),
+    RoundRobin(RoundRobinReason),
+    SearchPath(String),
+    Set,
+    Comment,
+    Plugin,
+    Override(OverrideReason),
+}
+
+impl ShardSource {
+    pub(crate) fn is_round_robin(&self) -> bool {
+        matches!(self, Self::RoundRobin(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+pub(crate) enum RoundRobinReason {
+    Omni,
+    NotExecutable,
+    NoTable,
+    EmptyQuery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+pub(crate) enum OverrideReason {
+    AdvisoryLock,
+    DryRun,
+    ParserDisabled,
+    Transaction,
+    OnlyOneShard,
+    CrossShardFunction,
+    CanonicalSchemaInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+pub(crate) enum TableReason {
+    Omni,
+    Sharded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Default)]
+pub(crate) struct ShardWithPriority {
+    source: ShardSource,
+    shard: Shard,
+}
+
+impl ShardWithPriority {
+    /// Create new shard with comment-level priority.
+    pub(crate) fn new_comment(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Comment,
+        }
+    }
+
+    pub(crate) fn new_plugin(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Plugin,
+        }
+    }
+
+    /// Create new shard with table-level priority.
+    pub(crate) fn new_table(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Table(TableReason::Sharded),
+        }
+    }
+
+    pub(crate) fn new_table_omni(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Table(TableReason::Omni),
+        }
+    }
+
+    /// Create new shard with highest priority.
+    pub(crate) fn new_override_parser_disabled(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::ParserDisabled),
+        }
+    }
+
+    pub(crate) fn new_override_cross_shard_function() -> Self {
+        Self {
+            shard: Shard::All,
+            source: ShardSource::Override(OverrideReason::CrossShardFunction),
+        }
+    }
+
+    pub(crate) fn new_override_dry_run(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::DryRun),
+        }
+    }
+
+    pub(crate) fn new_override_transaction(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::Transaction),
+        }
+    }
+
+    pub(crate) fn new_override_only_one_shard(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::OnlyOneShard),
+        }
+    }
+
+    pub(crate) fn new_override_canonical_schema_info(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::CanonicalSchemaInfo),
+        }
+    }
+
+    pub(crate) fn new_default_unset(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::DefaultUnset,
+        }
+    }
+
+    pub(crate) fn new_rr_omni(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::RoundRobin(RoundRobinReason::Omni),
+        }
+    }
+
+    pub(crate) fn new_rr_not_executable(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::RoundRobin(RoundRobinReason::NotExecutable),
+        }
+    }
+
+    pub(crate) fn new_rr_no_table(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::RoundRobin(RoundRobinReason::NoTable),
+        }
+    }
+
+    pub(crate) fn new_rr_empty_query(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::RoundRobin(RoundRobinReason::EmptyQuery),
+        }
+    }
+
+    /// New SET-based routing.
+    pub(crate) fn new_set(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Set,
+        }
+    }
+
+    /// New search_path-based shard.
+    pub(crate) fn new_search_path(shard: Shard, schema: &str) -> Self {
+        Self {
+            shard,
+            source: ShardSource::SearchPath(schema.to_string()),
+        }
+    }
+
+    /// An advisory lock is used in the query whose id hashes to `shard`
+    pub(crate) fn new_override_advisory_lock(shard: Shard) -> Self {
+        Self {
+            shard,
+            source: ShardSource::Override(OverrideReason::AdvisoryLock),
+        }
+    }
+
+    pub(crate) fn source(&self) -> &ShardSource {
+        &self.source
+    }
+}
+
+impl Deref for ShardWithPriority {
+    type Target = Shard;
+
+    fn deref(&self) -> &Self::Target {
+        &self.shard
+    }
+}
+
+/// Ordered collection of set shards.
+#[derive(Default, Debug, Clone)]
+pub(crate) struct ShardsWithPriority {
+    max: Option<ShardWithPriority>,
+}
+
+impl ShardsWithPriority {
+    /// Get currently computed shard.
+    pub(crate) fn shard(&self) -> ShardWithPriority {
+        lazy_static! {
+            static ref DEFAULT_SHARD: ShardWithPriority = ShardWithPriority {
+                shard: Shard::All,
+                source: ShardSource::DefaultUnset,
+            };
+        }
+
+        self.peek().cloned().unwrap_or(DEFAULT_SHARD.clone())
+    }
+
+    pub(crate) fn push(&mut self, shard: ShardWithPriority) {
+        if let Some(ref max) = self.max {
+            if max < &shard {
+                self.max = Some(shard);
+            }
+        } else {
+            self.max = Some(shard);
+        }
+    }
+
+    pub(crate) fn peek(&self) -> Option<&ShardWithPriority> {
+        self.max.as_ref()
+    }
+
+    /// Schema-path based routing priority is used.
+    pub(crate) fn is_search_path(&self) -> bool {
+        self.peek()
+            .map(|shard| matches!(shard.source, ShardSource::SearchPath(_)))
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_shard_ord() {
+        assert!(Shard::Direct(0) < Shard::All);
+        assert!(Shard::Multi(vec![]) < Shard::All);
+    }
+
+    #[test]
+    fn test_source_ord() {
+        assert!(
+            ShardSource::Table(TableReason::Sharded)
+                < ShardSource::RoundRobin(RoundRobinReason::NotExecutable)
+        );
+        assert!(ShardSource::Table(TableReason::Omni) < ShardSource::SearchPath(String::new()));
+        assert!(ShardSource::SearchPath(String::new()) < ShardSource::Set);
+        assert!(ShardSource::Set < ShardSource::Comment);
+        assert!(ShardSource::Comment < ShardSource::Override(OverrideReason::OnlyOneShard));
+    }
+
+    #[test]
+    fn test_shard_with_priority_ord() {
+        let shard = Shard::Direct(0);
+
+        assert!(
+            ShardWithPriority::new_table(shard.clone())
+                < ShardWithPriority::new_rr_omni(shard.clone())
+        );
+        assert!(
+            ShardWithPriority::new_table(shard.clone())
+                < ShardWithPriority::new_search_path(shard.clone(), "schema")
+        );
+        assert!(
+            ShardWithPriority::new_search_path(shard.clone(), "schema")
+                < ShardWithPriority::new_set(shard.clone())
+        );
+        assert!(
+            ShardWithPriority::new_set(shard.clone())
+                < ShardWithPriority::new_comment(shard.clone())
+        );
+        assert!(
+            ShardWithPriority::new_comment(shard.clone())
+                < ShardWithPriority::new_override_dry_run(shard.clone())
+        );
+    }
+
+    #[test]
+    fn test_should_buffer_empty_route() {
+        let route = Route::default();
+        assert!(!route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_should_buffer_order_by() {
+        let route = Route::select(
+            ShardWithPriority::new_table(Shard::All),
+            vec![OrderBy::Asc(0)],
+            Default::default(),
+            Limit::default(),
+            None,
+        );
+        assert!(route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_should_buffer_limit_only() {
+        let route = Route::select(
+            ShardWithPriority::new_table(Shard::All),
+            vec![],
+            Default::default(),
+            Limit {
+                limit: Some(10),
+                offset: None,
+            },
+            None,
+        );
+        assert!(!route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_should_buffer_offset_only() {
+        let route = Route::select(
+            ShardWithPriority::new_table(Shard::All),
+            vec![],
+            Default::default(),
+            Limit {
+                limit: None,
+                offset: Some(5),
+            },
+            None,
+        );
+        assert!(route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_should_buffer_limit_and_offset() {
+        let route = Route::select(
+            ShardWithPriority::new_table(Shard::All),
+            vec![],
+            Default::default(),
+            Limit {
+                limit: Some(10),
+                offset: Some(5),
+            },
+            None,
+        );
+        assert!(route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_should_buffer_no_limit_no_offset() {
+        let route = Route::select(
+            ShardWithPriority::new_table(Shard::All),
+            vec![],
+            Default::default(),
+            Limit::default(),
+            None,
+        );
+        assert!(!route.requires_post_processing());
+    }
+
+    #[test]
+    fn test_comment_override_set() {
+        let mut shards = ShardsWithPriority::default();
+
+        shards.push(ShardWithPriority::new_set(Shard::Direct(1)));
+        assert_eq!(shards.shard().deref(), &Shard::Direct(1));
+
+        shards.push(ShardWithPriority::new_comment(Shard::Direct(2)));
+        assert_eq!(shards.shard().deref(), &Shard::Direct(2));
+
+        let mut shards = ShardsWithPriority::default();
+
+        shards.push(ShardWithPriority::new_comment(Shard::Direct(3)));
+        assert_eq!(shards.shard().deref(), &Shard::Direct(3));
+
+        shards.push(ShardWithPriority::new_set(Shard::Direct(4)));
+        assert_eq!(shards.shard().deref(), &Shard::Direct(3));
+    }
+
+    #[test]
+    fn test_omnisharded_write_coverage_exempts_search_path_routes() {
+        let mut route =
+            Route::write(ShardWithPriority::new_table_omni(Shard::All)).with_omnisharded(true);
+        assert!(route.requires_full_shard_coverage());
+
+        route.set_search_path_driven(true);
+        route.sharded_schema_only = true;
+        assert!(!route.requires_full_shard_coverage());
+    }
+
+    /// A read routed to the primary (e.g. inside a read/write transaction) is
+    /// still a read: it never needs full shard coverage.
+    #[test]
+    fn test_omnisharded_read_on_primary_needs_no_coverage() {
+        let route = Route::read(ShardWithPriority::new_table_omni(Shard::All))
+            .with_read(false)
+            .with_omnisharded(true);
+        assert!(route.is_write());
+        assert!(!route.mutates());
+        assert!(!route.requires_full_shard_coverage());
+    }
+
+    /// A SELECT that mutates (locking clause, write function) needs coverage
+    /// even though it is built as a read route.
+    #[test]
+    fn test_omnisharded_mutating_select_needs_coverage() {
+        let route = Route::read(ShardWithPriority::new_table_omni(Shard::All))
+            .with_read(false)
+            .with_mutates(true)
+            .with_omnisharded(true);
+        assert!(route.requires_full_shard_coverage());
+    }
+}

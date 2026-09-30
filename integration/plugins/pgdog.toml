@@ -1,0 +1,27 @@
+[general]
+
+[rewrite]
+enabled = false
+shard_key = "ignore"
+split_inserts = "error"
+
+[[plugins]]
+name = "pgdog_example_plugin"
+
+[[plugins]]
+name = "test_plugin_compatible"
+
+[[plugins]]
+name = "test_plugin_outdated"
+
+[[plugins]]
+name = "test_plugin_main"
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"
+
+[[databases]]
+name = "pgdog"
+host = "127.0.0.1"
+role = "replica"

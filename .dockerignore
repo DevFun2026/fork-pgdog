@@ -1,0 +1,7 @@
+target*
+docs
+web
+.github
+.ropeproject
+pgdog/tests/*
+venv*

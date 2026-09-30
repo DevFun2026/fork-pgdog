@@ -1,0 +1,28 @@
+//! SETUP SHARDS
+use crate::backend::{Schema, databases::databases};
+
+use super::prelude::*;
+
+pub(crate) struct SetupSchema;
+
+#[async_trait]
+impl Command for SetupSchema {
+    fn name(&self) -> String {
+        "SETUP SCHEMA".into()
+    }
+
+    fn parse(_: &str) -> Result<Self, Error> {
+        Ok(Self)
+    }
+
+    async fn execute(&self) -> Result<Vec<Message>, Error> {
+        let databases = databases();
+        for cluster in databases.schema_owners() {
+            Schema::install(&cluster)
+                .await
+                .map_err(|e| Error::Backend(Box::new(e)))?;
+        }
+
+        Ok(vec![])
+    }
+}

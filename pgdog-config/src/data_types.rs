@@ -1,0 +1,222 @@
+use std::{
+    cmp::Ordering,
+    fmt::Display,
+    hash::{Hash, Hasher},
+};
+
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Visitor},
+    ser::SerializeSeq,
+};
+
+/// Wrapper type for f32 that implements Ord for PostgreSQL compatibility
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Float(pub f32);
+
+impl PartialOrd for Float {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Float {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // PostgreSQL ordering: NaN is greater than all other values
+        match (self.0.is_nan(), other.0.is_nan()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            (false, false) => self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal),
+        }
+    }
+}
+
+impl PartialEq for Float {
+    fn eq(&self, other: &Self) -> bool {
+        // PostgreSQL treats NaN as equal to NaN for indexing purposes
+        if self.0.is_nan() && other.0.is_nan() {
+            true
+        } else {
+            self.0 == other.0
+        }
+    }
+}
+
+impl Eq for Float {}
+
+impl Hash for Float {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0.is_nan() {
+            // All NaN values hash to the same value
+            0u8.hash(state);
+        } else if self.0 == 0.0 {
+            // 0.0 and -0.0 compare equal but have different bit patterns,
+            // so they must hash to the same value. Postgres normalizes the
+            // sign of zero the same way, in hashfloat4.
+            0.0_f32.to_bits().hash(state);
+        } else {
+            // Use bit representation for consistent hashing
+            self.0.to_bits().hash(state);
+        }
+    }
+}
+
+impl Display for Float {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_nan() {
+            write!(f, "NaN")
+        } else if self.0.is_infinite() {
+            if self.0.is_sign_positive() {
+                write!(f, "Infinity")
+            } else {
+                write!(f, "-Infinity")
+            }
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
+impl From<f32> for Float {
+    fn from(value: f32) -> Self {
+        Float(value)
+    }
+}
+
+impl From<Float> for f32 {
+    fn from(value: Float) -> Self {
+        value.0
+    }
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Ord, Eq, Hash, Debug)]
+#[repr(C)]
+pub struct Vector {
+    pub values: Vec<Float>,
+}
+
+impl Vector {
+    /// Length of the vector.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Is the vector empty?
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+struct VectorVisitor;
+
+impl<'de> Visitor<'de> for VectorVisitor {
+    type Value = Vector;
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+    {
+        let mut results = vec![];
+        while let Some(n) = seq.next_element::<f64>()? {
+            results.push(n);
+        }
+
+        Ok(Vector::from(results.as_slice()))
+    }
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("expected a list of floating points")
+    }
+}
+
+impl<'de> Deserialize<'de> for Vector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(VectorVisitor)
+    }
+}
+
+impl Serialize for Vector {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.len()))?;
+        for v in &self.values {
+            seq.serialize_element(v)?;
+        }
+        seq.end()
+    }
+}
+
+impl From<&[f64]> for Vector {
+    fn from(value: &[f64]) -> Self {
+        Self {
+            values: value.iter().map(|v| Float(*v as f32)).collect(),
+        }
+    }
+}
+
+impl From<&[f32]> for Vector {
+    fn from(value: &[f32]) -> Self {
+        Self {
+            values: value.iter().map(|v| Float(*v)).collect(),
+        }
+    }
+}
+
+impl From<Vec<f32>> for Vector {
+    fn from(value: Vec<f32>) -> Self {
+        Self {
+            values: value.into_iter().map(Float::from).collect(),
+        }
+    }
+}
+
+impl From<Vec<f64>> for Vector {
+    fn from(value: Vec<f64>) -> Self {
+        Self {
+            values: value.into_iter().map(|v| Float(v as f32)).collect(),
+        }
+    }
+}
+
+impl From<Vec<Float>> for Vector {
+    fn from(value: Vec<Float>) -> Self {
+        Self { values: value }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::collections::HashSet;
+    use std::collections::hash_map::DefaultHasher;
+
+    fn hash_of(float: Float) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        float.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn test_negative_zero_hashes_like_zero() {
+        assert_eq!(Float(0.0), Float(-0.0));
+        assert_eq!(hash_of(Float(0.0)), hash_of(Float(-0.0)));
+
+        let mut set = HashSet::new();
+        set.insert(Vector::from(vec![0.0_f32, 1.0]));
+        set.insert(Vector::from(vec![-0.0_f32, 1.0]));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_distinct_values_still_hash_apart() {
+        assert_ne!(hash_of(Float(1.0)), hash_of(Float(-1.0)));
+        assert_ne!(hash_of(Float(0.0)), hash_of(Float(1.0)));
+        assert_ne!(hash_of(Float(f32::NAN)), hash_of(Float(0.0)));
+    }
+}

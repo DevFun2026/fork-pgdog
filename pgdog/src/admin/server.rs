@@ -1,0 +1,82 @@
+//! Handles client connections.
+
+use std::collections::VecDeque;
+use std::time::Duration;
+
+use tracing::debug;
+
+use crate::frontend::ClientRequest;
+use crate::net::ProtocolMessage;
+use crate::net::ToBytes;
+use crate::net::messages::command_complete::CommandComplete;
+use crate::net::messages::{ErrorResponse, FromBytes, Protocol, Query, ReadyForQuery};
+
+use super::Error;
+use super::parser::Parser;
+use super::prelude::Message;
+use crate::util::safe_sleep;
+
+/// Admin backend.
+#[derive(Debug)]
+pub(crate) struct AdminServer {
+    messages: VecDeque<Message>,
+}
+
+impl Default for AdminServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdminServer {
+    /// New admin backend handler.
+    pub(crate) fn new() -> Self {
+        Self {
+            messages: VecDeque::new(),
+        }
+    }
+
+    /// Handle command.
+    pub(crate) async fn send(&mut self, client_request: &ClientRequest) -> Result<(), Error> {
+        let message = client_request.messages.first().ok_or(Error::Empty)?;
+        let message: ProtocolMessage = message.clone();
+
+        if message.code() != 'Q' {
+            debug!("admin received unsupported message: {:?}", message);
+            return Err(Error::SimpleOnly);
+        }
+
+        let query = Query::from_bytes(message.to_bytes())?;
+
+        let messages = match Parser::parse(query.query()) {
+            Ok(command) => {
+                let mut messages = command.execute().await?;
+                messages.push(CommandComplete::new(command.name()).message());
+
+                messages
+            }
+            Err(err) => {
+                vec![ErrorResponse::protocol_violation(err.to_string().as_str()).message()]
+            }
+        };
+
+        self.messages.extend(messages);
+        self.messages.push_back(ReadyForQuery::idle().message());
+
+        Ok(())
+    }
+
+    /// Receive command result.
+    pub(crate) async fn read(&mut self) -> Result<Message, Error> {
+        match self.messages.pop_front() {
+            Some(message) => Ok(message),
+            _ => loop {
+                safe_sleep(Duration::MAX).await;
+            },
+        }
+    }
+
+    pub(crate) fn done(&self) -> bool {
+        self.messages.is_empty()
+    }
+}

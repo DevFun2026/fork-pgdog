@@ -1,0 +1,35 @@
+use std::io::Result;
+
+use pgdog_config::Tcp;
+use socket2::{SockRef, TcpKeepalive};
+use tokio::net::TcpStream;
+
+pub(crate) fn tweak(socket: &TcpStream, config: &Tcp) -> Result<()> {
+    // Disable the Nagle algorithm.
+    socket.set_nodelay(true)?;
+
+    let sock_ref = SockRef::from(socket);
+    sock_ref.set_keepalive(config.keepalive())?;
+    let mut params = TcpKeepalive::new();
+    if let Some(time) = config.time() {
+        params = params.with_time(time);
+    }
+    if let Some(interval) = config.interval() {
+        params = params.with_interval(interval);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(retries) = config.retries() {
+        params = params.with_retries(retries);
+    }
+    sock_ref.set_tcp_keepalive(&params)?;
+
+    #[cfg(target_os = "linux")]
+    if let Some(congestion_control) = config.congestion_control() {
+        sock_ref.set_tcp_congestion(congestion_control.as_bytes())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    sock_ref.set_tcp_user_timeout(config.user_timeout())?;
+
+    Ok(())
+}

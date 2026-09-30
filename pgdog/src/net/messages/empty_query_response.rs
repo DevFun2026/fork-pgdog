@@ -1,0 +1,26 @@
+use super::{code, prelude::*};
+
+#[derive(Debug, Copy, Clone, Default)]
+#[allow(dead_code)]
+pub(crate) struct EmptyQueryResponse;
+
+impl FromBytes for EmptyQueryResponse {
+    fn from_bytes(mut bytes: Bytes) -> Result<Self, Error> {
+        code!(bytes, 'I');
+        let _len = bytes.get_i32();
+
+        Ok(Self)
+    }
+}
+
+impl ToBytes for EmptyQueryResponse {
+    fn to_bytes(&self) -> Bytes {
+        Payload::named(self.code()).freeze()
+    }
+}
+
+impl Protocol for EmptyQueryResponse {
+    fn code(&self) -> char {
+        'I'
+    }
+}

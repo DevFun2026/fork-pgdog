@@ -1,0 +1,396 @@
+//! Keep track of server stats.
+
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
+use fnv::FnvHashMap as HashMap;
+use once_cell::sync::Lazy;
+use parking_lot::{Mutex, RwLock};
+pub(crate) use pgdog_stats::server::Counts;
+use tokio::time::Instant;
+
+use crate::{
+    backend::{Pool, pool::stats::MemoryStats},
+    config::Memory,
+    net::{
+        Parameters,
+        messages::{BackendPid, CommandComplete, FrontendPid},
+    },
+    state::State,
+};
+
+use super::pool::Address;
+
+static STATS: Lazy<RwLock<HashMap<BackendPid, Arc<Mutex<ConnectedServer>>>>> =
+    Lazy::new(|| RwLock::new(HashMap::default()));
+
+/// Get a snapshot of all connected-server stats.
+pub(crate) fn stats() -> Vec<ConnectedServer> {
+    STATS.read().values().map(|v| v.lock().clone()).collect()
+}
+
+/// Get idle-in-transaction server connections for connection pool.
+pub(crate) fn idle_in_transaction(pool: &Pool) -> usize {
+    STATS
+        .read()
+        .values()
+        .filter(|stat| {
+            let guard = stat.lock();
+            guard.stats.pool_id == pool.id() && guard.stats.state == State::IdleInTransaction
+        })
+        .count()
+}
+
+/// Core server statistics (shared between local and global).
+#[derive(Clone, Debug, Copy)]
+pub(crate) struct ServerStats {
+    pub(crate) inner: pgdog_stats::server::Stats,
+    pub(crate) id: BackendPid,
+    pub(crate) last_used: Instant,
+    pub(crate) last_healthcheck: Option<Instant>,
+    pub(crate) created_at: Instant,
+    pub(crate) client_id: Option<FrontendPid>,
+    query_timer: Option<Instant>,
+    transaction_timer: Option<Instant>,
+    idle_in_transaction_timer: Option<Instant>,
+}
+
+impl ServerStats {
+    fn new(id: BackendPid, config: &Memory) -> Self {
+        let now = Instant::now();
+        let inner = pgdog_stats::server::Stats {
+            memory: *MemoryStats::new(config),
+            ..Default::default()
+        };
+
+        Self {
+            inner,
+            id,
+            last_used: now,
+            last_healthcheck: None,
+            created_at: now,
+            client_id: None,
+            query_timer: None,
+            transaction_timer: None,
+            idle_in_transaction_timer: None,
+        }
+    }
+}
+
+impl Deref for ServerStats {
+    type Target = pgdog_stats::server::Stats;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for ServerStats {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+/// Connected server (shared globally).
+#[derive(Clone, Debug)]
+pub(crate) struct ConnectedServer {
+    pub(crate) stats: ServerStats,
+    pub(crate) addr: Address,
+    pub(crate) application_name: String,
+}
+
+/// Server statistics handle.
+///
+/// Holds local stats for fast reads during pool operations,
+/// and a reference to shared stats for global visibility.
+/// Syncs local to shared on I/O operations.
+#[derive(Clone, Debug)]
+pub(crate) struct Stats {
+    local: ServerStats,
+    shared: Arc<Mutex<ConnectedServer>>,
+}
+
+impl Stats {
+    /// Register new server with statistics.
+    pub(crate) fn connect(
+        id: BackendPid,
+        addr: &Address,
+        params: &Parameters,
+        config: &Memory,
+    ) -> Self {
+        let local = ServerStats::new(id, config);
+
+        let server = ConnectedServer {
+            stats: local,
+            addr: addr.clone(),
+            application_name: params.get_default("application_name", "PgDog").to_owned(),
+        };
+
+        let shared = Arc::new(Mutex::new(server));
+        STATS.write().insert(id, Arc::clone(&shared));
+
+        Stats { local, shared }
+    }
+
+    /// Sync local stats to shared (called on I/O operations).
+    fn sync_to_shared(&self) {
+        self.shared.lock().stats = self.local;
+    }
+
+    fn transaction_state(&mut self, now: Instant, state: State) {
+        self.local.total.transactions += 1;
+        self.local.last_checkout.transactions += 1;
+        self.local.state = state;
+        self.local.last_used = now;
+        if let Some(transaction_timer) = self.local.transaction_timer.take() {
+            let duration = now.duration_since(transaction_timer);
+            self.local.total.transaction_time += duration;
+            self.local.last_checkout.transaction_time += duration;
+        }
+        self.sync_to_shared();
+    }
+
+    pub(crate) fn link_client(&mut self, client_name: &str, server_name: &str, id: FrontendPid) {
+        self.local.client_id = Some(id);
+        if client_name != server_name {
+            let mut guard = self.shared.lock();
+            guard.stats.client_id = self.local.client_id;
+            guard.application_name.clear();
+            guard.application_name.push_str(client_name);
+        }
+    }
+
+    pub(crate) fn parse_complete(&mut self) {
+        self.local.total.parse += 1;
+        self.local.last_checkout.parse += 1;
+        self.local.total.prepared_statements += 1;
+        self.local.last_checkout.prepared_statements += 1;
+    }
+
+    /// Overwrite how many prepared statements we have in the cache for stats.
+    pub(crate) fn set_prepared_statements(&mut self, size: usize) {
+        self.local.total.prepared_statements = size;
+        self.local.total.prepared_sync += 1;
+        self.local.last_checkout.prepared_sync += 1;
+        self.sync_to_shared();
+    }
+
+    pub(crate) fn close_many(&mut self, closed: usize, size: usize) {
+        self.local.total.prepared_statements = size;
+        self.local.total.close += closed;
+        self.local.last_checkout.close += closed;
+        self.sync_to_shared();
+    }
+
+    pub(crate) fn copy_mode(&mut self) {
+        self.state(State::CopyMode);
+    }
+
+    pub(crate) fn bind_complete(&mut self) {
+        self.local.total.bind += 1;
+        self.local.last_checkout.bind += 1;
+    }
+
+    /// Record rows affected from a Postgres CommandComplete message.
+    pub(crate) fn rows_affected(&mut self, cmd: &CommandComplete) {
+        let Ok(Some(rows)) = cmd.rows() else {
+            return;
+        };
+        match cmd.tag() {
+            "INSERT" => {
+                self.local.total.rows_inserted += rows;
+                self.local.last_checkout.rows_inserted += rows;
+            }
+            "UPDATE" => {
+                self.local.total.rows_updated += rows;
+                self.local.last_checkout.rows_updated += rows;
+            }
+            "DELETE" => {
+                self.local.total.rows_deleted += rows;
+                self.local.last_checkout.rows_deleted += rows;
+            }
+            _ => {}
+        }
+    }
+
+    /// A transaction has been completed.
+    pub(crate) fn transaction(&mut self, now: Instant) {
+        self.transaction_state(now, State::Idle);
+    }
+
+    /// Increment two-phase commit transaction count.
+    pub(crate) fn transaction_2pc(&mut self) {
+        self.local.last_checkout.transactions_2pc += 1;
+        self.local.total.transactions_2pc += 1;
+    }
+
+    /// Error occurred in a transaction.
+    pub(crate) fn transaction_error(&mut self, now: Instant) {
+        self.transaction_state(now, State::TransactionError);
+    }
+
+    /// An error occurred in general.
+    pub(crate) fn error(&mut self) {
+        self.local.total.errors += 1;
+        self.local.last_checkout.errors += 1;
+    }
+
+    /// Postgres disconnected this connection because it exceeded
+    /// `idle_in_transaction_session_timeout`.
+    pub(crate) fn idle_xact_timeout(&mut self) {
+        self.local.total.idle_xact_timeouts += 1;
+        self.local.last_checkout.idle_xact_timeouts += 1;
+    }
+
+    /// A query has been completed.
+    pub(crate) fn query(&mut self, now: Instant, idle_in_transaction: bool) {
+        self.local.total.queries += 1;
+        self.local.last_checkout.queries += 1;
+
+        if idle_in_transaction {
+            self.local.idle_in_transaction_timer = Some(now);
+        }
+
+        if let Some(query_timer) = self.local.query_timer.take() {
+            let duration = now.duration_since(query_timer);
+            self.local.total.query_time += duration;
+            self.local.last_checkout.query_time += duration;
+        }
+    }
+
+    pub(crate) fn set_timers(&mut self, now: Instant) {
+        self.local.transaction_timer = Some(now);
+        self.local.query_timer = Some(now);
+    }
+
+    /// Manual state change.
+    pub(crate) fn state(&mut self, state: State) {
+        if self.local.state != state {
+            self.local.state = state;
+            if state == State::Active {
+                let now = Instant::now();
+                if self.local.transaction_timer.is_none() {
+                    self.local.transaction_timer = Some(now);
+                }
+                if self.local.query_timer.is_none() {
+                    self.local.query_timer = Some(now);
+                }
+                if let Some(idle_in_transaction_timer) = self.local.idle_in_transaction_timer.take()
+                {
+                    let elapsed = now.duration_since(idle_in_transaction_timer);
+                    self.local.last_checkout.idle_in_transaction_time += elapsed;
+                    self.local.total.idle_in_transaction_time += elapsed;
+                }
+            }
+            self.sync_to_shared();
+        }
+    }
+
+    /// Send bytes to server - syncs to shared for real-time visibility.
+    pub(crate) fn send(&mut self, bytes: usize, code: u8) {
+        self.local.total.bytes_sent += bytes;
+        self.local.last_checkout.bytes_sent += bytes;
+        self.local.last_sent = code;
+        self.sync_to_shared();
+    }
+
+    /// Receive bytes from server - syncs to shared for real-time visibility.
+    pub(crate) fn receive(&mut self, bytes: usize, code: u8) {
+        self.local.total.bytes_received += bytes;
+        self.local.last_checkout.bytes_received += bytes;
+        self.local.last_received = code;
+        self.sync_to_shared();
+    }
+
+    /// Track healthchecks.
+    pub(crate) fn healthcheck(&mut self) {
+        self.local.total.healthchecks += 1;
+        self.local.last_checkout.healthchecks += 1;
+        self.local.last_healthcheck = Some(Instant::now());
+        self.sync_to_shared();
+    }
+
+    pub(crate) fn memory_used(&mut self, stats: MemoryStats) {
+        self.local.memory = *stats;
+    }
+
+    pub(crate) fn cleaned(&mut self) {
+        self.local.last_checkout.cleaned += 1;
+        self.local.total.cleaned += 1;
+    }
+
+    /// Track rollbacks.
+    pub(crate) fn rollback(&mut self) {
+        self.local.total.rollbacks += 1;
+        self.local.last_checkout.rollbacks += 1;
+        self.sync_to_shared();
+    }
+
+    /// Server is closing.
+    pub(super) fn disconnect(&self) {
+        STATS.write().remove(&self.local.id);
+    }
+
+    /// Reset last_checkout counts.
+    pub(crate) fn reset_last_checkout(&mut self) -> Counts {
+        let counts = self.local.last_checkout;
+        self.local.last_checkout = Counts::default();
+        counts
+    }
+
+    // Fast accessor methods - read from local, no locking.
+
+    /// Get current state (local, no lock).
+    pub(crate) fn get_state(&self) -> State {
+        self.local.state
+    }
+
+    /// Get created_at timestamp (local, no lock).
+    pub(crate) fn created_at(&self) -> Instant {
+        self.local.created_at
+    }
+
+    /// Get last_used timestamp (local, no lock).
+    pub(crate) fn last_used(&self) -> Instant {
+        self.local.last_used
+    }
+
+    /// Get last_healthcheck timestamp (local, no lock).
+    pub(crate) fn last_healthcheck(&self) -> Option<Instant> {
+        self.local.last_healthcheck
+    }
+
+    /// Get pool_id (local, no lock).
+    #[cfg(test)]
+    pub(crate) fn pool_id(&self) -> u64 {
+        self.local.pool_id
+    }
+
+    /// Set pool_id.
+    pub(crate) fn set_pool_id(&mut self, pool_id: u64) {
+        self.local.pool_id = pool_id;
+        self.shared.lock().stats.pool_id = pool_id;
+    }
+
+    /// Get total counts (local, no lock).
+    #[cfg(test)]
+    pub(crate) fn total(&self) -> Counts {
+        self.local.total
+    }
+
+    /// Get last_checkout counts (local, no lock).
+    #[cfg(test)]
+    pub(crate) fn last_checkout(&self) -> Counts {
+        self.local.last_checkout
+    }
+
+    /// Clear client_id.
+    pub(crate) fn clear_client_id(&mut self) {
+        self.local.client_id = None;
+    }
+
+    /// Legacy update method - syncs local to shared.
+    pub(crate) fn update(&self) {
+        self.sync_to_shared();
+    }
+}
