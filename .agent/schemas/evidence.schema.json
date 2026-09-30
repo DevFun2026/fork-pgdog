@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devfun2026.example/schemas/evidence.schema.json",
+  "title": "Agent command evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command_id",
+    "commit",
+    "diff_sha256",
+    "exit_code",
+    "status",
+    "output_sha256",
+    "tool_version",
+    "started_at",
+    "duration_ms"
+  ],
+  "properties": {
+    "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "diff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "exit_code": {"type": ["integer", "null"]},
+    "status": {"enum": ["passed", "failed", "timeout", "incomplete"]},
+    "output_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tool_version": {"type": "string", "minLength": 1},
+    "started_at": {"type": "string", "minLength": 1},
+    "duration_ms": {"type": "integer", "minimum": 0}
+  }
+}

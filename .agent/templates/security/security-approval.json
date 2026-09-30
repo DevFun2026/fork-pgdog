@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "decision": "approve",
+  "reviewer_identity": "security-reviewer@example.com",
+  "reviewer_provider": "human-security-reviewer",
+  "author_provider": "codex",
+  "assessment": {
+    "approved_profile": "standard",
+    "assessed_profile": "standard",
+    "reviewed_scope": ["path/reviewed"],
+    "review_lenses": ["input-and-injection"],
+    "required_artifacts": ["security_review", "residual_risks"],
+    "checks_performed": ["profile-policy", "change-impact", "review-lens-selection"],
+    "unverified_areas": ["area not verified"],
+    "residual_risks": ["remaining risk"],
+    "base_sha": "40-character base commit",
+    "head_sha": "40-character head commit",
+    "diff_sha256": "64-character diff checksum"
+  },
+  "assessment_sha256": "sha256 of canonical compact sorted assessment JSON",
+  "reviewed_at": "2026-01-01T00:00:00Z",
+  "provenance": "ssh-signature-from-base-trusted-signer"
+}

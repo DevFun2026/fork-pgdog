@@ -1,0 +1,7 @@
+{
+  "conversation_id": "fixture-conversation",
+  "status": "SUCCESS",
+  "structured_output": {"verdict": "pass", "findings": []},
+  "response": "{\"verdict\":\"pass\",\"findings\":[]}",
+  "usage": {}
+}

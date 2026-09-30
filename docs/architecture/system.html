@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project AI Template</title>
+<style>:root{font-family:system-ui,sans-serif;color:#172033;background:#f6f8fb}body{max-width:1100px;margin:auto;padding:2rem}header,section,nav{background:white;border:1px solid #d8deea;border-radius:12px;padding:1rem;margin:1rem 0}nav{display:flex;gap:1rem;flex-wrap:wrap}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8deea;padding:.55rem;text-align:left;vertical-align:top}pre{white-space:pre-wrap}input{padding:.5rem;min-width:18rem}.hidden{display:none}@media print{input,script{display:none}body{max-width:none}}</style>
+</head>
+<body>
+<header><h1>Project AI Template</h1><p>Generated 2026-09-22T16:06:36+07:00 · Commit 6a44fb6c2a3f</p><label>Search <input id="search" type="search" placeholder="Filter sections"></label></header>
+<nav aria-label="Contents"><a href="#overview">Overview</a><a href="#components">Components</a><a href="#relationships">Relationships</a><a href="#data-flows">Data flows</a><a href="#environments">Environments</a><a href="#architecture-docs">Architecture</a><a href="#contracts">Contracts</a><a href="#adr-index">ADRs</a><a href="#security">Security</a><a href="#operations">Operations</a><a href="#traceability">Traceability</a><a href="#governance">Governance</a></nav>
+<main>
+<section id="overview"><h2>Purpose and scope</h2><p>A technology-agnostic, evidence-first workflow shared by Claude, Gemini via Antigravity CLI (agy), and Codex coding agents.</p><p>Declared data categories: configuration, evidence-metadata, memory-record, project-source, review-package. Sensitive categories: project-source, review-package.</p></section>
+<section id="components"><h2>Components</h2><table><thead><tr><th>ID</th><th>Name</th><th>Kind</th><th>Responsibility</th><th>Trust boundary</th></tr></thead><tbody><tr><td>canonical-core</td><td>Canonical Agent Core</td><td>policy-and-skills</td><td>Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed.</td><td>local-repository</td></tr><tr><td>ci-wrappers</td><td>CI Wrappers</td><td>automation</td><td>Invokes the same repository-owned quality gates on hosted CI without duplicating policy.</td><td>hosted-ci</td></tr><tr><td>docs-generator</td><td>Documentation Generator</td><td>generator</td><td>Validates the canonical project model and generates deterministic architecture views.</td><td>local-repository</td></tr><tr><td>project-memory</td><td>Project Memory</td><td>local-storage</td><td>Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context.</td><td>local-repository</td></tr><tr><td>provider-adapters</td><td>Provider Adapters</td><td>adapter</td><td>Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles.</td><td>provider-cli-process</td></tr><tr><td>review-engine</td><td>Cross-Review Engine</td><td>orchestrator</td><td>Builds budgeted review packages with proven generated-copy deduplication and full Git change binding; enforces reviewer independence and validates findings.</td><td>local-repository</td></tr><tr><td>runtime</td><td>Agent Runtime</td><td>python-cli</td><td>Runs configuration, evidence, workflow, documentation, review, security, and release commands.</td><td>local-repository</td></tr></tbody></table></section>
+<section id="relationships"><h2>Relationships</h2><ul><li><code>ci-wrappers</code> → <code>runtime</code> — invokes repository-owned gates</li><li><code>canonical-core</code> → <code>runtime</code> — defines policy and command contracts</li><li><code>docs-generator</code> → <code>canonical-core</code> — reads canonical model and focused documentation</li><li><code>review-engine</code> → <code>provider-adapters</code> — runs approved packages inside an OS read sandbox</li><li><code>runtime</code> → <code>project-memory</code> — validates lifecycle and privacy rules</li><li><code>runtime</code> → <code>review-engine</code> — starts fail-closed review operations</li></ul></section>
+<section id="data-flows"><h2>Data flows and trust boundaries</h2><ul><li><strong>ci-evidence</strong>: <code>ci-wrappers</code> → <code>runtime</code>; data: configuration, evidence-metadata; boundary: hosted-ci-to-repository</li><li><strong>documentation-model</strong>: <code>canonical-core</code> → <code>docs-generator</code>; data: configuration; boundary: local-repository</li><li><strong>memory-checkpoint</strong>: <code>runtime</code> → <code>project-memory</code>; data: memory-record; boundary: local-private-storage</li><li><strong>review-egress</strong>: <code>review-engine</code> → <code>provider-adapters</code>; data: project-source, review-package; boundary: local-to-provider-process</li></ul></section>
+<section id="environments"><h2>Deployment environments</h2><ul><li><strong>github-actions</strong> — GitHub Actions: Linux merge gate plus macOS and Linux runtime tests; provider secrets are restricted to protected jobs.</li><li><strong>gitlab-ci</strong> — GitLab CI: Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.</li><li><strong>local</strong> — Local developer environment: macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.</li></ul></section>
+<section id="architecture-docs"><h2>Focused architecture documents</h2><article><h3>Components</h3><pre># Component responsibilities
+
+The runtime keeps boundaries explicit: configuration never executes shell strings;
+path handling resolves symlinks inside the repository; process execution uses
+argument arrays; evidence binds checks to commit and diff identities; documentation
+renders only validated model data; and provider adapters cannot weaken canonical
+review policy.
+
+Project Memory is not a transcript recorder. It accepts structured, redacted
+checkpoints, keeps candidates private, and requires review before shared promotion.
+</pre></article><article><h3>Containers</h3><pre># Containers and major units
+
+- **Canonical core:** `.agent/` policies, skills, schemas, templates, and model.
+- **Runtime:** Python 3.11 standard-library CLI invoked through `scripts/agent`.
+- **Provider adapters:** capability detection and read-only structured review calls.
+- **Review engine:** package construction, secret/path checks, orchestration, and adjudication.
+- **Project Memory:** local SQLite candidates plus reviewed Markdown records.
+- **Documentation generator:** deterministic Markdown and whole-system HTML.
+- **CI wrappers:** GitHub Actions and GitLab CI calling identical local gates.
+</pre></article><article><h3>Data Flows</h3><pre># Data flows and trust boundaries
+
+1. Canonical configuration and project-model data flow into the local runtime.
+2. Verification commands produce redacted metadata evidence under `.agent/.runs/`.
+3. Structured checkpoints flow into private local memory, then optionally into reviewed records.
+4. Review source and evidence pass through path containment, deny rules, size limits,
+   redaction, secret detection, and human manifest approval before provider egress.
+5. Provider output returns as untrusted structured findings and is adjudicated against current source.
+
+Sensitive categories are project source and review-package content. Neither may be
+sent automatically or stored in Project Memory without the applicable gate.
+</pre></article><article><h3>Deployment</h3><pre># Deployment and operation
+
+The template is copied into a project repository rather than deployed as a service.
+`scripts/agent` runs directly from the checkout on macOS, Linux, or WSL. No daemon,
+telemetry, cloud memory, vector database, or product-environment installation is used.
+
+Hosted CI uses thin wrappers. Provider-backed jobs are separate and protected.
+Recovery relies on Git history, atomic generated-file replacement, SQLite transactions,
+and preserved review packages. A release must document migration, backup, rollback,
+unverified areas, and residual risks.
+</pre></article><article><h3>System Context</h3><pre># System context
+
+Project AI Template lives inside a product repository and provides one canonical
+workflow to human maintainers and Claude, Gemini via Antigravity CLI (`agy`), or Codex coding agents. Product
+source remains outside the template runtime and is read only when an approved
+workflow requires it.
+
+External boundaries are installed provider CLI processes and hosted CI runners.
+Provider calls receive only an explicitly previewed review package. CI jobs invoke
+repository-owned commands and must not expose provider credentials to untrusted code.
+</pre></article></section><section id="contracts"><h2>Interfaces and contracts</h2><article><h3>Contracts</h3><pre># Interfaces and contracts
+
+- `.agent/config.toml` is the versioned project configuration. Commands are argument arrays and never shell strings.
+- `.agent/project-model/*.toml` is the canonical architecture model used to generate the system views.
+- `.agent/schemas/*.json` defines provider findings, evidence, memory, and documentation-impact payloads.
+- `.agent/.runs/` contains local, commit-bound gate artifacts; it is evidence, not project source.
+- Review packages contain only the approved diff, manifest, policy, requirements, verification summary, schema, and explicit context files.
+- `.agent/memory/records/` contains reviewed, versioned memory. Private candidates and indexes remain local.
+- Memory retrieval ranks partial Unicode lexical matches with title/component weights; startup selects architecture, constraints, decisions and workflow records. Default retrieval is top-5 and bounded by 4,000 characters / 1,200 estimated tokens, excluding private and stale records.
+- Review manifests bind the full scope and full Git diff hash plus the projected diff. Only native skill copies equal in blob and mode to a changed canonical file at both endpoints are omitted. Every resume/merge recomputes proof; generated HTML and divergent copies remain visible.
+- Context profiles light/standard/deep bound retrieval and review payload estimates; see `docs/context-efficiency.md`. Estimates are UTF-8 bytes divided by three, rounded up, not provider billing. Oversized reviews fail before provider execution.
+- Planning tiers do not change merge/release gates or authorize state transitions. Content-only policy/security changes still require full impact review.
+- `workflow guide --task interface` recommends the relevant UX/UI phase under standard context; it does not load every skill or change gates. Four provider-neutral UX/UI skills extend the 21 core skills. Their local references and artifact templates link evidence, journey/state IDs, design master/page deltas, implementation and review coverage. See `docs/ux-ui.md`.
+- Adapted UX/UI documentation is pinned and attributed in `.agent/sources/UX_UI_AUDIT.md`; native projections retain local licenses. No upstream installer, binary, database, remote guideline loader or hook is part of this extension. Missing research or browser evidence stays unverified; local UX review never supplies cross-provider independence or accessibility certification.
+
+All consumers fail closed on unknown configuration, malformed payloads, stale hashes, provider identity collisions, or artifacts bound to another Git state.
+</pre></article></section><section id="adr-index"><h2>Architecture decision records</h2><article><h3>0001 Provider Neutral Agent Root</h3><pre>---
+id: ADR-0001
+title: Use .agent as the provider-neutral canonical root
+status: accepted
+date: 2026-09-21
+decision-makers:
+  - project-owner
+consulted: []
+informed:
+  - template-users
+supersedes: null
+superseded-by: null
+---
+
+# Context
+
+Claude Code, Gemini CLI, and Codex use different native instruction and skill
+locations. Maintaining separate authoritative content would create policy,
+workflow, memory, and security drift.
+
+# Decision drivers
+
+- One reviewable source of truth must govern every supported provider.
+- Native provider discovery must still work without copying policy by hand.
+- Generated files must be reproducible and drift-detectable.
+- Local memory and review runs must remain private runtime state.
+
+# Considered options
+
+## Maintain each provider root independently
+
+This is simple initially, but duplicates policy and makes cross-provider parity
+dependent on manual synchronization.
+
+## Use one provider&#x27;s native root as canonical
+
+This reduces duplication but gives one provider special authority and leaks its
+conventions into the other adapters.
+
+## Use `.agent/` as a provider-neutral canonical root
+
+Canonical policies, skills, schemas, workflows, templates, project model, and
+runtime live under `.agent/`. Generated `.agents/`, `.claude/`, `.gemini/`,
+`AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` remain thin native adapters.
+
+# Decision
+
+Use `.agent/` as the only authoritative agent-project root. Generate and verify
+provider-native adapters from it. Store private SQLite memory and review runs in
+ignored `.agent/.memory/` and `.agent/.runs/` directories.
+
+# Rationale
+
+The neutral root gives every provider the same reviewed contracts while keeping
+native discovery ergonomic. Deterministic generation and manifest checks turn
+adapter parity into a machine-verifiable invariant.
+
+# Consequences
+
+- Canonical behavior changes must start in `.agent/`.
+- Direct edits to generated adapters are rejected as drift.
+- Provider-specific capabilities stay in runtime adapters, not policy content.
+- Template users must keep `.agent/.memory/` and `.agent/.runs/` untracked.
+
+# Risks and mitigations
+
+- A generator defect could affect every provider; golden tests and adapter
+  drift checks mitigate this.
+- Provider CLI changes can break an adapter; capability probes and fail-closed
+  real-CLI smoke tests surface the incompatibility.
+- Generated roots may look authoritative; headers and `AGENTS.md` state the
+  authority order explicitly.
+
+# Follow-up
+
+- Run `./scripts/agent adapters check` and `./scripts/agent docs check` in CI.
+- Record provider versions and real-CLI limitations in acceptance evidence.
+- Supersede this ADR if the canonical root or generation strategy changes.
+
+# Evidence
+
+- `docs/superpowers/specs/2026-09-21-agent-project-template-design.md`
+- `docs/superpowers/plans/2026-09-21-agent-project-template.md`
+- `.agent/tests/test_adapters.py`
+- `.agent/tests/test_acceptance.py`
+- `docs/security/threat-model.md`
+</pre></article><article><h3>0002 Antigravity Gemini Adapter</h3><pre>---
+id: ADR-0002
+title: Execute Gemini through Antigravity CLI and share native skills
+status: accepted
+date: 2026-09-22
+decision-makers:
+  - project-owner
+consulted: []
+informed:
+  - template-users
+supersedes: null
+superseded-by: null
+---
+
+# Context
+
+The owner requested migration from Gemini CLI to `agy`. Antigravity supports
+multiple model families, a different headless output contract, shared
+`.agents/skills`, and PreInvocation/Stop lifecycle hooks.
+
+# Decision
+
+Keep the canonical `.agent/` architecture and `gemini` model-family identity.
+Change its executable/flags/parser to AGY; pin a Gemini model and reject other
+families. Share the Codex native skill tree instead of retaining a redundant
+legacy Gemini tree. Retire only unchanged manifest-owned outputs.
+
+Preserve the outer OS sandbox and exact-manifest egress approval. Plan mode is
+not read-only enforcement. Automated review uses disposable API-key settings,
+not the user&#x27;s OAuth profile/keyring. Hooks inject bounded data only at initial
+invocation and never force a new turn or persist raw transcripts.
+
+# Alternatives and consequences
+
+A bare command rename would retain incompatible flags, hooks and output
+validation. Renaming the provider family to `agy` would obscure model identity
+and require unnecessary historical-data migration. Importing the host profile
+would expand credential/plugin exposure; that remains out of scope.
+
+Interactive account login and automated API-key authentication are distinct.
+Model entitlement and authenticated execution need a real smoke test; missing
+credentials/capabilities never count as completed review. Historical Gemini CLI
+evidence remains historical. This ADR updates native layout details in ADR-0001
+without replacing its canonical-root decision.
+
+# Evidence
+
+- `docs/antigravity.md`
+- `docs/superpowers/plans/2026-09-22-antigravity-migration.md`
+- `.agent/tests/test_antigravity.py`
+- `.agent/tests/test_acceptance.py`
+</pre></article></section><section id="security"><h2>Security model and controls</h2><article><h3>Data Classification</h3><pre># Data Classification
+
+| Data | Classification | Storage | Egress rule |
+|---|---|---|---|
+| Canonical policies and public docs | Public or internal | Git | Allowed by repository policy |
+| Product source and diffs | Internal | Git and approved review package | Exact manifest approval required |
+| Canonical Project Memory | Internal | Git Markdown records | Same review-package policy as source |
+| Local candidates and run artifacts | Internal or sensitive | `.agent/.memory/`, `.agent/.runs/` | Denied by default |
+| Credentials, private blocks, personal data | Secret or sensitive | Approved external secret/data store | Never auto-injected or exported |
+
+Projects must classify their own user and business data before enabling review
+egress or memory capture.
+</pre></article><article><h3>Residual Risks</h3><pre># Residual Risks
+
+- AI-generated and AI-reviewed changes may contain defects not detected by the
+  selected evidence or reviewer.
+- Local plaintext memory and review artifacts rely on operating-system account
+  isolation and disk protections.
+- Provider CLI behavior and privacy terms are outside this repository; approval
+  confirms package contents, not provider guarantees.
+- Optional ecosystem scanners can be unavailable. They are reported as not
+  configured and become blocking when project policy marks them required.
+- The template cannot validate an adopting project&#x27;s production identity,
+  network, data-retention, backup, or disaster-recovery controls.
+
+Owners must reassess these risks when exposure, credentials, sensitive data,
+trust boundaries, dependencies, infrastructure, or recovery design changes.
+</pre></article><article><h3>Security Controls</h3><pre># Security Controls
+
+The runtime provides immutable configuration, argument-array process execution,
+path containment, symlink rejection, atomic owner-only writes, output limits,
+secret and private-block redaction, manifest-bound review packages, structured
+provider output validation, evidence checksums, progressive gates, and reviewed
+memory promotion.
+
+Controls are verified by repository tests and gate evidence. OWASP ASVS, SAMM,
+and threat-modeling materials are requirement references only; this template
+does not claim certification or full coverage of any framework.
+
+## Reference mapping
+
+| Template requirement | Reference baseline | Use |
+|---|---|---|
+| Technical application controls | OWASP ASVS 5.0.0 | Select applicable, version-qualified requirement IDs for the adopting project |
+| Secure lifecycle and governance | OWASP SAMM 2.0 | Assess and improve practices; not a release certificate |
+| Assets, actors, flows, boundaries, threats, mitigations, review | OWASP Threat Modeling Cheat Sheet, reviewed 2026-09-21 | Method guidance; project evidence remains authoritative |
+
+References: &lt;https://owasp.org/projects/asvs&gt;,
+&lt;https://owaspsamm.org/model/&gt;, and
+&lt;https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html&gt;.
+</pre></article><article><h3>Threat Model</h3><pre># Threat Model
+
+## Scope
+
+This model covers the template runtime, canonical policy and skills, local
+Project Memory, generated documentation, review packages, provider CLI
+processes, and CI wrappers. Product repositories created from the template must
+replace or extend this model for their own assets and deployment.
+
+## Assets and actors
+
+Assets include repository source, Git history, configuration, provider prompts,
+review evidence, canonical memory, private local memory, credentials available
+to the host, and release artifacts. Actors include the project owner, coding
+agents, independent reviewer providers, local provider CLIs, hosted CI runners,
+dependencies, and an attacker able to contribute untrusted repository content.
+
+## Trust boundaries and data flows
+
+- The repository boundary separates versioned policy from the host filesystem.
+- `.agent/.memory/` and `.agent/.runs/` are private local plaintext stores.
+- Review packages cross from the local repository to a selected provider CLI
+  only after a manifest preview and exact-hash approval.
+- Provider output crosses back as untrusted structured data and is validated.
+- CI runners execute the same repository runtime in a separate hosted boundary.
+
+## Threats and controls
+
+- Prompt injection in source or memory: content is treated as data; memory
+  cannot override policy; review providers receive a fixed policy.
+- Command injection: commands are argument arrays executed with `shell=False`.
+- Path traversal and symlink escape: repository containment is checked before
+  reads or writes.
+- Secret leakage: deny rules, bounded packages, redaction, private blocks, and
+  manifest approval run before provider invocation.
+- Review-package tampering: the manifest binds diff, context, requirements,
+  verification, policy, and schema; checksums are revalidated on resume.
+- Hidden generated changes: deduplication compares regular-file modes and Git
+  blobs at both base/head, only against a changed canonical source. Full scope
+  and full-diff hash remain bound and projection is recomputed before execution
+  and merge. Divergence, unsupported file modes, and unproven copies are reviewed.
+- Context exhaustion: bounded ranked memory and estimated-token review caps
+  reduce payloads; review overflow blocks rather than silently omitting changes.
+  Token estimates exclude provider-internal prompts, repeated reads and output.
+- Untrusted memory import: imported records remain candidates until reviewed.
+- Supply-chain compromise: license, dependency, and provenance checks are
+  release inputs, while unsupported checks remain explicitly unverified.
+
+## Residual risks
+
+### Antigravity migration delta
+
+AGY can select Claude as well as Gemini: the Gemini adapter pins/validates a
+Gemini model to preserve cross-provider identity. Its JSON parser requires a
+successful terminal status and schema-validated findings, rejecting conflicting
+response fields. Plan mode is advisory; the OS sandbox remains the read/write
+boundary. A canonicalized disposable HOME fixes macOS temporary-path aliases
+without granting new host directories. Only minimal API-key-mode settings are
+created there; no host profile, plugin config or OAuth token store is imported.
+The provider environment is reduced to `GEMINI_API_KEY` plus common runtime
+variables. API-key backend/model compatibility still needs live verification.
+
+Native migration deletes only unchanged manifest-owned retired outputs and
+blocks path escapes/symlinks. AGY hooks consume only bounded invocation metadata,
+never follow transcript paths, and inject memory as data. Stop does not restart
+the agent or persist learning without review. Hook UI visibility is best effort.
+
+Provider and scanner defects can miss vulnerabilities. Local plaintext depends
+on host permissions and full-disk security. A compromised maintainer or CI
+credential can bypass repository process. Real product runtime and deployment
+remain outside this template-only assessment.
+</pre></article></section><section id="operations"><h2>Operations, observability, and recovery</h2><article><h3>Observability</h3><pre># Observability
+
+The template records deterministic command evidence, review manifests and checksums, provider audit events, documentation-impact decisions, security scope, adjudication dispositions, and release-gate results.
+
+Operators should monitor:
+
+- command exit codes, timeouts, tool versions, commit IDs, and worktree diff hashes;
+- provider capability, authentication, review status, reviewer independence, and package checksum;
+- memory health, stale records, rejected private content, and index rebuilds;
+- documentation drift and architecture-model validation;
+- required scanner status, unverified areas, and residual risks.
+
+Local `.agent/.runs/` artifacts may be discarded and regenerated. Versioned source, canonical memory, architecture documents, and ADRs are durable project history.
+</pre></article><article><h3>Runbooks</h3><pre># Operations and recovery runbooks
+
+## Start or resume work
+
+1. Run `./scripts/agent doctor --json --providers`.
+2. Run `./scripts/agent memory bootstrap --query &quot;current task&quot;`.
+3. Inspect `./scripts/agent workflow status --json` and the current Git status.
+
+## Review recovery
+
+If a provider times out or is unauthenticated, preserve the review package, fix the provider session, then rerun with the same package path and approved manifest checksum. Never convert a provider failure into approval.
+
+## Documentation recovery
+
+Run `./scripts/agent docs build`, inspect the generated summary and HTML, then run `./scripts/agent docs check` after committing the intended change.
+
+## Memory recovery
+
+Use `memory doctor` and `memory rebuild-index`. Canonical Markdown records remain the recovery source; SQLite is a disposable index. Export/import is checksum-validated and transactional.
+
+## Release rollback
+
+Stop the release when any gate is blocked or incomplete. Preserve evidence, restore the last known-good release reference, follow project-specific data rollback instructions, and record residual risk before retrying.
+</pre></article></section><section id="traceability"><h2>Requirement traceability</h2><article><h3>Traceability</h3><pre># Requirement traceability
+
+| Requirement | Canonical implementation | Primary evidence |
+|---|---|---|
+| Provider-neutral workflow | `.agent/workflows/`, generated provider adapters | adapter drift check |
+| Independent cross-provider review | review package, provider adapters, orchestrator | manifest-bound review and adjudication artifacts |
+| Architecture documentation | project model and documentation generator | deterministic `system-summary.md` and `system.html` |
+| Security review | security profile, threat model, scanner status | scope-bound security assessment and release gate |
+| Progressive project memory | private checkpoint, reviewed promotion, canonical records | memory tests, checksums, stale-record filtering |
+| Project starter lifecycle | init, workflow state, quick/merge/release gates | clean-fixture acceptance and CI workflows |
+| UX-01–02, task-routed UX/UI and traceable artifacts | four `.agent/skills/` UX/UI contracts, references and assets; interface guide | routing tests and technique trials in `docs/reviews/ux-ui-skills.md` |
+| UX-03–05, source boundaries and portable delivery | `.agent/sources/UX_UI_AUDIT.md`, local licenses, generated native resources | source/license metadata checks, adapter equality tests and scoped trial limitations |
+
+The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.
+</pre></article></section>
+<section id="governance"><h2>Decisions, controls, and traceability</h2><p>See <code>docs/decisions/</code> for ADRs, <code>docs/security/</code> for controls and residual risks, and <code>.agent/.runs/</code> for commit-bound evidence. Quality gates and recovery procedures are defined by the canonical workflow.</p></section>
+</main>
+<script>const q=document.getElementById('search');q.addEventListener('input',()=>{const v=q.value.toLowerCase();document.querySelectorAll('main section').forEach(s=>s.classList.toggle('hidden',v&&!s.textContent.toLowerCase().includes(v)));});</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[runtime]
+python = ">=3.11"
+platforms = ["macos", "linux", "wsl"]
+
+[providers.claude]
+executable = "claude"
+capabilities = ["structured-output", "read-only-review"]
+
+[providers.gemini]
+executable = "gemini"
+capabilities = ["structured-output", "read-only-review"]
+
+[providers.codex]
+executable = "codex"
+capabilities = ["structured-output", "read-only-review"]

@@ -1,0 +1,8 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "structured_output": {
+    "verdict": "pass",
+    "findings": []
+  }
+}

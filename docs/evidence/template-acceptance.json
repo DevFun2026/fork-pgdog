@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-22T06:57:40Z",
+  "branch": "feat/agent-template-v1",
+  "tested_commit": "cb49ad39bb19c8ef40d768b8c0a7084fc0734941",
+  "attestation_commit_policy": "The commit containing this evidence may differ from tested_commit only in docs/evidence/template-acceptance.json and docs/reviews/template-final-review.md.",
+  "status": "locally_verified_external_evidence_pending",
+  "local_verification": {
+    "deterministic_suite": {
+      "expected_test_count": 138,
+      "status": "passed"
+    },
+    "clean_export_smoke": {
+      "status": "passed",
+      "head_sha": "cb49ad39bb19c8ef40d768b8c0a7084fc0734941",
+      "inner_passed": 137,
+      "inner_skipped": 1,
+      "skip_reason": "recursive clean-export smoke is intentionally disabled inside the clean archive"
+    },
+    "adapter_drift": "passed",
+    "architecture_drift": "passed",
+    "memory_doctor": {
+      "status": "passed",
+      "search_mode": "fts5",
+      "local_directory_mode": "0o700",
+      "database_mode": "0o600"
+    },
+    "license_audit": {
+      "status": "passed",
+      "source_count": 8
+    },
+    "mock_cross_review": {
+      "status": "passed",
+      "directions": [
+        "claude-to-gemini",
+        "claude-to-codex",
+        "gemini-to-claude",
+        "gemini-to-codex",
+        "codex-to-claude",
+        "codex-to-gemini"
+      ]
+    }
+  },
+  "real_cli_smoke": {
+    "current_status": "sandboxed_capability_probes_passed_review_execution_pending",
+    "historical_snapshot_commit": "38be6112b196c01169b897785ebcc3a5d5ccde74",
+    "data_boundary": "Generated public fixture only; repository source was not sent.",
+    "claude": {
+      "version": "2.1.278 (Claude Code)",
+      "structured_output_capability": true,
+      "read_only_capability": true,
+      "status": "current_sandboxed_capability_verified_review_unverified",
+      "exit_code": 1,
+      "schema_valid": false,
+      "limitation": "The sandboxed version/help probe passed; no authenticated review execution was attempted."
+    },
+    "gemini": {
+      "version": "0.46.0 (historical; executable absent during current clean smoke)",
+      "structured_output_capability": false,
+      "read_only_capability": false,
+      "status": "historical_unverified_currently_unavailable",
+      "exit_code": 41,
+      "schema_valid": false,
+      "limitation": "No Gemini authentication method is configured; the untrusted fixture also caused plan approval mode to fall back to default while sandboxing remained enabled."
+    },
+    "codex": {
+      "version": "codex-cli 0.155.1",
+      "structured_output_capability": true,
+      "read_only_capability": true,
+      "status": "current_sandboxed_capability_verified_historical_review_pass",
+      "exit_code": 0,
+      "schema_valid": true,
+      "verdict": "pass",
+      "manifest_sha256": "9ad85ff7e160370a2568e4b0e2afe2099d2fd6807f462528dfcd3a03aa955a92",
+      "limitation": "The sandboxed version/help probe passed, but the schema-valid review result predates the current OS sandbox and is not current execution evidence."
+    }
+  },
+  "acceptance_summary": {
+    "verified": 14,
+    "partially_verified": 5,
+    "blocked": 0,
+    "unverified": 1,
+    "partially_verified_criteria": [1, 8, 10, 12, 20],
+    "unverified_criteria": [13]
+  },
+  "limitations": [
+    "The GitHub Actions macOS/Linux matrix has not yet run for this branch; only macOS local execution is confirmed.",
+    "The GitLab pipeline contract is locally tested but has not run on a hosted GitLab runner.",
+    "Sandboxed capability probes currently pass for installed Claude and Codex CLIs, but no authenticated real provider review has been rerun after OS-sandbox hardening; historical review observations remain non-current context.",
+    "Linux Bubblewrap argument construction and end-to-end acceptance are tested, but an actual hosted Linux run remains pending until the branch CI executes.",
+    "Release-gate behavior is tested, but no real project release with independent security approval and configured scanners has been certified.",
+    "The license audit validates the declared source-provenance table; it is not an ecosystem dependency inventory."
+  ]
+}

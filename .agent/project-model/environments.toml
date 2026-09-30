@@ -1,0 +1,14 @@
+[[environments]]
+id = "github-actions"
+name = "GitHub Actions"
+description = "Linux merge gate plus macOS and Linux runtime tests; provider secrets are restricted to protected jobs."
+
+[[environments]]
+id = "gitlab-ci"
+name = "GitLab CI"
+description = "Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence."
+
+[[environments]]
+id = "local"
+name = "Local developer environment"
+description = "macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs."

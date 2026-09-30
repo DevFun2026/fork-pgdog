@@ -1,0 +1,75 @@
+name: Agent quality
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # untrusted-job:start
+  runtime-tests:
+    name: Runtime tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - run: ./scripts/agent doctor --ci
+      - run: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.agent/runtime python3 -m unittest discover -s .agent/tests -v
+      - run: ./scripts/agent adapters check
+      - run: ./scripts/agent docs check
+      - run: ./scripts/agent skills check
+      - run: ./scripts/agent licenses audit --json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: redacted-evidence-${{ matrix.os }}
+          path: .agent/.runs/evidence/
+          if-no-files-found: ignore
+          retention-days: 7
+  # untrusted-job:end
+
+  protected-merge-gate:
+    name: Protected merge gate
+    if: github.event_name == 'workflow_dispatch'
+    environment: protected-review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap
+      - name: Materialize trusted default-branch anchor
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$DEFAULT_BRANCH"
+      # Restore approved review evidence before this contract in an adopting project.
+      # agent-merge-contract:start
+      - run: ./scripts/agent doctor --ci
+      - run: ./scripts/agent verify merge
+      - run: ./scripts/agent docs check
+      # agent-merge-contract:end
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: protected-redacted-evidence
+          path: .agent/.runs/evidence/
+          if-no-files-found: ignore
+          retention-days: 7

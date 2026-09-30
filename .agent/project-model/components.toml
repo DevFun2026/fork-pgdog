@@ -1,0 +1,53 @@
+title = "Project AI Template"
+purpose = "A technology-agnostic, evidence-first workflow shared by Claude, Gemini via Antigravity CLI (agy), and Codex coding agents."
+data_categories = ["configuration", "evidence-metadata", "memory-record", "project-source", "review-package"]
+sensitive_categories = ["project-source", "review-package"]
+
+[[components]]
+id = "canonical-core"
+name = "Canonical Agent Core"
+kind = "policy-and-skills"
+responsibility = "Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed."
+trust_boundary = "local-repository"
+
+[[components]]
+id = "ci-wrappers"
+name = "CI Wrappers"
+kind = "automation"
+responsibility = "Invokes the same repository-owned quality gates on hosted CI without duplicating policy."
+trust_boundary = "hosted-ci"
+
+[[components]]
+id = "docs-generator"
+name = "Documentation Generator"
+kind = "generator"
+responsibility = "Validates the canonical project model and generates deterministic architecture views."
+trust_boundary = "local-repository"
+
+[[components]]
+id = "project-memory"
+name = "Project Memory"
+kind = "local-storage"
+responsibility = "Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context."
+trust_boundary = "local-repository"
+
+[[components]]
+id = "provider-adapters"
+name = "Provider Adapters"
+kind = "adapter"
+responsibility = "Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles."
+trust_boundary = "provider-cli-process"
+
+[[components]]
+id = "review-engine"
+name = "Cross-Review Engine"
+kind = "orchestrator"
+responsibility = "Builds budgeted review packages with proven generated-copy deduplication and full Git change binding; enforces reviewer independence and validates findings."
+trust_boundary = "local-repository"
+
+[[components]]
+id = "runtime"
+name = "Agent Runtime"
+kind = "python-cli"
+responsibility = "Runs configuration, evidence, workflow, documentation, review, security, and release commands."
+trust_boundary = "local-repository"

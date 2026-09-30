@@ -1,0 +1,35 @@
+[[relationships]]
+id = "ci-invokes-runtime"
+source = "ci-wrappers"
+target = "runtime"
+label = "invokes repository-owned gates"
+
+[[relationships]]
+id = "core-configures-runtime"
+source = "canonical-core"
+target = "runtime"
+label = "defines policy and command contracts"
+
+[[relationships]]
+id = "docs-read-model"
+source = "docs-generator"
+target = "canonical-core"
+label = "reads canonical model and focused documentation"
+
+[[relationships]]
+id = "runtime-controls-memory"
+source = "runtime"
+target = "project-memory"
+label = "validates lifecycle and privacy rules"
+
+[[relationships]]
+id = "runtime-controls-review"
+source = "runtime"
+target = "review-engine"
+label = "starts fail-closed review operations"
+
+[[relationships]]
+id = "review-calls-adapters"
+source = "review-engine"
+target = "provider-adapters"
+label = "runs approved packages inside an OS read sandbox"

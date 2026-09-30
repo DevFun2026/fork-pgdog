@@ -1,0 +1,41 @@
+states = [
+  "DISCOVERED",
+  "DESIGNED",
+  "PLAN_APPROVED",
+  "IMPLEMENTING",
+  "LOCALLY_VERIFIED",
+  "CODE_REVIEWED",
+  "CROSS_REVIEWED",
+  "SECURITY_CLEARED",
+  "RELEASE_READY"
+]
+
+[gates.quick]
+commands = ["format_check", "lint", "test_changed"]
+
+[gates.merge]
+commands = ["lint", "test_full", "build"]
+artifacts = ["documentation-impact", "independent-code-review", "cross-review"]
+
+[gates.release]
+commands = ["lint", "test_full", "build", "smoke"]
+artifacts = [
+  "security-clearance",
+  "threat-model-delta",
+  "release-notes",
+  "migration-rollback",
+  "residual-risks"
+]
+
+# Guidance controls planning/context effort; it never changes the gates above.
+[planning.light]
+task = "small content-only change"
+plan = "inline scope and checks"
+
+[planning.standard]
+task = "behavior change"
+plan = "focused plan and regression tests; versioned for multi-step work"
+
+[planning.deep]
+task = "architecture, security, governance, dependency or deployment change"
+plan = "versioned spec/plan and impact review"

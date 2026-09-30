@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devfun2026.example/schemas/memory-export.schema.json",
+  "title": "Redacted Project Memory export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "manifest", "records"],
+  "properties": {
+    "version": {"const": 1},
+    "manifest": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sha256"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^MEM-[A-Z0-9-]+$"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sha256", "record"],
+        "properties": {
+          "id": {"type": "string"},
+          "sha256": {"type": "string"},
+          "record": {"type": "object"}
+        }
+      }
+    }
+  }
+}

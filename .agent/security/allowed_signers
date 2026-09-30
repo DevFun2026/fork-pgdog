@@ -1,0 +1,2 @@
+# Add trusted SSH public keys in an isolated governance change before using
+# signed security clearance. Format: identity namespaces="agent-security-approval" ssh-ed25519 KEY

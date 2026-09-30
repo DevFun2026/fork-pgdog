@@ -1,0 +1,10 @@
+{
+  "decisions": [
+    {
+      "id": "F-001",
+      "disposition": "needs-evidence",
+      "evidence_reference": "docs/evidence/F-001.md",
+      "reason": "Reproduction evidence is not yet sufficient."
+    }
+  ]
+}

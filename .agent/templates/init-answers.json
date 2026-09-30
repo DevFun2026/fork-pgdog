@@ -1,0 +1,48 @@
+{
+  "project": {
+    "name": "replace-me",
+    "security_profile": "standard"
+  },
+  "commands": {
+    "format_check": [],
+    "lint": [],
+    "test_changed": [],
+    "test_full": [],
+    "build": [],
+    "smoke": []
+  },
+  "review": {
+    "enabled": true,
+    "require_independent_provider": true,
+    "max_package_bytes": 500000,
+    "max_estimated_tokens": 64000,
+    "provider_order": ["claude", "codex", "gemini"],
+    "provider_commands": {
+      "claude": ["claude"],
+      "codex": ["codex"],
+      "gemini": ["agy"]
+    }
+  },
+  "security": {
+    "required_scanners": ["dependency", "license", "sast"],
+    "scanner_commands": {
+      "container": [],
+      "dependency": [],
+      "iac": [],
+      "license": [],
+      "sast": []
+    },
+    "scanner_version_commands": {
+      "container": [], "dependency": [], "iac": [], "license": [], "sast": []
+    },
+    "scanner_support_paths": {
+      "container": [], "dependency": [], "iac": [], "license": [], "sast": []
+    }
+  },
+  "memory": {
+    "enabled": true,
+    "startup_char_budget": 4000,
+    "startup_estimated_token_budget": 1200,
+    "local_retention_days": 90
+  }
+}

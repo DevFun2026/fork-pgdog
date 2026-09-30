@@ -1,0 +1,27 @@
+[[data_flows]]
+id = "ci-evidence"
+source = "ci-wrappers"
+target = "runtime"
+data_categories = ["configuration", "evidence-metadata"]
+trust_boundary = "hosted-ci-to-repository"
+
+[[data_flows]]
+id = "documentation-model"
+source = "canonical-core"
+target = "docs-generator"
+data_categories = ["configuration"]
+trust_boundary = "local-repository"
+
+[[data_flows]]
+id = "memory-checkpoint"
+source = "runtime"
+target = "project-memory"
+data_categories = ["memory-record"]
+trust_boundary = "local-private-storage"
+
+[[data_flows]]
+id = "review-egress"
+source = "review-engine"
+target = "provider-adapters"
+data_categories = ["project-source", "review-package"]
+trust_boundary = "local-to-provider-process"

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devfun2026.example/schemas/review-findings.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": {"enum": ["pass", "fail"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "category", "file", "line", "evidence", "reasoning", "remediation", "confidence"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+          "category": {"enum": ["architecture", "correctness", "documentation", "maintainability", "performance", "reliability", "security", "testing"]},
+          "file": {"type": ["string", "null"]},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "evidence": {"type": "string", "minLength": 1},
+          "reasoning": {"type": "string", "minLength": 1},
+          "remediation": {"type": "string", "minLength": 1},
+          "confidence": {"enum": ["low", "medium", "high"]}
+        }
+      }
+    }
+  }
+}

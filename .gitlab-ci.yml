@@ -1,0 +1,49 @@
+stages:
+  - test
+  - review
+
+default:
+  image: python:3.11
+
+runtime-tests:
+  stage: test
+  parallel:
+    matrix:
+      - PYTHON_MINOR: ["3.11"]
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends bubblewrap
+    - ./scripts/agent doctor --ci
+    - PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.agent/runtime python3 -m unittest discover -s .agent/tests -v
+    - ./scripts/agent adapters check
+    - ./scripts/agent docs check
+    - ./scripts/agent skills check
+    - ./scripts/agent licenses audit --json
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - .agent/.runs/evidence/
+
+protected-merge-gate:
+  stage: review
+  when: manual
+  allow_failure: false
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends bubblewrap
+    - git fetch --no-tags origin "$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH"
+    - git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$CI_DEFAULT_BRANCH"
+    # Restore approved review evidence before this contract in an adopting project.
+    # agent-merge-contract:start
+    - ./scripts/agent doctor --ci
+    - ./scripts/agent verify merge
+    - ./scripts/agent docs check
+    # agent-merge-contract:end
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - .agent/.runs/evidence/

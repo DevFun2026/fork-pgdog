@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "agent requires Python 3.11 or newer" >&2
+  exit 5
+fi
+exec python3 "$ROOT/.agent/runtime/agent_cli/__main__.py" "$@"

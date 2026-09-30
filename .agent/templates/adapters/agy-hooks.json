@@ -1,0 +1,18 @@
+{
+  "project-memory": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "./scripts/agent memory hook-start --provider gemini",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "./scripts/agent memory hook-reminder --provider gemini",
+        "timeout": 5
+      }
+    ]
+  }
+}
