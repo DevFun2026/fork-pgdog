@@ -56,7 +56,7 @@ trust_boundary = "local-repository"
 id = "pgdog-proxy"
 name = "PgDog Proxy"
 kind = "rust-service"
-responsibility = "Implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import."
+responsibility = "Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import."
 trust_boundary = "proxy-process"
 
 [[components]]

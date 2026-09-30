@@ -1,22 +1,19 @@
 name: fmt
 on:
-  push:
-    branches:
-      - main
-      - main-ent
-    paths:
-      - ".github/workflows/fmt.yml"
-      - "**/*.rs"
-      - "integration/**"
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - ".github/workflows/fmt.yml"
-      - "**/*.rs"
-      - "integration/**"
+      - "applications/pgdog/**/*.rs"
+      - "applications/pgdog/integration/**"
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   fmt:
@@ -29,7 +26,7 @@ jobs:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 5
-          command: bash integration/ci/install-deps.sh
+          command: cd applications/pgdog && bash integration/ci/install-deps.sh
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy

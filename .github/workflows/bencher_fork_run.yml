@@ -10,8 +10,13 @@
 # This is the documented 2-step workflow that Bencher mentions in their docs.
 name: bencher-fork-run
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   image:
@@ -25,6 +30,7 @@ jobs:
         run: bash integration/ci/install-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: applications/pgdog -> target
           prefix-key: build-v1
       - name: Build
         run: cargo build --release --bin pgdog
@@ -37,7 +43,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: image
-          path: image.tar.gz
+          path: applications/pgdog/image.tar.gz
 
       # Save which PR requested the run, so the workflow running on main knows what PR to comment on
       - uses: actions/upload-artifact@v4

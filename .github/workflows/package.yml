@@ -1,13 +1,5 @@
 name: package
 on:
-  push:
-    branches: ["main", "main-ent"]
-    paths:
-      - ".github/workflows/package.yml"
-      - "**/*.rs"
-      - "**/Cargo.toml"
-  release:
-    types: [published]
   workflow_dispatch:
 
 env:
@@ -63,6 +55,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: applications/pgdog/Dockerfile
           # Only tag by registry + image name to to push by digest
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
           labels: ${{ steps.meta.outputs.labels }}

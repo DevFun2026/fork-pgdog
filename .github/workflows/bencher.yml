@@ -5,15 +5,16 @@
 
 name: bencher
 on:
-  push:
-    branches:
-      - main
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 env:
   IMAGE: registry.bencher.dev/pgdog:${{ github.sha }}
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   image:
@@ -27,6 +28,7 @@ jobs:
         run: bash integration/ci/install-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: applications/pgdog -> target
           prefix-key: build-v1
       - name: Build
         run: cargo build --release --bin pgdog

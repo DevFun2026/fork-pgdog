@@ -1,7 +1,11 @@
-target*
-docs
-web
+applications/pgdog/target*
+applications/pgdog/docs
+applications/pgdog/web
 .github
+.agent
+.agents
+.claude
+docs
 .ropeproject
-pgdog/tests/*
-venv*
+applications/pgdog/pgdog/tests/*
+**/venv*

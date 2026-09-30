@@ -1,12 +1,14 @@
 name: release-binaries
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
         description: Release tag to attach binaries to (e.g. v0.1.44)
         required: true
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   build:
@@ -14,8 +16,8 @@ jobs:
     permissions:
       contents: write
     env:
-      # release event supplies the tag; manual runs use the typed input
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      # Manual runs use the selected release tag
+      TAG: ${{ inputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +32,8 @@ jobs:
             runner: macos-26
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
 
       # Mirrors docker/Dockerfile.base-builder: cmake + clang for aws-lc-sys,
       # libssl-dev for openssl-sys, mold is the linker pinned in .cargo/config.toml.

@@ -1,13 +1,13 @@
 # PgDog fork and verification workflow
 
-Generated: 2026-09-30T10:33:36+07:00 | Commit: 7d551d9aeb86
+Generated: 2026-09-30T14:33:07+07:00 | Commit: e394507e6774
 
 ## Components
 
 - **canonical-core** — Canonical Agent Core (`policy-and-skills`): Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed. [boundary: local-repository]
 - **ci-wrappers** — CI Wrappers (`automation`): Invokes the same repository-owned quality gates on hosted CI without duplicating policy. [boundary: hosted-ci]
 - **docs-generator** — Documentation Generator (`generator`): Validates the canonical project model and generates deterministic architecture views. [boundary: local-repository]
-- **pgdog-proxy** — PgDog Proxy (`rust-service`): Implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import. [boundary: proxy-process]
+- **pgdog-proxy** — PgDog Proxy (`rust-service`): Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import. [boundary: proxy-process]
 - **postgresql** — PostgreSQL (`database`): Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup. [boundary: database-process]
 - **project-memory** — Project Memory (`local-storage`): Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context. [boundary: local-repository]
 - **provider-adapters** — Provider Adapters (`adapter`): Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles. [boundary: provider-cli-process]
@@ -39,6 +39,6 @@ Generated: 2026-09-30T10:33:36+07:00 | Commit: 7d551d9aeb86
 
 ## Environments
 
-- **github-actions** — GitHub Actions: GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.
-- **gitlab-ci** — GitLab CI: Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.
+- **github-actions** — GitHub Actions: Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.
+- **gitlab-ci** — GitLab CI: Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.
 - **local** — Local developer environment: macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.

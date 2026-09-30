@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run a command from the PgDog application workspace.
+set -euo pipefail
+cd "$(dirname "$0")/../applications/pgdog"
+exec "$@"

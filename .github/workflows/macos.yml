@@ -1,19 +1,16 @@
 name: macos
 on:
-  push:
-    branches:
-      - main
-      - main-ent
-    paths:
-      - ".github/workflows/macos.yml"
-      - "**/*.rs"
-      - "integration/**"
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - ".github/workflows/macos.yml"
-      - "**/*.rs"
-      - "integration/**"
+      - "applications/pgdog/**/*.rs"
+      - "applications/pgdog/integration/**"
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   macos:
@@ -21,5 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: applications/pgdog -> target
       - name: Build
         run: cargo build

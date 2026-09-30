@@ -1,14 +1,19 @@
 name: jsonschema
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - ".github/workflows/jsonschema.yml"
-      - 'pgdog-config/src/**/*.rs'
-      - 'pgdog-config/Cargo.toml'
-      - 'scripts/jsonschema/src/**/*.rs'
-      - 'scripts/jsonschema/Cargo.toml'
+      - 'applications/pgdog/pgdog-config/src/**/*.rs'
+      - 'applications/pgdog/pgdog-config/Cargo.toml'
+      - 'applications/pgdog/scripts/jsonschema/src/**/*.rs'
+      - 'applications/pgdog/scripts/jsonschema/Cargo.toml'
+
+defaults:
+  run:
+    working-directory: applications/pgdog
 
 jobs:
   check-schema:

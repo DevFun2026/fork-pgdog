@@ -3,12 +3,12 @@ name = "fork-pgdog"
 security_profile = "standard"
 
 [commands]
-format_check = ["cargo", "fmt", "--all", "--", "--check"]
-lint = ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"]
-test_changed = ["cargo", "test", "--locked", "-p", "pgdog-config", "-p", "pgdog-vector", "-p", "pgdog-stats", "-p", "pgdog-postgres-types"]
+format_check = ["bash", "scripts/pgdog", "cargo", "fmt", "--all", "--", "--check"]
+lint = ["bash", "scripts/pgdog", "cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"]
+test_changed = ["bash", "scripts/pgdog", "cargo", "test", "--locked", "-p", "pgdog-config", "-p", "pgdog-vector", "-p", "pgdog-stats", "-p", "pgdog-postgres-types"]
 test_full = ["bash", "scripts/verify-pgdog", "full"]
-build = ["cargo", "build", "--locked", "--workspace"]
-smoke = ["target/debug/pgdog", "--version"]
+build = ["bash", "scripts/pgdog", "cargo", "build", "--locked", "--workspace"]
+smoke = ["applications/pgdog/target/debug/pgdog", "--version"]
 
 [review]
 enabled = true
@@ -30,9 +30,9 @@ required_scanners = ["dependency", "license", "sast"]
 
 [security.scanner_commands]
 container = []
-dependency = ["cargo", "deny", "--locked", "check", "advisories"]
+dependency = ["bash", "scripts/pgdog", "cargo", "deny", "--locked", "check", "advisories"]
 iac = []
-license = ["cargo", "deny", "--locked", "check", "licenses"]
+license = ["bash", "scripts/pgdog", "cargo", "deny", "--locked", "check", "licenses"]
 sast = ["semgrep", "scan", "--json", "--config", "p/rust", "--error", "--strict", "--metrics=off", "--disable-version-check", "--exclude", "target", "--exclude", ".agent", "--exclude", "docs/import", "."]
 
 [security.scanner_version_commands]
@@ -44,9 +44,9 @@ sast = ["semgrep", "--version"]
 
 [security.scanner_support_paths]
 container = []
-dependency = ["deny.toml"]
+dependency = ["applications/pgdog/deny.toml"]
 iac = []
-license = ["deny.toml"]
+license = ["applications/pgdog/deny.toml"]
 sast = []
 
 [memory]

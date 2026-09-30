@@ -1,10 +1,6 @@
 name: package-base
 on:
   workflow_dispatch:
-  schedule:
-    # Weekly: Mondays at 06:00 UTC.
-    - cron: '0 6 * * 1'
-
 env:
   REGISTRY: ghcr.io
 jobs:
@@ -15,19 +11,19 @@ jobs:
       matrix:
         include:
           - suffix: base-builder
-            dockerfile: docker/Dockerfile.base-builder
+            dockerfile: applications/pgdog/docker/Dockerfile.base-builder
             platform: linux/amd64
             runner: blacksmith-4vcpu-ubuntu-2404
           - suffix: base-builder
-            dockerfile: docker/Dockerfile.base-builder
+            dockerfile: applications/pgdog/docker/Dockerfile.base-builder
             platform: linux/arm64
             runner: blacksmith-4vcpu-ubuntu-2404-arm
           - suffix: base-runtime
-            dockerfile: docker/Dockerfile.base-runtime
+            dockerfile: applications/pgdog/docker/Dockerfile.base-runtime
             platform: linux/amd64
             runner: blacksmith-4vcpu-ubuntu-2404
           - suffix: base-runtime
-            dockerfile: docker/Dockerfile.base-runtime
+            dockerfile: applications/pgdog/docker/Dockerfile.base-runtime
             platform: linux/arm64
             runner: blacksmith-4vcpu-ubuntu-2404-arm
     permissions:

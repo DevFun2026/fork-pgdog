@@ -33,21 +33,21 @@ coverage:
 flags:
   unit:
     paths:
-      - pgdog
+      - applications/pgdog/pgdog
     carryforward: true
   integration:
     paths:
-      - pgdog
-      - pgdog-plugin
-      - pgdog-macros
-      - pgdog-plugin-build
-      - plugins
+      - applications/pgdog/pgdog
+      - applications/pgdog/pgdog-plugin
+      - applications/pgdog/pgdog-macros
+      - applications/pgdog/pgdog-plugin-build
+      - applications/pgdog/plugins
     carryforward: false
 
 ignore:
   - "**/tests/**"
   - "**/examples/**"
-  - integration/python/venv
+  - applications/pgdog/integration/python/venv
 
 fixes:
   - "/home/runner/_work/pgdog/pgdog/::"
