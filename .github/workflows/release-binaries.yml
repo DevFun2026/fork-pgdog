@@ -6,6 +6,10 @@ on:
         description: Release tag to attach binaries to (e.g. v0.1.44)
         required: true
 
+defaults:
+  run:
+    working-directory: applications/pgdog
+
 jobs:
   build:
     runs-on: ${{ matrix.runner }}

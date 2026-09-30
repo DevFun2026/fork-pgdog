@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    working-directory: applications/pgdog
+
 jobs:
   tests:
     runs-on: ubuntu-24.04
@@ -18,9 +22,10 @@ jobs:
           timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 5
-          command: bash integration/ci/install-deps.sh
+          command: cd applications/pgdog && bash integration/ci/install-deps.sh
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: applications/pgdog -> target
           prefix-key: "v1" # Change this when updating tooling
       - name: Setup PostgreSQL
         run: bash integration/ci/setup.sh --with-toxi
@@ -38,6 +43,6 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: lcov.info
+          files: applications/pgdog/lcov.info
           flags: unit
           fail_ci_if_error: true

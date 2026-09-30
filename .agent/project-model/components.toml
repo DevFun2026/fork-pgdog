@@ -42,7 +42,7 @@ trust_boundary = "provider-cli-process"
 id = "review-engine"
 name = "Cross-Review Engine"
 kind = "orchestrator"
-responsibility = "Builds budgeted review packages with proven generated-copy deduplication and full Git change binding; enforces reviewer independence and validates findings."
+responsibility = "Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings."
 trust_boundary = "local-repository"
 
 [[components]]
@@ -56,7 +56,7 @@ trust_boundary = "local-repository"
 id = "pgdog-proxy"
 name = "PgDog Proxy"
 kind = "rust-service"
-responsibility = "Implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import."
+responsibility = "Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import."
 trust_boundary = "proxy-process"
 
 [[components]]

@@ -19,9 +19,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: bash integration/ci/install-deps.sh
+      - run: bash scripts/pgdog bash integration/ci/install-deps.sh
       - uses: Swatinem/rust-cache@v2
-      - run: bash integration/ci/setup.sh --with-toxi
+        with:
+          workspaces: applications/pgdog -> target
+      - run: bash scripts/pgdog bash integration/ci/setup.sh --with-toxi
       - run: ./scripts/agent verify quick --timeout 3600 --json
       - name: Run merge commands without claiming independent review
         if: ${{ !cancelled() }}

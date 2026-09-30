@@ -2,15 +2,15 @@
 
 ## Environment
 
-- Rust follows `rust-toolchain.toml` (1.96, rustfmt, clippy); Cargo uses `--locked`.
+- Rust follows `applications/pgdog/rust-toolchain.toml` (1.96, rustfmt, clippy); Cargo uses `--locked`.
 - Python 3.11+, PostgreSQL 18 client/server, Toxiproxy 2.12.0 and nextest 0.9.78.
 - PostgreSQL and Toxiproxy must be dedicated test instances. Upstream
-  `integration/setup.sh` drops test databases and roles. Never point it at a
+  `applications/pgdog/integration/setup.sh` drops test databases and roles. Never point it at a
   shared or production database. Tests use synthetic credentials `pgdog`.
   Recreate fixtures before each full run: integration tests intentionally leave
   schema changes that can invalidate the next unit-test run.
-- Use `bash integration/ci/install-deps.sh` and
-  `bash integration/ci/setup.sh --with-toxi` only on disposable Ubuntu runners.
+- Use `./scripts/pgdog bash integration/ci/install-deps.sh` and
+  `./scripts/pgdog bash integration/ci/setup.sh --with-toxi` only on disposable Ubuntu runners.
 - For macOS, a Docker PostgreSQL instance can expose only `127.0.0.1:5432`.
   Tests also resolve `localhost`; ensure both IPv4 and IPv6 loopback reach the
   same test instance. Prepare Toxiproxy ports 5435–5438, API port 8474.
@@ -24,6 +24,11 @@
   An inherited obsolete `LDFLAGS` was removed for the build process only.
 
 ## Commands
+
+Run repository gates from the root; `scripts/pgdog` runs Cargo commands inside
+`applications/pgdog/`. Build output lives in `applications/pgdog/target/`.
+GitHub validation runs only on pull requests or manual dispatch; publishing is
+manual. GitLab accepts merge-request and web pipelines only.
 
 ```sh
 ./scripts/agent verify quick --timeout 3600 --json
@@ -54,7 +59,7 @@ Install `cargo-deny 0.20.2` and Semgrep (`1.178.0` used for the initial run) on 
 ./scripts/agent release run-scanner --scanner sast --timeout 600
 ```
 
-`deny.toml` records an explicit SPDX allowlist, with no advisory exceptions.
+`applications/pgdog/deny.toml` records an explicit SPDX allowlist, with no advisory exceptions.
 Missing license metadata fails the scan. Semgrep's community `p/rust` rules are
 fetched at run time, with metrics disabled: scanner reports are evidence for that
 run, not a pinned/reproducible ruleset or comprehensive security clearance.
@@ -141,3 +146,9 @@ Native AGY terminal responses may contain repeated result JSON objects with
 agree with the strict `structured_output`, rejecting conflicts, extra fields,
 trailing prose and malformed output. Native login review remains explicitly
 approved and bound to its package; a parsed old review does not approve new code.
+
+The partial-request disconnect fixture polls for zero active `ClientRead`
+backends for at most one second, below the integration proxy's two-second query
+timeout. Linux coverage observed two backends still cleaning up after the former
+fixed 100 ms sleep. The zero-backend assertion and all 50 clients are retained.
+The Rust client matrix runs serially and without fail-fast so every case runs.

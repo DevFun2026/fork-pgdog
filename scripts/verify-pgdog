@@ -25,6 +25,10 @@ run_check ./scripts/agent adapters check
 run_check ./scripts/agent docs check
 run_check ./scripts/agent skills check
 run_check ./scripts/agent licenses audit --json
+if [[ -n "${PGDOG_TEST_CONFIG_DIR:-}" && "$PGDOG_TEST_CONFIG_DIR" != /* ]]; then
+    export PGDOG_TEST_CONFIG_DIR="$PWD/$PGDOG_TEST_CONFIG_DIR"
+fi
+cd applications/pgdog
 run_check cargo nextest run --locked --workspace --no-fail-fast --test-threads=1
 run_check cargo test --locked --doc --workspace
 cargo build --locked --bin pgdog

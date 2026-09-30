@@ -5,7 +5,10 @@ use crate::{
     utils::{Message, connect},
 };
 use sqlx::{Executor, Pool, Postgres};
-use tokio::{spawn, time::sleep};
+use tokio::{
+    spawn,
+    time::{Instant, sleep},
+};
 
 #[tokio::test]
 async fn test_partial_request_disconnect() {
@@ -29,10 +32,22 @@ async fn test_partial_request_disconnect() {
         50
     );
 
-    sleep(Duration::from_millis(100)).await;
-
-    let acr = active_client_read(&direct).await;
-    assert_eq!(acr, 0);
+    // Socket drops are processed asynchronously by PgDog and PostgreSQL.
+    // Wait for the observed cleanup condition instead of assuming a 100 ms
+    // scheduling budget. Stay below the fixture's 2 s query timeout so a stuck
+    // partial request cannot pass merely by timing out at the proxy.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let acr = active_client_read(&direct).await;
+        if acr == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "partial-request backend connections remain in ClientRead: {acr}"
+        );
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 macro_rules! multiple_clients {

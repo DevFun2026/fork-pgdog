@@ -4,7 +4,7 @@ ARG RUNTIME_BASE=ghcr.io/pgdogdev/pgdog-base-runtime:latest
 FROM ${BUILDER_BASE} AS builder
 ARG FEATURES=""
 
-COPY . /build
+COPY applications/pgdog/ /build
 COPY .git /build/.git
 WORKDIR /build
 
