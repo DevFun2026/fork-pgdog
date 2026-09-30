@@ -1,0 +1,9 @@
+# Application context used by benches/perf/Dockerfile.
+target*
+docs
+web
+.ropeproject
+pgdog/tests/*
+venv*
+**/node_modules
+*.log
