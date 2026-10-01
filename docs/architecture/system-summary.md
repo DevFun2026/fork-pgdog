@@ -1,11 +1,11 @@
-# PgDog fork and verification workflow
+# PgDog fork: system architecture
 
-Generated: 2026-09-30T15:28:41+07:00 | Commit: 1b2fbcbfe041
+Generated: 2026-10-01T09:46:13+07:00 | Commit: 488073d58734
 
 ## Components
 
 - **canonical-core** — Canonical Agent Core (`policy-and-skills`): Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed. [boundary: local-repository]
-- **ci-wrappers** — CI Wrappers (`automation`): Invokes the same repository-owned quality gates on hosted CI without duplicating policy. [boundary: hosted-ci]
+- **ci-wrappers** — CI Wrappers (`automation`): Invokes repository-owned quality gates on pull requests or manual runs; publishes only the generated architecture HTML through manual GitHub Pages deployment from main. [boundary: hosted-ci]
 - **docs-generator** — Documentation Generator (`generator`): Validates the canonical project model and generates deterministic architecture views. [boundary: local-repository]
 - **pgdog-proxy** — PgDog Proxy (`rust-service`): Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import. [boundary: proxy-process]
 - **postgresql** — PostgreSQL (`database`): Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup. [boundary: database-process]
@@ -40,5 +40,6 @@ Generated: 2026-09-30T15:28:41+07:00 | Commit: 1b2fbcbfe041
 ## Environments
 
 - **github-actions** — GitHub Actions: Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.
+- **github-pages** — GitHub Pages: Public static architecture reference at https://devfun2026.github.io/fork-pgdog/. The architecture-pages workflow validates on PRs and publishes only after manual dispatch from main. It uploads only index.html and .nojekyll, not repository files or local evidence. First publication requires Actions-based Pages setup and a protected github-pages environment. This host has no database access or LLM runtime.
 - **gitlab-ci** — GitLab CI: Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.
 - **local** — Local developer environment: macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.

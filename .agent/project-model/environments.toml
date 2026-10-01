@@ -12,3 +12,8 @@ description = "Merge-request or manual web pipelines only. Python 3.11 jobs invo
 id = "local"
 name = "Local developer environment"
 description = "macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs."
+
+[[environments]]
+id = "github-pages"
+name = "GitHub Pages"
+description = "Public static architecture reference at https://devfun2026.github.io/fork-pgdog/. The architecture-pages workflow validates on PRs and publishes only after manual dispatch from main. It uploads only index.html and .nojekyll, not repository files or local evidence. First publication requires Actions-based Pages setup and a protected github-pages environment. This host has no database access or LLM runtime."

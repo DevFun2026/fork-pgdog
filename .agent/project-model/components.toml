@@ -1,5 +1,5 @@
-title = "PgDog fork and verification workflow"
-purpose = "PgDog PostgreSQL proxy source import with reproducible Rust verification and provider-independent review governance. EKS and Vault deployment are future work."
+title = "PgDog fork: system architecture"
+purpose = "Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing."
 data_categories = ["configuration", "evidence-metadata", "memory-record", "project-source", "review-package", "sql-query", "database-credentials", "query-results"]
 sensitive_categories = ["project-source", "review-package", "sql-query", "database-credentials", "query-results"]
 
@@ -14,7 +14,7 @@ trust_boundary = "local-repository"
 id = "ci-wrappers"
 name = "CI Wrappers"
 kind = "automation"
-responsibility = "Invokes the same repository-owned quality gates on hosted CI without duplicating policy."
+responsibility = "Invokes repository-owned quality gates on pull requests or manual runs; publishes only the generated architecture HTML through manual GitHub Pages deployment from main."
 trust_boundary = "hosted-ci"
 
 [[components]]

@@ -1,15 +1,34 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ project_title }}</title>
-  <style>{{ inline_styles }}</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ project_title }}</title>
+<style>{{ inline_styles }}</style>
 </head>
 <body>
-  <header>{{ header }}</header>
-  <nav>{{ table_of_contents }}</nav>
-  <main>{{ complete_system_content }}</main>
-  <script>{{ inline_search }}</script>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" id="rail">
+<div class="wordmark">{{ short_title }}<small>Architecture reference</small></div>
+<button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
+<nav aria-label="Contents" id="contents"><ol>{{ navigation }}</ol></nav>
+<div class="meta"><span>Revision <b>{{ commit }}</b></span><span>{{ generated_at }}</span><span>Canonical model + focused docs</span></div>
+<button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
+</aside>
+<main id="main">
+<header class="masthead">
+<div class="masthead-grid">
+<div><span class="eyebrow">Source architecture reference</span><h1>{{ project_title }}</h1><p class="tagline">{{ purpose }}</p></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV {{ commit }}</span><span>COMPILED FROM MODEL</span></div>
+</div>
+<div class="fact-row">{{ facts }}</div>
+<div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
+</header>
+{{ complete_system_content }}
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated {{ generated_at }}</span></footer>
+</main>
+</div>
+<script>{{ inline_search }}</script>
 </body>
 </html>
