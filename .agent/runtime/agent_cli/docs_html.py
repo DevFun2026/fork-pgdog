@@ -174,7 +174,13 @@ def _graph(nodes: tuple[Component, ...], edges: list[tuple[str, str]], identifie
         if source == target:
             path = f"M{x1 + 250},{y1 + 30} C{x1 + 295},{y1 - 10} {x1 + 295},{y1 + 105} {x1 + 250},{y1 + 75}"
         elif y1 == y2:
-            path = f"M{x1 + 266},{y1 + 53} L{x2 - 6},{y2 + 53}"
+            if abs(x2 - x1) == 310:
+                path = f"M{x1 + 266},{y1 + 53} L{x2 - 6},{y2 + 53}"
+            else:
+                # Route past intermediate cards rather than through their labels.
+                path = (f"M{x1 + 266},{y1 + 53} L{x1 + 282},{y1 + 53} "
+                        f"L{x1 + 282},{y1 - 18} L{x2 - 16},{y1 - 18} "
+                        f"L{x2 - 16},{y2 + 53} L{x2 - 6},{y2 + 53}")
         else:
             path = f"M{x1 + 133},{y1 + 106} L{x1 + 133},{y1 + 132} L{x2 + 133},{y1 + 132} L{x2 + 133},{y2 - 5}"
         parts.append(f'<path data-source="{escape(source)}" data-target="{escape(target)}" d="{path}" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-{identifier})"/>')

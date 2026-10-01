@@ -1,9 +1,12 @@
 import tempfile
 import unittest
+import re
 from pathlib import Path
 from html.parser import HTMLParser
 
 from agent_cli.docs import build_docs, check_docs, write_docs
+from agent_cli.docs_html import _graph
+from agent_cli.project_model import Component
 
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -94,6 +97,21 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn('<code>Core</code>', page)
         self.assertIn('<td>Planned</td>', page)
         self.assertNotIn('<pre># Context', page)
+
+    def test_diagram_edge_does_not_cross_an_unrelated_component(self):
+        nodes = tuple(Component(key, key, "service", "Work", "local")
+                      for key in ("aa", "bb", "cc"))
+        graph = _graph(nodes, [("aa", "bb"), ("aa", "cc")], "test", "Test")
+        path = re.search(r'data-source="aa" data-target="cc" d="([^"]+)"', graph)[1]
+        points = [(float(x), float(y)) for x, y in re.findall(r'[ML]([0-9.]+),([0-9.]+)', path)]
+        self.assertGreaterEqual(len(points), 2)
+        # The middle component occupies x=332..598, y=28..134.
+        # No connecting segment may enter its interior and imply a false dependency.
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            if y1 == y2 and 28 < y1 < 134:
+                self.assertFalse(max(min(x1, x2), 332) < min(max(x1, x2), 598))
+            if x1 == x2 and 332 < x1 < 598:
+                self.assertFalse(max(min(y1, y2), 28) < min(max(y1, y2), 134))
 
     def test_blueprint_has_valid_navigation_and_no_remote_assets(self):
         class Audit(HTMLParser):

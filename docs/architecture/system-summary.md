@@ -1,6 +1,6 @@
 # PgDog fork: system architecture
 
-Generated: 2026-09-30T16:19:00+07:00 | Commit: 568f40dd6f45
+Generated: 2026-10-01T09:46:13+07:00 | Commit: 488073d58734
 
 ## Components
 

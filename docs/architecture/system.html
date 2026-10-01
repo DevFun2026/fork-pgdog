@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>568f40dd6f45</b></span><span>2026-09-30T16:19:00+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>488073d58734</b></span><span>2026-10-01T09:46:13+07:00</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 568f40dd6f45</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 488073d58734</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">3</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">8</span><span class="k">relationships</span></div><div class="fact"><span class="v">8</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -469,7 +469,7 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <path data-source="docs-generator" data-target="canonical-core" d="M598,81 L636,81" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
 <path data-source="review-engine" data-target="provider-adapters" d="M775,304 L775,330 L155,330 L155,363" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
 <path data-source="runtime" data-target="project-memory" d="M288,251 L326,251" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
-<path data-source="runtime" data-target="review-engine" d="M288,251 L636,251" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="runtime" data-target="review-engine" d="M288,251 L304,251 L304,180 L626,180 L626,251 L636,251" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
 <g data-component="ci-wrappers"><rect x="22" y="28" width="266" height="106" rx="4" class="node"/>
 <text x="36" y="53" class="node-name">CI Wrappers</text>
 <text x="36" y="100" class="node-kind">automation</text>
@@ -784,7 +784,7 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-09-30T16:19:00+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-01T09:46:13+07:00</span></footer>
 </main>
 </div>
 <script>(() => {
