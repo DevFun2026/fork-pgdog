@@ -21,3 +21,16 @@ Use `memory doctor` and `memory rebuild-index`. Canonical Markdown records remai
 ## Release rollback
 
 Stop the release when any gate is blocked or incomplete. Preserve evidence, restore the last known-good release reference, follow project-specific data rollback instructions, and record residual risk before retrying.
+
+## Architecture Pages publication and recovery
+
+After the reviewed change is merged, enable GitHub Actions as the repository's
+Pages source and allow only main in the github-pages deployment environment.
+Run gh workflow run architecture-pages.yml --ref main, inspect the build/deploy
+run, then verify the public site before setting it as the repository homepage.
+A PR or a push never deploys this site. A manual run from another branch fails.
+
+If a publication fails, retain the last successful deployment, inspect the
+Actions logs and fix the source/model or Pages settings. Rebuild with the same
+canonical generator. Restore a previous page through a reviewed source revert
+and a new manual dispatch from main; do not publish unreviewed branch content.

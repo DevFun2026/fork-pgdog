@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html import escape
 from pathlib import Path
 import re
 import subprocess
 
+from agent_cli.docs_html import render_blueprint
 from agent_cli.paths import atomic_write
 from agent_cli.project_model import ProjectModel, load_project_model
 
@@ -91,67 +91,10 @@ def render_system_html(
     generated_at: str,
     commit: str,
 ) -> str:
-    e = escape
-    component_rows = "".join(
-        "<tr>"
-        f"<td>{e(item.id)}</td><td>{e(item.name)}</td><td>{e(item.kind)}</td>"
-        f"<td>{e(item.responsibility)}</td><td>{e(item.trust_boundary)}</td>"
-        "</tr>"
-        for item in model.components
+    return render_blueprint(
+        model, markdown_docs, DOCUMENT_SECTIONS,
+        generated_at=generated_at, commit=commit,
     )
-    relationship_items = "".join(
-        f"<li><code>{e(item.source)}</code> → <code>{e(item.target)}</code> — "
-        f"{e(item.label)}</li>"
-        for item in model.relationships
-    )
-    flow_items = "".join(
-        f"<li><strong>{e(item.id)}</strong>: <code>{e(item.source)}</code> → "
-        f"<code>{e(item.target)}</code>; data: "
-        f"{e(', '.join(item.data_categories) or 'none')}; boundary: "
-        f"{e(item.trust_boundary)}</li>"
-        for item in model.data_flows
-    )
-    environment_items = "".join(
-        f"<li><strong>{e(item.id)}</strong> — {e(item.name)}: "
-        f"{e(item.description)}</li>"
-        for item in model.environments
-    )
-    doc_sections = "".join(
-        f'<section id="{e(section_id)}"><h2>{e(title)}</h2>'
-        + "".join(
-            f"<article><h3>{e(_document_title(name))}</h3><pre>{e(content)}</pre></article>"
-            for name, content in sorted(markdown_docs.items())
-            if name.startswith(section_id + "/")
-        )
-        + "</section>"
-        for section_id, title, _directory, _names in DOCUMENT_SECTIONS
-    )
-    categories = ", ".join(model.data_categories) or "none"
-    sensitive = ", ".join(model.sensitive_categories) or "none"
-    return f'''<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(model.title)}</title>
-<style>:root{{font-family:system-ui,sans-serif;color:#172033;background:#f6f8fb}}body{{max-width:1100px;margin:auto;padding:2rem}}header,section,nav{{background:white;border:1px solid #d8deea;border-radius:12px;padding:1rem;margin:1rem 0}}nav{{display:flex;gap:1rem;flex-wrap:wrap}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #d8deea;padding:.55rem;text-align:left;vertical-align:top}}pre{{white-space:pre-wrap}}input{{padding:.5rem;min-width:18rem}}.hidden{{display:none}}@media print{{input,script{{display:none}}body{{max-width:none}}}}</style>
-</head>
-<body>
-<header><h1>{e(model.title)}</h1><p>Generated {e(generated_at)} · Commit {e(commit)}</p><label>Search <input id="search" type="search" placeholder="Filter sections"></label></header>
-<nav aria-label="Contents"><a href="#overview">Overview</a><a href="#components">Components</a><a href="#relationships">Relationships</a><a href="#data-flows">Data flows</a><a href="#environments">Environments</a><a href="#architecture-docs">Architecture</a><a href="#contracts">Contracts</a><a href="#adr-index">ADRs</a><a href="#security">Security</a><a href="#operations">Operations</a><a href="#traceability">Traceability</a><a href="#governance">Governance</a></nav>
-<main>
-<section id="overview"><h2>Purpose and scope</h2><p>{e(model.purpose)}</p><p>Declared data categories: {e(categories)}. Sensitive categories: {e(sensitive)}.</p></section>
-<section id="components"><h2>Components</h2><table><thead><tr><th>ID</th><th>Name</th><th>Kind</th><th>Responsibility</th><th>Trust boundary</th></tr></thead><tbody>{component_rows}</tbody></table></section>
-<section id="relationships"><h2>Relationships</h2><ul>{relationship_items}</ul></section>
-<section id="data-flows"><h2>Data flows and trust boundaries</h2><ul>{flow_items}</ul></section>
-<section id="environments"><h2>Deployment environments</h2><ul>{environment_items}</ul></section>
-{doc_sections}
-<section id="governance"><h2>Decisions, controls, and traceability</h2><p>See <code>docs/decisions/</code> for ADRs, <code>docs/security/</code> for controls and residual risks, and <code>.agent/.runs/</code> for commit-bound evidence. Quality gates and recovery procedures are defined by the canonical workflow.</p></section>
-</main>
-<script>const q=document.getElementById('search');q.addEventListener('input',()=>{{const v=q.value.toLowerCase();document.querySelectorAll('main section').forEach(s=>s.classList.toggle('hidden',v&&!s.textContent.toLowerCase().includes(v)));}});</script>
-</body>
-</html>
-'''
 
 
 def _read_focused_docs(root: Path) -> dict[str, str]:

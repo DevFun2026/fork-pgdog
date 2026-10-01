@@ -3,86 +3,604 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PgDog fork and verification workflow</title>
-<style>:root{font-family:system-ui,sans-serif;color:#172033;background:#f6f8fb}body{max-width:1100px;margin:auto;padding:2rem}header,section,nav{background:white;border:1px solid #d8deea;border-radius:12px;padding:1rem;margin:1rem 0}nav{display:flex;gap:1rem;flex-wrap:wrap}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8deea;padding:.55rem;text-align:left;vertical-align:top}pre{white-space:pre-wrap}input{padding:.5rem;min-width:18rem}.hidden{display:none}@media print{input,script{display:none}body{max-width:none}}</style>
+<title>PgDog fork: system architecture</title>
+<style>/* Adapted from the owner-provided Stargate architecture reference. */
+
+  /* ============ TOKENS ============ */
+  :root{
+    /* "Drafting vellum" — light */
+    --bg:#e8edf2;
+    --surface:#ffffff;
+    --surface-2:#f2f5f8;
+    --ink:#12233a;
+    --ink-muted:#55677e;
+    --line:#c6d2de;
+    --line-strong:#9fb0c2;
+    --accent:#0a7ea3;
+    --accent-ink:#ffffff;
+    --accent-soft:rgba(10,126,163,.10);
+    --good:#1f8a56;
+    --warn:#a9660c;
+    --crit:#c23b3b;
+    --good-soft:rgba(31,138,86,.12);
+    --warn-soft:rgba(169,102,12,.12);
+    --crit-soft:rgba(194,59,59,.12);
+    --code-bg:#eef2f6;
+    --shadow:0 1px 2px rgba(18,35,58,.06), 0 8px 24px rgba(18,35,58,.05);
+
+    --font-display:"Arial Narrow",ui-sans-serif,system-ui,sans-serif;
+    --font-body:ui-sans-serif,system-ui,sans-serif;
+    --font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      /* "Cyanotype blueprint" — dark */
+      --bg:#08213a;
+      --surface:#0e2c4a;
+      --surface-2:#123350;
+      --ink:#e7f2f9;
+      --ink-muted:#93b2cc;
+      --line:#24486c;
+      --line-strong:#386688;
+      --accent:#6fe3ef;
+      --accent-ink:#052430;
+      --accent-soft:rgba(111,227,239,.12);
+      --good:#4fcb8b;
+      --warn:#e8b34d;
+      --crit:#f0808a;
+      --good-soft:rgba(79,203,139,.14);
+      --warn-soft:rgba(232,179,77,.14);
+      --crit-soft:rgba(240,128,138,.14);
+      --code-bg:#0b2a46;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#08213a;
+    --surface:#0e2c4a;
+    --surface-2:#123350;
+    --ink:#e7f2f9;
+    --ink-muted:#93b2cc;
+    --line:#24486c;
+    --line-strong:#386688;
+    --accent:#6fe3ef;
+    --accent-ink:#052430;
+    --accent-soft:rgba(111,227,239,.12);
+    --good:#4fcb8b;
+    --warn:#e8b34d;
+    --crit:#f0808a;
+    --good-soft:rgba(79,203,139,.14);
+    --warn-soft:rgba(232,179,77,.14);
+    --crit-soft:rgba(240,128,138,.14);
+    --code-bg:#0b2a46;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+  }
+
+  /* ============ RESET / BASE ============ */
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:16px;
+    line-height:1.6;
+    padding-inline:20px;
+  }
+  h1,h2,h3,h4{
+    font-family:var(--font-display);
+    font-weight:700;
+    color:var(--ink);
+    text-wrap:balance;
+    letter-spacing:.01em;
+    margin:0;
+  }
+  p{margin:0 0 1em; max-width:66ch;}
+  a{color:var(--accent);}
+  code,.mono{font-family:var(--font-mono);}
+  ::selection{background:var(--accent-soft);}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:.001ms !important; transition-duration:.001ms !important;} }
+
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:.72rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+  }
+
+  /* ============ SHELL LAYOUT ============ */
+  .shell{
+    max-width:1320px;
+    margin-inline:auto;
+    display:grid;
+    grid-template-columns:248px minmax(0,1fr);
+    gap:0 56px;
+    align-items:start;
+  }
+  .rail{
+    position:sticky;
+    top:calc(env(safe-area-inset-top, 0px) + 20px);
+    max-height:calc(100vh - 40px);
+    overflow-y:auto;
+    padding-block:28px 40px;
+    border-right:1px solid var(--line);
+  }
+  .rail .wordmark{
+    font-family:var(--font-display);
+    font-weight:700;
+    font-size:1.3rem;
+    line-height:1.1;
+    letter-spacing:.02em;
+  }
+  .rail .wordmark small{
+    display:block;
+    font-family:var(--font-mono);
+    font-weight:400;
+    font-size:.68rem;
+    letter-spacing:.1em;
+    color:var(--ink-muted);
+    text-transform:uppercase;
+    margin-top:5px;
+  }
+  .rail nav{margin-top:28px;}
+  .rail nav ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px;}
+  .rail nav a{
+    display:flex; gap:10px; align-items:baseline;
+    text-decoration:none; color:var(--ink-muted);
+    font-size:.86rem; padding:6px 8px; border-radius:3px;
+    border-left:2px solid transparent;
+  }
+  .rail nav a:hover{color:var(--ink); background:var(--surface-2);}
+  .rail nav a .n{font-family:var(--font-mono); font-size:.72rem; color:var(--accent); flex:0 0 auto;}
+  .rail .meta{
+    margin-top:32px; padding-top:20px; border-top:1px solid var(--line);
+    font-family:var(--font-mono); font-size:.72rem; color:var(--ink-muted);
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .rail .meta b{color:var(--ink); font-weight:500;}
+
+  .toc-toggle{display:none;}
+
+  main{padding-block:28px 80px; min-width:0;}
+
+  /* ============ MASTHEAD ============ */
+  .masthead{
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:34px 36px;
+    background:
+      linear-gradient(var(--surface),var(--surface)) padding-box,
+      repeating-linear-gradient(0deg, transparent, transparent 27px, var(--line) 27px, var(--line) 28px) border-box;
+    box-shadow:var(--shadow);
+    margin-bottom:52px;
+    position:relative;
+    overflow:hidden;
+  }
+  .masthead::before{
+    content:"";
+    position:absolute; inset:8px;
+    border:1px solid var(--line);
+    pointer-events:none;
+    border-radius:2px;
+  }
+  .masthead-grid{
+    display:grid;
+    grid-template-columns:1fr auto;
+    gap:24px;
+    align-items:start;
+  }
+  .masthead h1{
+    font-size:clamp(2.1rem,4.6vw,3rem);
+    line-height:1.02;
+  }
+  .masthead .tagline{
+    font-size:1.05rem;
+    color:var(--ink-muted);
+    max-width:56ch;
+    margin-top:12px;
+  }
+  .drawing-tag{
+    font-family:var(--font-mono);
+    font-size:.78rem;
+    text-align:right;
+    color:var(--ink-muted);
+    white-space:nowrap;
+    line-height:1.7;
+    padding:10px 14px;
+    border:1px solid var(--line);
+    border-radius:3px;
+    background:var(--surface-2);
+  }
+  .drawing-tag b{display:block; color:var(--accent); font-size:.95rem;}
+  .fact-row{
+    display:flex; flex-wrap:wrap; gap:10px;
+    margin-top:26px; padding-top:24px; border-top:1px dashed var(--line-strong);
+  }
+  .fact{
+    flex:1 1 130px;
+    padding:10px 14px;
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    border-radius:3px;
+  }
+  .fact .v{font-family:var(--font-mono); font-size:1.25rem; color:var(--accent); font-weight:600;}
+  .fact .k{font-size:.72rem; color:var(--ink-muted); text-transform:uppercase; letter-spacing:.06em;}
+
+  /* ============ SECTION / SHEET ============ */
+  section.sheet{ margin-bottom:64px; scroll-margin-top:24px; }
+  .sheet-head{
+    display:flex; justify-content:space-between; align-items:flex-end; gap:16px;
+    border-bottom:2px solid var(--ink); padding-bottom:10px; margin-bottom:22px;
+  }
+  .sheet-head h2{font-size:1.55rem;}
+  .sheet-num{font-family:var(--font-mono); font-size:.76rem; color:var(--ink-muted); white-space:nowrap;}
+  .lede{font-size:1.02rem; color:var(--ink-muted); max-width:70ch; margin-bottom:24px;}
+  .lede em{font-style:normal; color:var(--ink); background:var(--accent-soft); padding:0 3px; border-radius:2px;}
+
+  h3.sub{font-size:1.05rem; margin:30px 0 12px; color:var(--ink);}
+  h3.sub .eyebrow{display:block; margin-bottom:4px;}
+
+  /* ============ GLOSSARY (dl) ============ */
+  dl.glossary{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    column-gap:22px; row-gap:0;
+    border-top:1px solid var(--line);
+  }
+  dl.glossary dt, dl.glossary dd{
+    padding:13px 0; border-bottom:1px solid var(--line);
+    margin:0;
+  }
+  dl.glossary dt{
+    font-family:var(--font-mono); font-weight:600; font-size:.86rem;
+    color:var(--accent); white-space:nowrap;
+  }
+  dl.glossary dd{color:var(--ink-muted); font-size:.92rem;}
+  dl.glossary dd b{color:var(--ink); font-weight:500;}
+
+  /* ============ ANCESTRY (nested boxes) ============ */
+  .ancestry{
+    display:flex; flex-direction:column; gap:0;
+    border:1px solid var(--line); border-radius:4px; overflow:hidden;
+    background:var(--surface);
+  }
+  .ancestry .tier{
+    padding:14px 18px;
+    border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+  }
+  .ancestry .tier:last-child{border-bottom:none;}
+  .ancestry .tier .name{font-family:var(--font-display); font-weight:600; font-size:1rem;}
+  .ancestry .tier .note{font-size:.8rem; color:var(--ink-muted); text-align:right;}
+  .ancestry .t0{margin:0; background:var(--surface-2);}
+  .ancestry .t1{margin-left:22px; background:var(--surface-2);}
+  .ancestry .t2{margin-left:44px; background:var(--surface-2);}
+  .ancestry .t3{margin-left:66px; background:var(--surface-2);}
+  .ancestry .t4{margin-left:88px; background:var(--accent-soft);}
+  .ancestry .tier{position:relative;}
+  .ancestry .t1::before,.ancestry .t2::before,.ancestry .t3::before,.ancestry .t4::before{
+    content:"└"; position:absolute; left:-18px; color:var(--line-strong); font-family:var(--font-mono);
+  }
+
+  /* ============ FIGURE / DIAGRAM ============ */
+  figure.diagram{ margin:0 0 10px; }
+  figure.diagram .frame{
+    border:1px solid var(--line); border-radius:4px; background:var(--surface);
+    padding:18px 14px; overflow-x:auto; box-shadow:var(--shadow);
+  }
+  figure.diagram svg{ display:block; width:100%; height:auto; min-width:640px; color:var(--ink); }
+  figure.diagram figcaption{
+    font-size:.85rem; color:var(--ink-muted); margin-top:10px; max-width:74ch;
+  }
+  svg text{font-family:var(--font-mono); fill:currentColor;}
+  svg .lbl{font-family:var(--font-body); }
+  svg .cap{font-size:11px; fill:var(--ink-muted);}
+
+  /* ============ TABLES ============ */
+  .table-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:4px;}
+  table{border-collapse:collapse; width:100%; min-width:560px; font-size:.88rem;}
+  table caption{caption-side:top; text-align:left; padding:10px 14px; font-family:var(--font-mono); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-muted); background:var(--surface-2); border-bottom:1px solid var(--line);}
+  th,td{padding:10px 14px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top;}
+  thead th{background:var(--surface-2); font-family:var(--font-display); font-weight:600; font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-muted); white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:var(--surface-2);}
+  td .mono, th .mono{font-size:.84em;}
+  .num{font-variant-numeric:tabular-nums; font-family:var(--font-mono);}
+
+  .tag{
+    display:inline-block; font-family:var(--font-mono); font-size:.72rem;
+    padding:2px 7px; border-radius:99px; border:1px solid currentColor; white-space:nowrap;
+  }
+  .tag.good{color:var(--good); background:var(--good-soft); border-color:transparent;}
+  .tag.warn{color:var(--warn); background:var(--warn-soft); border-color:transparent;}
+  .tag.crit{color:var(--crit); background:var(--crit-soft); border-color:transparent;}
+  .tag.neutral{color:var(--ink-muted); background:var(--surface-2); border-color:var(--line);}
+
+  /* ============ LAYER STACK (components) ============ */
+  .layers{display:flex; flex-direction:column; gap:8px;}
+  .layer{
+    border:1px solid var(--line); border-radius:4px; background:var(--surface);
+    padding:16px 18px; display:grid; grid-template-columns:160px 1fr; gap:16px; align-items:start;
+  }
+  .layer .lname{font-family:var(--font-display); font-weight:600; font-size:1rem;}
+  .layer .lpath{display:block; font-family:var(--font-mono); font-size:.72rem; color:var(--ink-muted); margin-top:4px;}
+  .layer p{margin:0; font-size:.9rem; color:var(--ink-muted); max-width:64ch;}
+  .layer p b{color:var(--ink); font-weight:500;}
+  .layer-arrow{ text-align:center; color:var(--line-strong); font-family:var(--font-mono); font-size:.8rem; }
+
+  /* ============ CLI TREE ============ */
+  .cli{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px;}
+  .cli .domain{border:1px solid var(--line); border-radius:4px; padding:14px 16px; background:var(--surface);}
+  .cli .domain h4{font-family:var(--font-mono); font-size:.82rem; color:var(--accent); text-transform:lowercase;}
+  .cli .domain ul{list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:6px;}
+  .cli .domain li{font-family:var(--font-mono); font-size:.8rem; color:var(--ink-muted); border-left:2px solid var(--line); padding-left:8px;}
+  .cli .domain li b{color:var(--ink); font-weight:500;}
+
+  /* ============ TIMELINE (ADR rail) ============ */
+  .timeline{position:relative; padding-left:34px;}
+  .timeline::before{content:""; position:absolute; left:9px; top:6px; bottom:6px; width:2px; background:var(--line);}
+  .adr{position:relative; padding-bottom:26px;}
+  .adr:last-child{padding-bottom:0;}
+  .adr::before{
+    content:""; position:absolute; left:-34px; top:3px; width:12px; height:12px;
+    border-radius:50%; background:var(--surface); border:2px solid var(--accent);
+  }
+  .adr .id{font-family:var(--font-mono); color:var(--accent); font-size:.78rem; font-weight:600;}
+  .adr h4{display:inline; font-size:1rem; margin-left:8px;}
+  .adr p{margin:6px 0 0; font-size:.88rem; color:var(--ink-muted); max-width:76ch;}
+
+  /* ============ FOOTER ============ */
+  footer{
+    margin-top:70px; padding-top:24px; border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; gap:10px 22px; justify-content:space-between; align-items:center;
+    font-size:.82rem; color:var(--ink-muted);
+  }
+  .stack-chips{display:flex; flex-wrap:wrap; gap:7px;}
+  .stack-chips span{
+    font-family:var(--font-mono); font-size:.72rem; padding:3px 9px; border:1px solid var(--line); border-radius:99px;
+  }
+
+  /* ============ RESPONSIVE ============ */
+  @media (max-width:900px){
+    .shell{grid-template-columns:1fr; gap:0;}
+    .rail{
+      position:static; max-height:none; overflow:visible; border-right:none; border-bottom:1px solid var(--line);
+      padding-block:18px 14px; margin-bottom:8px;
+    }
+    .rail nav{margin-top:0;}
+    .rail nav ol{display:none;}
+    .toc-toggle{
+      display:flex; align-items:center; gap:8px; width:100%;
+      background:var(--surface-2); border:1px solid var(--line); border-radius:4px;
+      padding:9px 12px; margin-top:16px; font-family:var(--font-mono); font-size:.78rem; color:var(--ink);
+      cursor:pointer;
+    }
+    .rail.open nav ol{display:flex;}
+    .rail .meta{display:none;}
+    .masthead-grid{grid-template-columns:1fr;}
+    .drawing-tag{text-align:left;}
+    .layer{grid-template-columns:1fr;}
+  }
+
+/* PgDog model presentation: source data, embedded assets, no remote fonts. */
+body{margin:0} main{min-width:0} code,h1,h2,h3,.meta{overflow-wrap:anywhere}
+.skip-link{position:absolute;top:0;left:20px;transform:translateY(-150%);z-index:3;background:var(--surface);padding:8px}
+.skip-link:focus{transform:translateY(0)}
+.masthead h1{font-size:clamp(2rem,3.3vw,3rem)}
+.masthead .tagline{font-size:.92rem;line-height:1.7}
+.drawing-tag{display:flex;flex-direction:column;gap:6px;font-size:.68rem}
+.fact .v,.fact .k{display:block}
+.meta{overflow-wrap:anywhere}.meta b{color:var(--ink)}
+.theme-toggle{margin-top:18px;background:var(--surface-2);border:1px solid var(--line);padding:6px 10px;border-radius:4px;font:.72rem var(--font-mono);color:var(--ink);cursor:pointer}
+.search-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:22px;font:.75rem var(--font-mono)}
+input{background:var(--surface-2);border:1px solid var(--line);border-radius:3px;padding:8px 10px;min-width:0;max-width:100%;width:230px;color:var(--ink);font:inherit}
+#search-status{color:var(--ink-muted)}
+.section-number{font:.82rem var(--font-mono);color:var(--accent);margin-right:8px}
+.scope-note{background:var(--accent-soft);border-left:3px solid var(--accent);padding:14px 18px;font-size:.88rem}.scope-note p{margin:6px 0 0}
+.muted{color:var(--ink-muted)}
+.node{fill:var(--surface-2);stroke:var(--line-strong);stroke-width:1.2}
+.node-name{fill:var(--ink);font:600 14px var(--font-display)}
+.node-kind{fill:var(--accent);font:11px var(--font-mono)}
+.node-boundary{fill:var(--ink-muted);font:10px var(--font-mono)}
+.relationships{list-style:none;padding:0;font-size:.83rem}.relationships li{border-bottom:1px solid var(--line);padding:10px 0}.relationships span{display:block;color:var(--ink-muted);margin-top:4px}
+.layer{grid-template-columns:190px minmax(0,1fr)}
+.layer h3,.flow h3,.environment h3{margin:0 0 8px;font-size:1rem}
+.layer p{font-size:.87rem;color:var(--ink-muted);margin:0 0 8px}
+.lpath{display:block;color:var(--accent);font-size:.71rem;margin:6px 0 10px}
+.boundary{font-size:.72rem!important}
+.tag{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.flow-grid,.environment-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.flow,.environment{padding:18px;border:1px solid var(--line);background:var(--surface);border-radius:4px;min-width:0;font-size:.84rem}
+.flow p,.environment p{color:var(--ink-muted)}.route{color:var(--accent)!important}
+.environment>code{display:block;color:var(--accent);font-size:.75rem;margin-bottom:12px}
+.document{background:var(--surface);border:1px solid var(--line);border-radius:4px;margin:12px 0}
+summary{cursor:pointer;padding:14px 18px;font:600 .94rem var(--font-display)}summary:hover{background:var(--surface-2)}
+.document-body{padding:0 20px 20px;font-size:.9rem}.document-body h3{font-size:1.2rem;margin:18px 0}.document-body h4{font-size:1rem;margin:22px 0 12px;color:var(--accent)}.document-body li{margin-bottom:7px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code-bg);border:1px solid var(--line);padding:14px;border-radius:3px;font:.78rem/1.7 var(--font-mono)}
+blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:16px;color:var(--ink-muted)}
+.metadata{font-size:.8rem;border-bottom:1px solid var(--line);margin-bottom:16px}.metadata summary{padding:12px 0;color:var(--ink-muted);font-size:.8rem}
+.table-wrap{margin:14px 0}.hidden{display:none!important}
+@media(max-width:1000px){.masthead-grid{grid-template-columns:1fr}.drawing-tag{width:max-content;max-width:100%;text-align:left}}
+@media(max-width:900px){.sheet-head{align-items:flex-start;flex-direction:column;gap:8px}.layer{grid-template-columns:1fr;gap:10px}.flow-grid,.environment-grid{grid-template-columns:1fr}.masthead{padding:24px;margin-bottom:36px}}
+@media print{body{background:white;color:black;padding:0;font-size:11pt}.shell{display:block}.rail,.skip-link,.search-bar{display:none}.masthead,.frame{box-shadow:none}.document-body{display:block}.hidden{display:block!important}figure.diagram svg{min-width:0}}
+</style>
 </head>
 <body>
-<header><h1>PgDog fork and verification workflow</h1><p>Generated 2026-09-30T15:28:41+07:00 · Commit 1b2fbcbfe041</p><label>Search <input id="search" type="search" placeholder="Filter sections"></label></header>
-<nav aria-label="Contents"><a href="#overview">Overview</a><a href="#components">Components</a><a href="#relationships">Relationships</a><a href="#data-flows">Data flows</a><a href="#environments">Environments</a><a href="#architecture-docs">Architecture</a><a href="#contracts">Contracts</a><a href="#adr-index">ADRs</a><a href="#security">Security</a><a href="#operations">Operations</a><a href="#traceability">Traceability</a><a href="#governance">Governance</a></nav>
-<main>
-<section id="overview"><h2>Purpose and scope</h2><p>PgDog PostgreSQL proxy source import with reproducible Rust verification and provider-independent review governance. EKS and Vault deployment are future work.</p><p>Declared data categories: configuration, database-credentials, evidence-metadata, memory-record, project-source, query-results, review-package, sql-query. Sensitive categories: database-credentials, project-source, query-results, review-package, sql-query.</p></section>
-<section id="components"><h2>Components</h2><table><thead><tr><th>ID</th><th>Name</th><th>Kind</th><th>Responsibility</th><th>Trust boundary</th></tr></thead><tbody><tr><td>canonical-core</td><td>Canonical Agent Core</td><td>policy-and-skills</td><td>Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed.</td><td>local-repository</td></tr><tr><td>ci-wrappers</td><td>CI Wrappers</td><td>automation</td><td>Invokes the same repository-owned quality gates on hosted CI without duplicating policy.</td><td>hosted-ci</td></tr><tr><td>docs-generator</td><td>Documentation Generator</td><td>generator</td><td>Validates the canonical project model and generates deterministic architecture views.</td><td>local-repository</td></tr><tr><td>pgdog-proxy</td><td>PgDog Proxy</td><td>rust-service</td><td>Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import.</td><td>proxy-process</td></tr><tr><td>postgresql</td><td>PostgreSQL</td><td>database</td><td>Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup.</td><td>database-process</td></tr><tr><td>project-memory</td><td>Project Memory</td><td>local-storage</td><td>Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context.</td><td>local-repository</td></tr><tr><td>provider-adapters</td><td>Provider Adapters</td><td>adapter</td><td>Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles.</td><td>provider-cli-process</td></tr><tr><td>review-engine</td><td>Cross-Review Engine</td><td>orchestrator</td><td>Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings.</td><td>local-repository</td></tr><tr><td>runtime</td><td>Agent Runtime</td><td>python-cli</td><td>Runs configuration, evidence, workflow, documentation, review, security, and release commands.</td><td>local-repository</td></tr><tr><td>sql-client</td><td>PostgreSQL Client</td><td>client</td><td>Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data.</td><td>client-process</td></tr></tbody></table></section>
-<section id="relationships"><h2>Relationships</h2><ul><li><code>ci-wrappers</code> → <code>runtime</code> — invokes repository-owned gates</li><li><code>sql-client</code> → <code>pgdog-proxy</code> — authenticates and sends PostgreSQL protocol messages</li><li><code>canonical-core</code> → <code>runtime</code> — defines policy and command contracts</li><li><code>docs-generator</code> → <code>canonical-core</code> — reads canonical model and focused documentation</li><li><code>pgdog-proxy</code> → <code>postgresql</code> — opens backend connections and forwards queries</li><li><code>review-engine</code> → <code>provider-adapters</code> — runs approved packages inside an OS read sandbox</li><li><code>runtime</code> → <code>project-memory</code> — validates lifecycle and privacy rules</li><li><code>runtime</code> → <code>review-engine</code> — starts fail-closed review operations</li></ul></section>
-<section id="data-flows"><h2>Data flows and trust boundaries</h2><ul><li><strong>backend-query</strong>: <code>pgdog-proxy</code> → <code>postgresql</code>; data: database-credentials, sql-query; boundary: proxy-to-database</li><li><strong>backend-results</strong>: <code>postgresql</code> → <code>pgdog-proxy</code>; data: query-results; boundary: database-to-proxy</li><li><strong>ci-evidence</strong>: <code>ci-wrappers</code> → <code>runtime</code>; data: configuration, evidence-metadata; boundary: hosted-ci-to-repository</li><li><strong>client-query</strong>: <code>sql-client</code> → <code>pgdog-proxy</code>; data: database-credentials, sql-query; boundary: client-to-proxy</li><li><strong>client-results</strong>: <code>pgdog-proxy</code> → <code>sql-client</code>; data: query-results; boundary: proxy-to-client</li><li><strong>documentation-model</strong>: <code>canonical-core</code> → <code>docs-generator</code>; data: configuration; boundary: local-repository</li><li><strong>memory-checkpoint</strong>: <code>runtime</code> → <code>project-memory</code>; data: memory-record; boundary: local-private-storage</li><li><strong>review-egress</strong>: <code>review-engine</code> → <code>provider-adapters</code>; data: project-source, review-package; boundary: local-to-provider-process</li></ul></section>
-<section id="environments"><h2>Deployment environments</h2><ul><li><strong>github-actions</strong> — GitHub Actions: Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.</li><li><strong>gitlab-ci</strong> — GitLab CI: Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.</li><li><strong>local</strong> — Local developer environment: macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.</li></ul></section>
-<section id="architecture-docs"><h2>Focused architecture documents</h2><article><h3>Components</h3><pre># Component responsibilities
-
-The runtime keeps boundaries explicit: configuration never executes shell strings;
-path handling resolves symlinks inside the repository; process execution uses
-argument arrays; evidence binds checks to commit and diff identities; documentation
-renders only validated model data; and provider adapters cannot weaken canonical
-review policy.
-
-Project Memory is not a transcript recorder. It accepts structured, redacted
-checkpoints, keeps candidates private, and requires review before shared promotion.
-</pre></article><article><h3>Containers</h3><pre># Containers and major units
-
-- **Canonical core:** `.agent/` policies, skills, schemas, templates, and model.
-- **Runtime:** Python 3.11 standard-library CLI invoked through `scripts/agent`.
-- **Provider adapters:** capability detection and read-only structured review calls.
-- **Review engine:** package construction, secret/path checks, orchestration, and adjudication.
-- **Project Memory:** local SQLite candidates plus reviewed Markdown records.
-- **Documentation generator:** deterministic Markdown and whole-system HTML.
-- **CI wrappers:** GitHub Actions and GitLab CI calling identical local gates.
-</pre></article><article><h3>Data Flows</h3><pre># Data flows and trust boundaries
-
-1. Canonical configuration and project-model data flow into the local runtime.
-2. Verification commands produce redacted metadata evidence under `.agent/.runs/`.
-3. Structured checkpoints flow into private local memory, then optionally into reviewed records.
-4. Review source and evidence pass through path containment, deny rules, size limits,
-   redaction, secret detection, and human manifest approval before provider egress.
-5. Provider output returns as untrusted structured findings and is adjudicated against current source.
-
-Sensitive categories are project source and review-package content. Neither may be
-sent automatically or stored in Project Memory without the applicable gate.
-</pre></article><article><h3>Deployment</h3><pre># Deployment and operation
-
-The template is copied into a project repository rather than deployed as a service.
-`scripts/agent` runs directly from the checkout on macOS, Linux, or WSL. No daemon,
-telemetry, cloud memory, vector database, or product-environment installation is used.
-
-Hosted CI uses thin wrappers. Provider-backed jobs are separate and protected.
-Recovery relies on Git history, atomic generated-file replacement, SQLite transactions,
-and preserved review packages. A release must document migration, backup, rollback,
-unverified areas, and residual risks.
-</pre></article><article><h3>System Context</h3><pre># System context
-
-Project AI Template lives inside a product repository and provides one canonical
-workflow to human maintainers and Claude, Gemini via Antigravity CLI (`agy`), or Codex coding agents. Product
-source remains outside the template runtime and is read only when an approved
-workflow requires it.
-
-External boundaries are installed provider CLI processes and hosted CI runners.
-Provider calls receive only an explicitly previewed review package. CI jobs invoke
-repository-owned commands and must not expose provider credentials to untrusted code.
-</pre></article></section><section id="contracts"><h2>Interfaces and contracts</h2><article><h3>Contracts</h3><pre># Interfaces and contracts
-
-- `.agent/config.toml` is the versioned project configuration. Commands are argument arrays and never shell strings.
-- `.agent/project-model/*.toml` is the canonical architecture model used to generate the system views.
-- `.agent/schemas/*.json` defines provider findings, evidence, memory, and documentation-impact payloads.
-- `.agent/.runs/` contains local, commit-bound gate artifacts; it is evidence, not project source.
-- Review packages contain only the approved diff, manifest, policy, requirements, verification summary, schema, and explicit context files.
-- `.agent/memory/records/` contains reviewed, versioned memory. Private candidates and indexes remain local.
-- Memory retrieval ranks partial Unicode lexical matches with title/component weights; startup selects architecture, constraints, decisions and workflow records. Default retrieval is top-5 and bounded by 4,000 characters / 1,200 estimated tokens, excluding private and stale records.
-- Review manifests bind the full scope and full Git diff hash plus the projected diff. Only native skill copies equal in blob and mode to a changed canonical file at both endpoints are omitted. Every resume/merge recomputes proof; generated HTML and divergent copies remain visible.
-- Context profiles light/standard/deep bound retrieval and review payload estimates; see `docs/context-efficiency.md`. Estimates are UTF-8 bytes divided by three, rounded up, not provider billing. Oversized reviews fail before provider execution.
-- Planning tiers do not change merge/release gates or authorize state transitions. Content-only policy/security changes still require full impact review.
-- `workflow guide --task interface` recommends the relevant UX/UI phase under standard context; it does not load every skill or change gates. Four provider-neutral UX/UI skills extend the 21 core skills. Their local references and artifact templates link evidence, journey/state IDs, design master/page deltas, implementation and review coverage. See `docs/ux-ui.md`.
-- Adapted UX/UI documentation is pinned and attributed in `.agent/sources/UX_UI_AUDIT.md`; native projections retain local licenses. No upstream installer, binary, database, remote guideline loader or hook is part of this extension. Missing research or browser evidence stays unverified; local UX review never supplies cross-provider independence or accessibility certification.
-
-All consumers fail closed on unknown configuration, malformed payloads, stale hashes, provider identity collisions, or artifacts bound to another Git state.
-</pre></article></section><section id="adr-index"><h2>Architecture decision records</h2><article><h3>0001 Provider Neutral Agent Root</h3><pre>---
-id: ADR-0001
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" id="rail">
+<div class="wordmark">PgDog fork<small>Architecture reference</small></div>
+<button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
+<nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
+<div class="meta"><span>Revision <b>568f40dd6f45</b></span><span>2026-09-30T16:19:00+07:00</span><span>Canonical model + focused docs</span></div>
+<button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
+</aside>
+<main id="main">
+<header class="masthead">
+<div class="masthead-grid">
+<div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 568f40dd6f45</span><span>COMPILED FROM MODEL</span></div>
+</div>
+<div class="fact-row"><div class="fact"><span class="v">3</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">8</span><span class="k">relationships</span></div><div class="fact"><span class="v">8</span><span class="k">data flows</span></div></div>
+<div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
+</header>
+<section class="sheet" id="overview"><div class="sheet-head"><h2><span class="section-number">01</span> System context</h2><span class="sheet-num">.agent/project-model/</span></div><p class="lede">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p><div class="scope-note"><strong>Source of truth</strong><p>Components and diagrams represent the declared current model. Planned work is labelled in the scope and focused documents; no deployment or feature is inferred from a diagram.</p></div></section>
+<section class="sheet" id="relationships"><div class="sheet-head"><h2><span class="section-number">02</span> Component diagrams</h2><span class="sheet-num">relationships.toml</span></div><figure class="diagram"><div class="frame"><svg viewBox="0 0 954 200" role="img" aria-label="Product runtime">
+<title>Product runtime</title><defs><marker id="arrow-runtime" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor"/></marker></defs>
+<path data-source="sql-client" data-target="pgdog-proxy" d="M288,81 L326,81" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-runtime)"/>
+<path data-source="pgdog-proxy" data-target="postgresql" d="M598,81 L636,81" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-runtime)"/>
+<g data-component="sql-client"><rect x="22" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="36" y="53" class="node-name">PostgreSQL Client</text>
+<text x="36" y="100" class="node-kind">client</text>
+<text x="36" y="119" class="node-boundary">client-process</text></g>
+<g data-component="pgdog-proxy"><rect x="332" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="346" y="53" class="node-name">PgDog Proxy</text>
+<text x="346" y="100" class="node-kind">rust-service</text>
+<text x="346" y="119" class="node-boundary">proxy-process</text></g>
+<g data-component="postgresql"><rect x="642" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="656" y="53" class="node-name">PostgreSQL</text>
+<text x="656" y="100" class="node-kind">database</text>
+<text x="656" y="119" class="node-boundary">database-process</text></g>
+</svg></div><figcaption>Product runtime. Arrows show relationships declared in the canonical model; details follow below.</figcaption></figure><figure class="diagram"><div class="frame"><svg viewBox="0 0 954 540" role="img" aria-label="Repository development and verification">
+<title>Repository development and verification</title><defs><marker id="arrow-tooling" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor"/></marker></defs>
+<path data-source="ci-wrappers" data-target="runtime" d="M155,134 L155,160 L155,160 L155,193" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="canonical-core" data-target="runtime" d="M775,134 L775,160 L155,160 L155,193" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="docs-generator" data-target="canonical-core" d="M598,81 L636,81" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="review-engine" data-target="provider-adapters" d="M775,304 L775,330 L155,330 L155,363" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="runtime" data-target="project-memory" d="M288,251 L326,251" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<path data-source="runtime" data-target="review-engine" d="M288,251 L636,251" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow-tooling)"/>
+<g data-component="ci-wrappers"><rect x="22" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="36" y="53" class="node-name">CI Wrappers</text>
+<text x="36" y="100" class="node-kind">automation</text>
+<text x="36" y="119" class="node-boundary">hosted-ci</text></g>
+<g data-component="docs-generator"><rect x="332" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="346" y="53" class="node-name">Documentation Generator</text>
+<text x="346" y="100" class="node-kind">generator</text>
+<text x="346" y="119" class="node-boundary">local-repository</text></g>
+<g data-component="canonical-core"><rect x="642" y="28" width="266" height="106" rx="4" class="node"/>
+<text x="656" y="53" class="node-name">Canonical Agent Core</text>
+<text x="656" y="100" class="node-kind">policy-and-skills</text>
+<text x="656" y="119" class="node-boundary">local-repository</text></g>
+<g data-component="runtime"><rect x="22" y="198" width="266" height="106" rx="4" class="node"/>
+<text x="36" y="223" class="node-name">Agent Runtime</text>
+<text x="36" y="270" class="node-kind">python-cli</text>
+<text x="36" y="289" class="node-boundary">local-repository</text></g>
+<g data-component="project-memory"><rect x="332" y="198" width="266" height="106" rx="4" class="node"/>
+<text x="346" y="223" class="node-name">Project Memory</text>
+<text x="346" y="270" class="node-kind">local-storage</text>
+<text x="346" y="289" class="node-boundary">local-repository</text></g>
+<g data-component="review-engine"><rect x="642" y="198" width="266" height="106" rx="4" class="node"/>
+<text x="656" y="223" class="node-name">Cross-Review Engine</text>
+<text x="656" y="270" class="node-kind">orchestrator</text>
+<text x="656" y="289" class="node-boundary">local-repository</text></g>
+<g data-component="provider-adapters"><rect x="22" y="368" width="266" height="106" rx="4" class="node"/>
+<text x="36" y="393" class="node-name">Provider Adapters</text>
+<text x="36" y="440" class="node-kind">adapter</text>
+<text x="36" y="459" class="node-boundary">provider-cli-process</text></g>
+</svg></div><figcaption>Repository development and verification. Arrows show relationships declared in the canonical model; details follow below.</figcaption></figure><ul class="relationships"><li><code>ci-wrappers</code> → <code>runtime</code><span>invokes repository-owned gates</span></li><li><code>sql-client</code> → <code>pgdog-proxy</code><span>authenticates and sends PostgreSQL protocol messages</span></li><li><code>canonical-core</code> → <code>runtime</code><span>defines policy and command contracts</span></li><li><code>docs-generator</code> → <code>canonical-core</code><span>reads canonical model and focused documentation</span></li><li><code>pgdog-proxy</code> → <code>postgresql</code><span>opens backend connections and forwards queries</span></li><li><code>review-engine</code> → <code>provider-adapters</code><span>runs approved packages inside an OS read sandbox</span></li><li><code>runtime</code> → <code>project-memory</code><span>validates lifecycle and privacy rules</span></li><li><code>runtime</code> → <code>review-engine</code><span>starts fail-closed review operations</span></li></ul></section>
+<section class="sheet" id="components"><div class="sheet-head"><h2><span class="section-number">03</span> Component responsibilities</h2><span class="sheet-num">components.toml</span></div><div class="layers"><article class="layer"><div><h3>PgDog Proxy</h3><code class="lpath">pgdog-proxy</code><span class="tag neutral">rust-service</span></div><div><p>Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import.</p><p class="boundary">Boundary: <code>proxy-process</code></p></div></article><article class="layer"><div><h3>PostgreSQL</h3><code class="lpath">postgresql</code><span class="tag neutral">database</span></div><div><p>Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup.</p><p class="boundary">Boundary: <code>database-process</code></p></div></article><article class="layer"><div><h3>PostgreSQL Client</h3><code class="lpath">sql-client</code><span class="tag neutral">client</span></div><div><p>Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data.</p><p class="boundary">Boundary: <code>client-process</code></p></div></article><article class="layer"><div><h3>Canonical Agent Core</h3><code class="lpath">canonical-core</code><span class="tag neutral">policy-and-skills</span></div><div><p>Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>CI Wrappers</h3><code class="lpath">ci-wrappers</code><span class="tag neutral">automation</span></div><div><p>Invokes repository-owned quality gates on pull requests or manual runs; publishes only the generated architecture HTML through manual GitHub Pages deployment from main.</p><p class="boundary">Boundary: <code>hosted-ci</code></p></div></article><article class="layer"><div><h3>Documentation Generator</h3><code class="lpath">docs-generator</code><span class="tag neutral">generator</span></div><div><p>Validates the canonical project model and generates deterministic architecture views.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Project Memory</h3><code class="lpath">project-memory</code><span class="tag neutral">local-storage</span></div><div><p>Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Provider Adapters</h3><code class="lpath">provider-adapters</code><span class="tag neutral">adapter</span></div><div><p>Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles.</p><p class="boundary">Boundary: <code>provider-cli-process</code></p></div></article><article class="layer"><div><h3>Cross-Review Engine</h3><code class="lpath">review-engine</code><span class="tag neutral">orchestrator</span></div><div><p>Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Agent Runtime</h3><code class="lpath">runtime</code><span class="tag neutral">python-cli</span></div><div><p>Runs configuration, evidence, workflow, documentation, review, security, and release commands.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article></div></section>
+<section class="sheet" id="data-flows"><div class="sheet-head"><h2><span class="section-number">04</span> Data &amp; trust boundaries</h2><span class="sheet-num">data-flows.toml</span></div><p class="lede">Sensitive categories: database-credentials, project-source, query-results, review-package, sql-query. Declared categories: configuration, database-credentials, evidence-metadata, memory-record, project-source, query-results, review-package, sql-query.</p><div class="flow-grid"><article class="flow"><h3>backend-query</h3><p class="route"><code>pgdog-proxy</code> → <code>postgresql</code></p><p>database-credentials, sql-query</p><span class="tag neutral">proxy-to-database</span></article><article class="flow"><h3>backend-results</h3><p class="route"><code>postgresql</code> → <code>pgdog-proxy</code></p><p>query-results</p><span class="tag neutral">database-to-proxy</span></article><article class="flow"><h3>ci-evidence</h3><p class="route"><code>ci-wrappers</code> → <code>runtime</code></p><p>configuration, evidence-metadata</p><span class="tag neutral">hosted-ci-to-repository</span></article><article class="flow"><h3>client-query</h3><p class="route"><code>sql-client</code> → <code>pgdog-proxy</code></p><p>database-credentials, sql-query</p><span class="tag neutral">client-to-proxy</span></article><article class="flow"><h3>client-results</h3><p class="route"><code>pgdog-proxy</code> → <code>sql-client</code></p><p>query-results</p><span class="tag neutral">proxy-to-client</span></article><article class="flow"><h3>documentation-model</h3><p class="route"><code>canonical-core</code> → <code>docs-generator</code></p><p>configuration</p><span class="tag neutral">local-repository</span></article><article class="flow"><h3>memory-checkpoint</h3><p class="route"><code>runtime</code> → <code>project-memory</code></p><p>memory-record</p><span class="tag neutral">local-private-storage</span></article><article class="flow"><h3>review-egress</h3><p class="route"><code>review-engine</code> → <code>provider-adapters</code></p><p>project-source, review-package</p><span class="tag neutral">local-to-provider-process</span></article></div></section>
+<section class="sheet" id="environments"><div class="sheet-head"><h2><span class="section-number">05</span> Deployment environments</h2><span class="sheet-num">environments.toml</span></div><div class="environment-grid"><article class="environment"><h3>GitHub Actions</h3><code>github-actions</code><p>Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.</p></article><article class="environment"><h3>GitHub Pages</h3><code>github-pages</code><p>Public static architecture reference at https://devfun2026.github.io/fork-pgdog/. The architecture-pages workflow validates on PRs and publishes only after manual dispatch from main. It uploads only index.html and .nojekyll, not repository files or local evidence. First publication requires Actions-based Pages setup and a protected github-pages environment. This host has no database access or LLM runtime.</p></article><article class="environment"><h3>GitLab CI</h3><code>gitlab-ci</code><p>Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.</p></article><article class="environment"><h3>Local developer environment</h3><code>local</code><p>macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.</p></article></div></section>
+<section class="sheet" id="architecture-docs"><div class="sheet-head"><h2><span class="section-number">06</span> Focused architecture documents</h2><span class="sheet-num">docs/architecture</span></div><details class="document"><summary>Components</summary><div class="document-body"><h3>Component responsibilities</h3>
+<h4>PgDog source</h4>
+<p>The upstream proxy is in applications/pgdog/pgdog/src/:</p>
+<ul>
+<li>frontend/: receives client sessions and coordinates query execution.</li>
+<li>backend/: manages backend pools and PostgreSQL server connections.</li>
+<li>auth/ and config/: authentication and configuration handling.</li>
+<li>net/: PostgreSQL wire messages and network primitives.</li>
+<li>admin/, api/ and stats/: administration and observability interfaces.</li>
+<li>plugin/: upstream plugin integration.</li>
+</ul>
+<p>Related workspace crates hold shared configuration, statistics, PostgreSQL types and plugin interfaces. Existing features are documented in README.md and upstream documentation at https://docs.pgdog.dev/.</p>
+<h4>Repository tooling</h4>
+<p>The Python runtime keeps configuration, path handling, process execution, verification evidence and independent review boundaries explicit. Evidence is bound to Git identities. The documentation generator escapes model and Markdown content into a standalone HTML file; it does not read .agent/.memory/ or publish local .agent/.runs/ evidence.</p>
+<p>The coding-agent tooling is distinct from the planned product LLM agent. The latter has no implemented component or API contract yet.</p></div></details>
+<details class="document"><summary>Containers</summary><div class="document-body"><h3>Containers and major units</h3>
+<h4>Product runtime</h4>
+<ul>
+<li>PgDog proxy: Rust Cargo workspace under applications/pgdog/; its executable handles PostgreSQL connections, authentication, pooling and query forwarding.</li>
+<li>PostgreSQL backends: external database servers, including primaries, replicas or shards depending on pgdog.toml. They execute SQL and return results.</li>
+<li>PostgreSQL clients: psql, application drivers or other compatible clients.</li>
+<li>Local Docker demo: applications/pgdog/docker-compose.yml starts the upstream PgDog image and three PostgreSQL shards. It does not run a fork-specific LLM agent. The fork image is built separately from applications/pgdog/Dockerfile.</li>
+</ul>
+<h4>Development and documentation</h4>
+<ul>
+<li>Canonical core: .agent/ policies, skills, schemas, templates and project model.</li>
+<li>Runtime: Python 3.11 standard-library CLI invoked through scripts/agent.</li>
+<li>Review engine and provider adapters: approved, bounded source review packages and validated independent findings, outside the database query path.</li>
+<li>Project Memory: private local candidates and reviewed project records.</li>
+<li>Documentation generator: canonical TOML and focused Markdown are rendered into system-summary.md and the self-contained system.html.</li>
+<li>CI wrappers: pull-request or manual validation; publishing is manual.</li>
+</ul>
+<p>The planned LLM agent is not yet a runtime process or container in this model.</p></div></details>
+<details class="document"><summary>Data Flows</summary><div class="document-body"><h3>Data flows and trust boundaries</h3>
+<h4>Database traffic</h4>
+<ol>
+<li>A client sends PostgreSQL startup/authentication messages and SQL to PgDog.</li>
+<li>PgDog authenticates the client, selects a pool and routes the query to a configured PostgreSQL backend.</li>
+<li>Backend credentials and SQL cross the proxy-to-database boundary.</li>
+<li>PostgreSQL results return through PgDog to the client.</li>
+</ol>
+<p>The model declares SQL queries, database credentials and query results as sensitive data. Pooling and query routing are existing upstream behavior. An end-to-end per-member audit trail for the intended deployment has not been implemented or validated as part of this repository setup.</p>
+<h4>Development traffic</h4>
+<ol>
+<li>Canonical configuration and project-model data enter the local runtime.</li>
+<li>Verification writes commit-bound metadata under .agent/.runs/.</li>
+<li>Private memory candidates can be reviewed before promotion into records.</li>
+<li>Review packages pass containment, deny rules, size limits, redaction and exact manifest approval before provider egress.</li>
+<li>Provider findings return as untrusted structured data for adjudication.</li>
+</ol>
+<p>These source-review calls are development operations. They do not send live PostgreSQL query traffic to the planned LLM agent. That future boundary requires its own authorization, data minimization and audit design.</p></div></details>
+<details class="document"><summary>Deployment</summary><div class="document-body"><h3>Deployment and operation</h3>
+<h4>Current local setup</h4>
+<p>Build the Rust workspace from the repository root:</p>
+<pre><code>./scripts/pgdog cargo build --locked --workspace</code></pre>
+<p>Run the upstream Docker demo:</p>
+<pre><code>docker compose -f applications/pgdog/docker-compose.yml up</code></pre>
+<p>Build this fork&#x27;s container using the repository root as its build context:</p>
+<pre><code>docker build -f applications/pgdog/Dockerfile -t pgdog .</code></pre>
+<p>Configuration and client connection examples are in README.md. The Docker demo contains synthetic credentials and data for local evaluation.</p>
+<h4>Production work still to be designed</h4>
+<p>The intended deployment is an EKS-hosted proxy reached through a load balancer restricted to company IPs, with PostgreSQL in a private subnet and Vault dynamic credentials. This repository setup has not provisioned that infrastructure or established production query-audit coverage. Upstream Helm and Terraform links in README.md describe upstream deployment options.</p>
+<p>The LLM agent is planned; this overview does not declare an LLM runtime, model provider, database access policy or production deployment for it.</p>
+<h4>Repository tooling and documentation</h4>
+<p>scripts/agent runs from the checkout on macOS, Linux or WSL. Hosted CI uses the same local gates. Validation runs for pull requests or manual dispatch, and publishing is manual.</p>
+<p>The architecture page is generated from .agent/project-model/ and focused docs:</p>
+<pre><code>./scripts/agent docs build
+./scripts/agent docs check</code></pre>
+<p>system.html is a self-contained file with local styles, search and navigation. It works offline without a CDN, external JavaScript, database connection or LLM provider. The embedded security documents cover repository tooling and must be extended before using them as a production PgDog/LLM security assessment.</p>
+<h4>Architecture Pages publication</h4>
+<p>The Architecture Pages workflow builds a static document from this model. Pull requests validate it with read-only repository permissions. Only a manual workflow_dispatch on main can run the deployment job, which has Pages and OIDC permissions and uses the github-pages environment. The uploaded directory contains only generated index.html and .nojekyll; no source, credentials, private memory or local review evidence is exported.</p>
+<p>The public URL is intended to be https://devfun2026.github.io/fork-pgdog/. Repository Pages settings and the first deployment are external setup steps. Publishing this document does not deploy the PostgreSQL proxy or LLM agent.</p></div></details>
+<details class="document"><summary>System Context</summary><div class="document-body"><h3>System context</h3>
+<h4>Source and purpose</h4>
+<p>This repository forks PgDog from https://github.com/pgdogdev/pgdog. The PostgreSQL proxy and its existing features belong to upstream PgDog and its contributors. The fork&#x27;s product goal is to add an LLM agent layer on top of that proxy. The upstream source is under applications/pgdog/; README.md is the main usage guide. Import history and license attribution are recorded in docs/import/PGDOG_IMPORT.md and THIRD_PARTY_NOTICES.md.</p>
+<h4>Current runtime</h4>
+<p>PostgreSQL client -&gt; PgDog proxy -&gt; PostgreSQL primary / replicas / shards</p>
+<p>Clients use the PostgreSQL wire protocol. PgDog authenticates connections, maintains backend connection pools, parses and routes queries, and returns PostgreSQL results. The source includes backend authentication integrations such as Vault dynamic credentials; production Vault policies and EKS resources have not been configured by this repository work.</p>
+<p>The repository also contains a Python coding-agent runtime for verification, independent review, documentation and local development memory. This tooling runs during development and CI; it is not on the PostgreSQL query path.</p>
+<h4>Planned LLM agent</h4>
+<p>The LLM agent is not implemented or deployed. Its interfaces, query access, provider choice, authorization and handling of database data still require a separate approved design. No SQL, credentials or query results are currently sent to an LLM by a runtime agent in this fork.</p>
+<p>The intended EKS proxy deployment, company-IP-restricted load balancer and member query auditing are future deployment/product work. The current diagrams and component model describe implemented code and repository tooling, not a claim that this production architecture is running.</p></div></details></section>
+<section class="sheet" id="contracts"><div class="sheet-head"><h2><span class="section-number">07</span> Interfaces and contracts</h2><span class="sheet-num">docs/architecture</span></div><details class="document"><summary>Contracts</summary><div class="document-body"><h3>Interfaces and contracts</h3>
+<ul>
+<li><code>.agent/config.toml</code> is the versioned project configuration. Commands are argument arrays and never shell strings.</li>
+<li><code>.agent/project-model/*.toml</code> is the canonical architecture model used to generate the system views.</li>
+<li><code>.agent/schemas/*.json</code> defines provider findings, evidence, memory, and documentation-impact payloads.</li>
+<li><code>.agent/.runs/</code> contains local, commit-bound gate artifacts; it is evidence, not project source.</li>
+<li>Review packages contain only the approved diff, manifest, policy, requirements, verification summary, schema, and explicit context files.</li>
+<li><code>.agent/memory/records/</code> contains reviewed, versioned memory. Private candidates and indexes remain local.</li>
+<li>Memory retrieval ranks partial Unicode lexical matches with title/component weights; startup selects architecture, constraints, decisions and workflow records. Default retrieval is top-5 and bounded by 4,000 characters / 1,200 estimated tokens, excluding private and stale records.</li>
+<li>Review manifests bind the full scope and full Git diff hash plus the projected diff. Only native skill copies equal in blob and mode to a changed canonical file at both endpoints are omitted. Every resume/merge recomputes proof; generated HTML and divergent copies remain visible.</li>
+<li>Context profiles light/standard/deep bound retrieval and review payload estimates; see <code>docs/context-efficiency.md</code>. Estimates are UTF-8 bytes divided by three, rounded up, not provider billing. Oversized reviews fail before provider execution.</li>
+<li>Planning tiers do not change merge/release gates or authorize state transitions. Content-only policy/security changes still require full impact review.</li>
+<li><code>workflow guide --task interface</code> recommends the relevant UX/UI phase under standard context; it does not load every skill or change gates. Four provider-neutral UX/UI skills extend the 21 core skills. Their local references and artifact templates link evidence, journey/state IDs, design master/page deltas, implementation and review coverage. See <code>docs/ux-ui.md</code>.</li>
+<li>Adapted UX/UI documentation is pinned and attributed in <code>.agent/sources/UX_UI_AUDIT.md</code>; native projections retain local licenses. No upstream installer, binary, database, remote guideline loader or hook is part of this extension. Missing research or browser evidence stays unverified; local UX review never supplies cross-provider independence or accessibility certification.</li>
+</ul>
+<p>All consumers fail closed on unknown configuration, malformed payloads, stale hashes, provider identity collisions, or artifacts bound to another Git state.</p></div></details></section>
+<section class="sheet" id="adr-index"><div class="sheet-head"><h2><span class="section-number">08</span> Architecture decision records</h2><span class="sheet-num">docs/decisions</span></div><details class="document"><summary>0001 Provider Neutral Agent Root</summary><div class="document-body"><details class="metadata"><summary>Document metadata</summary><pre>id: ADR-0001
 title: Use .agent as the provider-neutral canonical root
 status: accepted
 date: 2026-09-21
@@ -92,83 +610,55 @@ consulted: []
 informed:
   - template-users
 supersedes: null
-superseded-by: null
----
-
-# Context
-
-Claude Code, Gemini CLI, and Codex use different native instruction and skill
-locations. Maintaining separate authoritative content would create policy,
-workflow, memory, and security drift.
-
-# Decision drivers
-
-- One reviewable source of truth must govern every supported provider.
-- Native provider discovery must still work without copying policy by hand.
-- Generated files must be reproducible and drift-detectable.
-- Local memory and review runs must remain private runtime state.
-
-# Considered options
-
-## Maintain each provider root independently
-
-This is simple initially, but duplicates policy and makes cross-provider parity
-dependent on manual synchronization.
-
-## Use one provider&#x27;s native root as canonical
-
-This reduces duplication but gives one provider special authority and leaks its
-conventions into the other adapters.
-
-## Use `.agent/` as a provider-neutral canonical root
-
-Canonical policies, skills, schemas, workflows, templates, project model, and
-runtime live under `.agent/`. Generated `.agents/`, `.claude/`, `.gemini/`,
-`AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` remain thin native adapters.
-
-# Decision
-
-Use `.agent/` as the only authoritative agent-project root. Generate and verify
-provider-native adapters from it. Store private SQLite memory and review runs in
-ignored `.agent/.memory/` and `.agent/.runs/` directories.
-
-# Rationale
-
-The neutral root gives every provider the same reviewed contracts while keeping
-native discovery ergonomic. Deterministic generation and manifest checks turn
-adapter parity into a machine-verifiable invariant.
-
-# Consequences
-
-- Canonical behavior changes must start in `.agent/`.
-- Direct edits to generated adapters are rejected as drift.
-- Provider-specific capabilities stay in runtime adapters, not policy content.
-- Template users must keep `.agent/.memory/` and `.agent/.runs/` untracked.
-
-# Risks and mitigations
-
-- A generator defect could affect every provider; golden tests and adapter
-  drift checks mitigate this.
-- Provider CLI changes can break an adapter; capability probes and fail-closed
-  real-CLI smoke tests surface the incompatibility.
-- Generated roots may look authoritative; headers and `AGENTS.md` state the
-  authority order explicitly.
-
-# Follow-up
-
-- Run `./scripts/agent adapters check` and `./scripts/agent docs check` in CI.
-- Record provider versions and real-CLI limitations in acceptance evidence.
-- Supersede this ADR if the canonical root or generation strategy changes.
-
-# Evidence
-
-- `docs/superpowers/specs/2026-09-21-agent-project-template-design.md`
-- `docs/superpowers/plans/2026-09-21-agent-project-template.md`
-- `.agent/tests/test_adapters.py`
-- `.agent/tests/test_acceptance.py`
-- `docs/security/threat-model.md`
-</pre></article><article><h3>0002 Antigravity Gemini Adapter</h3><pre>---
-id: ADR-0002
+superseded-by: null</pre></details>
+<h3>Context</h3>
+<p>Claude Code, Gemini CLI, and Codex use different native instruction and skill locations. Maintaining separate authoritative content would create policy, workflow, memory, and security drift.</p>
+<h3>Decision drivers</h3>
+<ul>
+<li>One reviewable source of truth must govern every supported provider.</li>
+<li>Native provider discovery must still work without copying policy by hand.</li>
+<li>Generated files must be reproducible and drift-detectable.</li>
+<li>Local memory and review runs must remain private runtime state.</li>
+</ul>
+<h3>Considered options</h3>
+<h4>Maintain each provider root independently</h4>
+<p>This is simple initially, but duplicates policy and makes cross-provider parity dependent on manual synchronization.</p>
+<h4>Use one provider&#x27;s native root as canonical</h4>
+<p>This reduces duplication but gives one provider special authority and leaks its conventions into the other adapters.</p>
+<h4>Use <code>.agent/</code> as a provider-neutral canonical root</h4>
+<p>Canonical policies, skills, schemas, workflows, templates, project model, and runtime live under <code>.agent/</code>. Generated <code>.agents/</code>, <code>.claude/</code>, <code>.gemini/</code>, <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and <code>GEMINI.md</code> remain thin native adapters.</p>
+<h3>Decision</h3>
+<p>Use <code>.agent/</code> as the only authoritative agent-project root. Generate and verify provider-native adapters from it. Store private SQLite memory and review runs in ignored <code>.agent/.memory/</code> and <code>.agent/.runs/</code> directories.</p>
+<h3>Rationale</h3>
+<p>The neutral root gives every provider the same reviewed contracts while keeping native discovery ergonomic. Deterministic generation and manifest checks turn adapter parity into a machine-verifiable invariant.</p>
+<h3>Consequences</h3>
+<ul>
+<li>Canonical behavior changes must start in <code>.agent/</code>.</li>
+<li>Direct edits to generated adapters are rejected as drift.</li>
+<li>Provider-specific capabilities stay in runtime adapters, not policy content.</li>
+<li>Template users must keep <code>.agent/.memory/</code> and <code>.agent/.runs/</code> untracked.</li>
+</ul>
+<h3>Risks and mitigations</h3>
+<ul>
+<li>A generator defect could affect every provider; golden tests and adapter drift checks mitigate this.</li>
+<li>Provider CLI changes can break an adapter; capability probes and fail-closed real-CLI smoke tests surface the incompatibility.</li>
+<li>Generated roots may look authoritative; headers and <code>AGENTS.md</code> state the authority order explicitly.</li>
+</ul>
+<h3>Follow-up</h3>
+<ul>
+<li>Run <code>./scripts/agent adapters check</code> and <code>./scripts/agent docs check</code> in CI.</li>
+<li>Record provider versions and real-CLI limitations in acceptance evidence.</li>
+<li>Supersede this ADR if the canonical root or generation strategy changes.</li>
+</ul>
+<h3>Evidence</h3>
+<ul>
+<li><code>docs/superpowers/specs/2026-09-21-agent-project-template-design.md</code></li>
+<li><code>docs/superpowers/plans/2026-09-21-agent-project-template.md</code></li>
+<li><code>.agent/tests/test_adapters.py</code></li>
+<li><code>.agent/tests/test_acceptance.py</code></li>
+<li><code>docs/security/threat-model.md</code></li>
+</ul></div></details>
+<details class="document"><summary>0002 Antigravity Gemini Adapter</summary><div class="document-body"><details class="metadata"><summary>Document metadata</summary><pre>id: ADR-0002
 title: Execute Gemini through Antigravity CLI and share native skills
 status: accepted
 date: 2026-09-22
@@ -178,220 +668,185 @@ consulted: []
 informed:
   - template-users
 supersedes: null
-superseded-by: null
----
-
-# Context
-
-The owner requested migration from Gemini CLI to `agy`. Antigravity supports
-multiple model families, a different headless output contract, shared
-`.agents/skills`, and PreInvocation/Stop lifecycle hooks.
-
-# Decision
-
-Keep the canonical `.agent/` architecture and `gemini` model-family identity.
-Change its executable/flags/parser to AGY; pin a Gemini model and reject other
-families. Share the Codex native skill tree instead of retaining a redundant
-legacy Gemini tree. Retire only unchanged manifest-owned outputs.
-
-Preserve the outer OS sandbox and exact-manifest egress approval. Plan mode is
-not read-only enforcement. Automated review uses disposable API-key settings,
-not the user&#x27;s OAuth profile/keyring. Hooks inject bounded data only at initial
-invocation and never force a new turn or persist raw transcripts.
-
-# Alternatives and consequences
-
-A bare command rename would retain incompatible flags, hooks and output
-validation. Renaming the provider family to `agy` would obscure model identity
-and require unnecessary historical-data migration. Importing the host profile
-would expand credential/plugin exposure; that remains out of scope.
-
-Interactive account login and automated API-key authentication are distinct.
-Model entitlement and authenticated execution need a real smoke test; missing
-credentials/capabilities never count as completed review. Historical Gemini CLI
-evidence remains historical. This ADR updates native layout details in ADR-0001
-without replacing its canonical-root decision.
-
-# Evidence
-
-- `docs/antigravity.md`
-- `docs/superpowers/plans/2026-09-22-antigravity-migration.md`
-- `.agent/tests/test_antigravity.py`
-- `.agent/tests/test_acceptance.py`
-</pre></article></section><section id="security"><h2>Security model and controls</h2><article><h3>Data Classification</h3><pre># Data Classification
-
-| Data | Classification | Storage | Egress rule |
-|---|---|---|---|
-| Canonical policies and public docs | Public or internal | Git | Allowed by repository policy |
-| Product source and diffs | Internal | Git and approved review package | Exact manifest approval required |
-| Canonical Project Memory | Internal | Git Markdown records | Same review-package policy as source |
-| Local candidates and run artifacts | Internal or sensitive | `.agent/.memory/`, `.agent/.runs/` | Denied by default |
-| Credentials, private blocks, personal data | Secret or sensitive | Approved external secret/data store | Never auto-injected or exported |
-
-Projects must classify their own user and business data before enabling review
-egress or memory capture.
-</pre></article><article><h3>Residual Risks</h3><pre># Residual Risks
-
-- AI-generated and AI-reviewed changes may contain defects not detected by the
-  selected evidence or reviewer.
-- Local plaintext memory and review artifacts rely on operating-system account
-  isolation and disk protections.
-- Provider CLI behavior and privacy terms are outside this repository; approval
-  confirms package contents, not provider guarantees.
-- Optional ecosystem scanners can be unavailable. They are reported as not
-  configured and become blocking when project policy marks them required.
-- The template cannot validate an adopting project&#x27;s production identity,
-  network, data-retention, backup, or disaster-recovery controls.
-
-Owners must reassess these risks when exposure, credentials, sensitive data,
-trust boundaries, dependencies, infrastructure, or recovery design changes.
-</pre></article><article><h3>Security Controls</h3><pre># Security Controls
-
-The runtime provides immutable configuration, argument-array process execution,
-path containment, symlink rejection, atomic owner-only writes, output limits,
-secret and private-block redaction, manifest-bound review packages, structured
-provider output validation, evidence checksums, progressive gates, and reviewed
-memory promotion.
-
-Controls are verified by repository tests and gate evidence. OWASP ASVS, SAMM,
-and threat-modeling materials are requirement references only; this template
-does not claim certification or full coverage of any framework.
-
-## Reference mapping
-
-| Template requirement | Reference baseline | Use |
-|---|---|---|
-| Technical application controls | OWASP ASVS 5.0.0 | Select applicable, version-qualified requirement IDs for the adopting project |
-| Secure lifecycle and governance | OWASP SAMM 2.0 | Assess and improve practices; not a release certificate |
-| Assets, actors, flows, boundaries, threats, mitigations, review | OWASP Threat Modeling Cheat Sheet, reviewed 2026-09-21 | Method guidance; project evidence remains authoritative |
-
-References: &lt;https://owasp.org/projects/asvs&gt;,
-&lt;https://owaspsamm.org/model/&gt;, and
-&lt;https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html&gt;.
-</pre></article><article><h3>Threat Model</h3><pre># Threat Model
-
-## Scope
-
-This model covers the template runtime, canonical policy and skills, local
-Project Memory, generated documentation, review packages, provider CLI
-processes, and CI wrappers. Product repositories created from the template must
-replace or extend this model for their own assets and deployment.
-
-## Assets and actors
-
-Assets include repository source, Git history, configuration, provider prompts,
-review evidence, canonical memory, private local memory, credentials available
-to the host, and release artifacts. Actors include the project owner, coding
-agents, independent reviewer providers, local provider CLIs, hosted CI runners,
-dependencies, and an attacker able to contribute untrusted repository content.
-
-## Trust boundaries and data flows
-
-- The repository boundary separates versioned policy from the host filesystem.
-- `.agent/.memory/` and `.agent/.runs/` are private local plaintext stores.
-- Review packages cross from the local repository to a selected provider CLI
-  only after a manifest preview and exact-hash approval.
-- Provider output crosses back as untrusted structured data and is validated.
-- CI runners execute the same repository runtime in a separate hosted boundary.
-
-## Threats and controls
-
-- Prompt injection in source or memory: content is treated as data; memory
-  cannot override policy; review providers receive a fixed policy.
-- Command injection: commands are argument arrays executed with `shell=False`.
-- Path traversal and symlink escape: repository containment is checked before
-  reads or writes.
-- Secret leakage: deny rules, bounded packages, redaction, private blocks, and
-  manifest approval run before provider invocation.
-- Review-package tampering: the manifest binds diff, context, requirements,
-  verification, policy, and schema; checksums are revalidated on resume.
-- Hidden generated changes: deduplication compares regular-file modes and Git
-  blobs at both base/head, only against a changed canonical source. Full scope
-  and full-diff hash remain bound and projection is recomputed before execution
-  and merge. Divergence, unsupported file modes, and unproven copies are reviewed.
-- Context exhaustion: bounded ranked memory and estimated-token review caps
-  reduce payloads; review overflow blocks rather than silently omitting changes.
-  Token estimates exclude provider-internal prompts, repeated reads and output.
-- Untrusted memory import: imported records remain candidates until reviewed.
-- Supply-chain compromise: license, dependency, and provenance checks are
-  release inputs, while unsupported checks remain explicitly unverified.
-
-## Residual risks
-
-### Antigravity migration delta
-
-AGY can select Claude as well as Gemini: the Gemini adapter pins/validates a
-Gemini model to preserve cross-provider identity. Its JSON parser requires a
-successful terminal status and schema-validated findings, rejecting conflicting
-response fields. Plan mode is advisory; the OS sandbox remains the read/write
-boundary. A canonicalized disposable HOME fixes macOS temporary-path aliases
-without granting new host directories. Only minimal API-key-mode settings are
-created there; no host profile, plugin config or OAuth token store is imported.
-The provider environment is reduced to `GEMINI_API_KEY` plus common runtime
-variables. API-key backend/model compatibility still needs live verification.
-
-Native migration deletes only unchanged manifest-owned retired outputs and
-blocks path escapes/symlinks. AGY hooks consume only bounded invocation metadata,
-never follow transcript paths, and inject memory as data. Stop does not restart
-the agent or persist learning without review. Hook UI visibility is best effort.
-
-Provider and scanner defects can miss vulnerabilities. Local plaintext depends
-on host permissions and full-disk security. A compromised maintainer or CI
-credential can bypass repository process. Real product runtime and deployment
-remain outside this template-only assessment.
-</pre></article></section><section id="operations"><h2>Operations, observability, and recovery</h2><article><h3>Observability</h3><pre># Observability
-
-The template records deterministic command evidence, review manifests and checksums, provider audit events, documentation-impact decisions, security scope, adjudication dispositions, and release-gate results.
-
-Operators should monitor:
-
-- command exit codes, timeouts, tool versions, commit IDs, and worktree diff hashes;
-- provider capability, authentication, review status, reviewer independence, and package checksum;
-- memory health, stale records, rejected private content, and index rebuilds;
-- documentation drift and architecture-model validation;
-- required scanner status, unverified areas, and residual risks.
-
-Local `.agent/.runs/` artifacts may be discarded and regenerated. Versioned source, canonical memory, architecture documents, and ADRs are durable project history.
-</pre></article><article><h3>Runbooks</h3><pre># Operations and recovery runbooks
-
-## Start or resume work
-
-1. Run `./scripts/agent doctor --json --providers`.
-2. Run `./scripts/agent memory bootstrap --query &quot;current task&quot;`.
-3. Inspect `./scripts/agent workflow status --json` and the current Git status.
-
-## Review recovery
-
-If a provider times out or is unauthenticated, preserve the review package, fix the provider session, then rerun with the same package path and approved manifest checksum. Never convert a provider failure into approval.
-
-## Documentation recovery
-
-Run `./scripts/agent docs build`, inspect the generated summary and HTML, then run `./scripts/agent docs check` after committing the intended change.
-
-## Memory recovery
-
-Use `memory doctor` and `memory rebuild-index`. Canonical Markdown records remain the recovery source; SQLite is a disposable index. Export/import is checksum-validated and transactional.
-
-## Release rollback
-
-Stop the release when any gate is blocked or incomplete. Preserve evidence, restore the last known-good release reference, follow project-specific data rollback instructions, and record residual risk before retrying.
-</pre></article></section><section id="traceability"><h2>Requirement traceability</h2><article><h3>Traceability</h3><pre># Requirement traceability
-
-| Requirement | Canonical implementation | Primary evidence |
-|---|---|---|
-| Provider-neutral workflow | `.agent/workflows/`, generated provider adapters | adapter drift check |
-| Independent cross-provider review | review package, provider adapters, orchestrator | manifest-bound review and adjudication artifacts |
-| Architecture documentation | project model and documentation generator | deterministic `system-summary.md` and `system.html` |
-| Security review | security profile, threat model, scanner status | scope-bound security assessment and release gate |
-| Progressive project memory | private checkpoint, reviewed promotion, canonical records | memory tests, checksums, stale-record filtering |
-| Project starter lifecycle | init, workflow state, quick/merge/release gates | clean-fixture acceptance and CI workflows |
-| UX-01–02, task-routed UX/UI and traceable artifacts | four `.agent/skills/` UX/UI contracts, references and assets; interface guide | routing tests and technique trials in `docs/reviews/ux-ui-skills.md` |
-| UX-03–05, source boundaries and portable delivery | `.agent/sources/UX_UI_AUDIT.md`, local licenses, generated native resources | source/license metadata checks, adapter equality tests and scoped trial limitations |
-
-The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.
-</pre></article></section>
-<section id="governance"><h2>Decisions, controls, and traceability</h2><p>See <code>docs/decisions/</code> for ADRs, <code>docs/security/</code> for controls and residual risks, and <code>.agent/.runs/</code> for commit-bound evidence. Quality gates and recovery procedures are defined by the canonical workflow.</p></section>
+superseded-by: null</pre></details>
+<h3>Context</h3>
+<p>The owner requested migration from Gemini CLI to <code>agy</code>. Antigravity supports multiple model families, a different headless output contract, shared <code>.agents/skills</code>, and PreInvocation/Stop lifecycle hooks.</p>
+<h3>Decision</h3>
+<p>Keep the canonical <code>.agent/</code> architecture and <code>gemini</code> model-family identity. Change its executable/flags/parser to AGY; pin a Gemini model and reject other families. Share the Codex native skill tree instead of retaining a redundant legacy Gemini tree. Retire only unchanged manifest-owned outputs.</p>
+<p>Preserve the outer OS sandbox and exact-manifest egress approval. Plan mode is not read-only enforcement. Automated review uses disposable API-key settings, not the user&#x27;s OAuth profile/keyring. Hooks inject bounded data only at initial invocation and never force a new turn or persist raw transcripts.</p>
+<h3>Alternatives and consequences</h3>
+<p>A bare command rename would retain incompatible flags, hooks and output validation. Renaming the provider family to <code>agy</code> would obscure model identity and require unnecessary historical-data migration. Importing the host profile would expand credential/plugin exposure; that remains out of scope.</p>
+<p>Interactive account login and automated API-key authentication are distinct. Model entitlement and authenticated execution need a real smoke test; missing credentials/capabilities never count as completed review. Historical Gemini CLI evidence remains historical. This ADR updates native layout details in ADR-0001 without replacing its canonical-root decision.</p>
+<h3>Evidence</h3>
+<ul>
+<li><code>docs/antigravity.md</code></li>
+<li><code>docs/superpowers/plans/2026-09-22-antigravity-migration.md</code></li>
+<li><code>.agent/tests/test_antigravity.py</code></li>
+<li><code>.agent/tests/test_acceptance.py</code></li>
+</ul></div></details></section>
+<section class="sheet" id="security"><div class="sheet-head"><h2><span class="section-number">09</span> Security model and controls</h2><span class="sheet-num">docs/security</span></div><details class="document"><summary>Data Classification</summary><div class="document-body"><h3>Data Classification</h3>
+<div class="table-wrap"><table><thead><tr><th>Data</th><th>Classification</th><th>Storage</th><th>Egress rule</th></tr></thead><tbody>
+<tr><td>Canonical policies and public docs</td><td>Public or internal</td><td>Git</td><td>Allowed by repository policy</td></tr>
+<tr><td>Product source and diffs</td><td>Internal</td><td>Git and approved review package</td><td>Exact manifest approval required</td></tr>
+<tr><td>Canonical Project Memory</td><td>Internal</td><td>Git Markdown records</td><td>Same review-package policy as source</td></tr>
+<tr><td>Local candidates and run artifacts</td><td>Internal or sensitive</td><td><code>.agent/.memory/</code>, <code>.agent/.runs/</code></td><td>Denied by default</td></tr>
+<tr><td>Credentials, private blocks, personal data</td><td>Secret or sensitive</td><td>Approved external secret/data store</td><td>Never auto-injected or exported</td></tr>
+</tbody></table></div>
+<p>Projects must classify their own user and business data before enabling review egress or memory capture.</p></div></details>
+<details class="document"><summary>Residual Risks</summary><div class="document-body"><h3>Residual Risks</h3>
+<ul>
+<li>AI-generated and AI-reviewed changes may contain defects not detected by the selected evidence or reviewer.</li>
+<li>Local plaintext memory and review artifacts rely on operating-system account isolation and disk protections.</li>
+<li>Provider CLI behavior and privacy terms are outside this repository; approval confirms package contents, not provider guarantees.</li>
+<li>Optional ecosystem scanners can be unavailable. They are reported as not configured and become blocking when project policy marks them required.</li>
+<li>The template cannot validate an adopting project&#x27;s production identity, network, data-retention, backup, or disaster-recovery controls.</li>
+</ul>
+<p>Owners must reassess these risks when exposure, credentials, sensitive data, trust boundaries, dependencies, infrastructure, or recovery design changes.</p></div></details>
+<details class="document"><summary>Security Controls</summary><div class="document-body"><h3>Security Controls</h3>
+<p>The runtime provides immutable configuration, argument-array process execution, path containment, symlink rejection, atomic owner-only writes, output limits, secret and private-block redaction, manifest-bound review packages, structured provider output validation, evidence checksums, progressive gates, and reviewed memory promotion.</p>
+<p>Controls are verified by repository tests and gate evidence. OWASP ASVS, SAMM, and threat-modeling materials are requirement references only; this template does not claim certification or full coverage of any framework.</p>
+<h4>Reference mapping</h4>
+<div class="table-wrap"><table><thead><tr><th>Template requirement</th><th>Reference baseline</th><th>Use</th></tr></thead><tbody>
+<tr><td>Technical application controls</td><td>OWASP ASVS 5.0.0</td><td>Select applicable, version-qualified requirement IDs for the adopting project</td></tr>
+<tr><td>Secure lifecycle and governance</td><td>OWASP SAMM 2.0</td><td>Assess and improve practices; not a release certificate</td></tr>
+<tr><td>Assets, actors, flows, boundaries, threats, mitigations, review</td><td>OWASP Threat Modeling Cheat Sheet, reviewed 2026-09-21</td><td>Method guidance; project evidence remains authoritative</td></tr>
+</tbody></table></div>
+<p>References: <a href="https://owasp.org/projects/asvs" rel="noreferrer">https://owasp.org/projects/asvs</a>, <a href="https://owaspsamm.org/model/" rel="noreferrer">https://owaspsamm.org/model/</a>, and <a href="https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html" rel="noreferrer">https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html</a>.</p></div></details>
+<details class="document"><summary>Threat Model</summary><div class="document-body"><h3>Threat Model</h3>
+<h4>Scope</h4>
+<p>This model covers the template runtime, canonical policy and skills, local Project Memory, generated documentation, review packages, provider CLI processes, and CI wrappers. Product repositories created from the template must replace or extend this model for their own assets and deployment.</p>
+<h4>Assets and actors</h4>
+<p>Assets include repository source, Git history, configuration, provider prompts, review evidence, canonical memory, private local memory, credentials available to the host, and release artifacts. Actors include the project owner, coding agents, independent reviewer providers, local provider CLIs, hosted CI runners, dependencies, and an attacker able to contribute untrusted repository content.</p>
+<h4>Trust boundaries and data flows</h4>
+<ul>
+<li>The repository boundary separates versioned policy from the host filesystem.</li>
+<li><code>.agent/.memory/</code> and <code>.agent/.runs/</code> are private local plaintext stores.</li>
+<li>Review packages cross from the local repository to a selected provider CLI only after a manifest preview and exact-hash approval.</li>
+<li>Provider output crosses back as untrusted structured data and is validated.</li>
+<li>CI runners execute the same repository runtime in a separate hosted boundary.</li>
+</ul>
+<h4>Threats and controls</h4>
+<ul>
+<li>Prompt injection in source or memory: content is treated as data; memory cannot override policy; review providers receive a fixed policy.</li>
+<li>Command injection: commands are argument arrays executed with <code>shell=False</code>.</li>
+<li>Path traversal and symlink escape: repository containment is checked before reads or writes.</li>
+<li>Secret leakage: deny rules, bounded packages, redaction, private blocks, and manifest approval run before provider invocation.</li>
+<li>Review-package tampering: the manifest binds diff, context, requirements, verification, policy, and schema; checksums are revalidated on resume.</li>
+<li>Hidden generated changes: deduplication compares regular-file modes and Git blobs at both base/head, only against a changed canonical source. Full scope and full-diff hash remain bound and projection is recomputed before execution and merge. Divergence, unsupported file modes, and unproven copies are reviewed.</li>
+<li>Context exhaustion: bounded ranked memory and estimated-token review caps reduce payloads; review overflow blocks rather than silently omitting changes. Token estimates exclude provider-internal prompts, repeated reads and output.</li>
+<li>Untrusted memory import: imported records remain candidates until reviewed.</li>
+<li>Supply-chain compromise: license, dependency, and provenance checks are release inputs, while unsupported checks remain explicitly unverified.</li>
+</ul>
+<h4>Residual risks</h4>
+<h5>Antigravity migration delta</h5>
+<p>AGY can select Claude as well as Gemini: the Gemini adapter pins/validates a Gemini model to preserve cross-provider identity. Its JSON parser requires a successful terminal status and schema-validated findings, rejecting conflicting response fields. Plan mode is advisory; the OS sandbox remains the read/write boundary. A canonicalized disposable HOME fixes macOS temporary-path aliases without granting new host directories. Only minimal API-key-mode settings are created there; no host profile, plugin config or OAuth token store is imported. The provider environment is reduced to <code>GEMINI_API_KEY</code> plus common runtime variables. API-key backend/model compatibility still needs live verification.</p>
+<p>Native migration deletes only unchanged manifest-owned retired outputs and blocks path escapes/symlinks. AGY hooks consume only bounded invocation metadata, never follow transcript paths, and inject memory as data. Stop does not restart the agent or persist learning without review. Hook UI visibility is best effort.</p>
+<p>Provider and scanner defects can miss vulnerabilities. Local plaintext depends on host permissions and full-disk security. A compromised maintainer or CI credential can bypass repository process. Real product runtime and deployment remain outside this template-only assessment.</p></div></details></section>
+<section class="sheet" id="operations"><div class="sheet-head"><h2><span class="section-number">10</span> Operations, observability, and recovery</h2><span class="sheet-num">docs/operations</span></div><details class="document"><summary>Observability</summary><div class="document-body"><h3>Observability</h3>
+<p>The template records deterministic command evidence, review manifests and checksums, provider audit events, documentation-impact decisions, security scope, adjudication dispositions, and release-gate results.</p>
+<p>Operators should monitor:</p>
+<ul>
+<li>command exit codes, timeouts, tool versions, commit IDs, and worktree diff hashes;</li>
+<li>provider capability, authentication, review status, reviewer independence, and package checksum;</li>
+<li>memory health, stale records, rejected private content, and index rebuilds;</li>
+<li>documentation drift and architecture-model validation;</li>
+<li>required scanner status, unverified areas, and residual risks.</li>
+</ul>
+<p>Local <code>.agent/.runs/</code> artifacts may be discarded and regenerated. Versioned source, canonical memory, architecture documents, and ADRs are durable project history.</p></div></details>
+<details class="document"><summary>Runbooks</summary><div class="document-body"><h3>Operations and recovery runbooks</h3>
+<h4>Start or resume work</h4>
+<ol>
+<li>Run <code>./scripts/agent doctor --json --providers</code>.</li>
+<li>Run <code>./scripts/agent memory bootstrap --query &quot;current task&quot;</code>.</li>
+<li>Inspect <code>./scripts/agent workflow status --json</code> and the current Git status.</li>
+</ol>
+<h4>Review recovery</h4>
+<p>If a provider times out or is unauthenticated, preserve the review package, fix the provider session, then rerun with the same package path and approved manifest checksum. Never convert a provider failure into approval.</p>
+<h4>Documentation recovery</h4>
+<p>Run <code>./scripts/agent docs build</code>, inspect the generated summary and HTML, then run <code>./scripts/agent docs check</code> after committing the intended change.</p>
+<h4>Memory recovery</h4>
+<p>Use <code>memory doctor</code> and <code>memory rebuild-index</code>. Canonical Markdown records remain the recovery source; SQLite is a disposable index. Export/import is checksum-validated and transactional.</p>
+<h4>Release rollback</h4>
+<p>Stop the release when any gate is blocked or incomplete. Preserve evidence, restore the last known-good release reference, follow project-specific data rollback instructions, and record residual risk before retrying.</p>
+<h4>Architecture Pages publication and recovery</h4>
+<p>After the reviewed change is merged, enable GitHub Actions as the repository&#x27;s Pages source and allow only main in the github-pages deployment environment. Run gh workflow run architecture-pages.yml --ref main, inspect the build/deploy run, then verify the public site before setting it as the repository homepage. A PR or a push never deploys this site. A manual run from another branch fails.</p>
+<p>If a publication fails, retain the last successful deployment, inspect the Actions logs and fix the source/model or Pages settings. Rebuild with the same canonical generator. Restore a previous page through a reviewed source revert and a new manual dispatch from main; do not publish unreviewed branch content.</p></div></details></section>
+<section class="sheet" id="traceability"><div class="sheet-head"><h2><span class="section-number">11</span> Requirement traceability</h2><span class="sheet-num">docs</span></div><details class="document"><summary>Traceability</summary><div class="document-body"><h3>Requirement traceability</h3>
+<div class="table-wrap"><table><thead><tr><th>Requirement</th><th>Canonical implementation</th><th>Primary evidence</th></tr></thead><tbody>
+<tr><td>Provider-neutral workflow</td><td><code>.agent/workflows/</code>, generated provider adapters</td><td>adapter drift check</td></tr>
+<tr><td>Independent cross-provider review</td><td>review package, provider adapters, orchestrator</td><td>manifest-bound review and adjudication artifacts</td></tr>
+<tr><td>Architecture documentation</td><td>project model and documentation generator</td><td>deterministic <code>system-summary.md</code> and <code>system.html</code></td></tr>
+<tr><td>Security review</td><td>security profile, threat model, scanner status</td><td>scope-bound security assessment and release gate</td></tr>
+<tr><td>Progressive project memory</td><td>private checkpoint, reviewed promotion, canonical records</td><td>memory tests, checksums, stale-record filtering</td></tr>
+<tr><td>Project starter lifecycle</td><td>init, workflow state, quick/merge/release gates</td><td>clean-fixture acceptance and CI workflows</td></tr>
+<tr><td>UX-01–02, task-routed UX/UI and traceable artifacts</td><td>four <code>.agent/skills/</code> UX/UI contracts, references and assets; interface guide</td><td>routing tests and technique trials in <code>docs/reviews/ux-ui-skills.md</code></td></tr>
+<tr><td>UX-03–05, source boundaries and portable delivery</td><td><code>.agent/sources/UX_UI_AUDIT.md</code>, local licenses, generated native resources</td><td>source/license metadata checks, adapter equality tests and scoped trial limitations</td></tr>
+</tbody></table></div>
+<p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
+<section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-09-30T16:19:00+07:00</span></footer>
 </main>
-<script>const q=document.getElementById('search');q.addEventListener('input',()=>{const v=q.value.toLowerCase();document.querySelectorAll('main section').forEach(s=>s.classList.toggle('hidden',v&&!s.textContent.toLowerCase().includes(v)));});</script>
+</div>
+<script>(() => {
+  const rail = document.getElementById('rail');
+  const contentsButton = document.getElementById('toc-toggle');
+  contentsButton.addEventListener('click', () => {
+    const open = rail.classList.toggle('open');
+    contentsButton.setAttribute('aria-expanded', String(open));
+  });
+  const themeButton = document.getElementById('theme-toggle');
+  const themes = ['system', 'light', 'dark'];
+  let theme = 'system';
+  const applyTheme = () => {
+    if (theme === 'system') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', theme);
+    themeButton.textContent = `Theme: ${theme}`;
+  };
+  try {
+    const stored = localStorage.getItem('architecture-theme');
+    if (themes.includes(stored)) theme = stored;
+  } catch (_) { /* Browser privacy settings can deny offline storage. */ }
+  applyTheme();
+  themeButton.addEventListener('click', () => {
+    theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+    applyTheme();
+    try { localStorage.setItem('architecture-theme', theme); } catch (_) {}
+  });
+  const search = document.getElementById('search');
+  const status = document.getElementById('search-status');
+  const sections = [...document.querySelectorAll('main > section')];
+  const previousOpen = new Map();
+  search.addEventListener('input', () => {
+    const query = search.value.trim().toLowerCase();
+    let matches = 0;
+    sections.forEach(section => {
+      const found = !query || section.textContent.toLowerCase().includes(query);
+      section.classList.toggle('hidden', !found);
+      if (found) matches += 1;
+      section.querySelectorAll('details.document').forEach(document => {
+        if (query) {
+          if (!previousOpen.has(document)) previousOpen.set(document, document.open);
+          document.open = document.textContent.toLowerCase().includes(query);
+        } else if (previousOpen.has(document)) {
+          document.open = previousOpen.get(document);
+          previousOpen.delete(document);
+        }
+      });
+    });
+    status.textContent = query ? `${matches} matching sections` : '';
+  });
+  const printOpen = new Map();
+  window.addEventListener('beforeprint', () => {
+    document.querySelectorAll('details').forEach(document => {
+      printOpen.set(document, document.open);
+      document.open = true;
+    });
+  });
+  window.addEventListener('afterprint', () => {
+    printOpen.forEach((open, document) => { document.open = open; });
+    printOpen.clear();
+  });
+})();
+</script>
 </body>
 </html>

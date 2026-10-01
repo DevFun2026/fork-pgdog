@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from html.parser import HTMLParser
 
 from agent_cli.docs import build_docs, check_docs, write_docs
 
@@ -77,6 +78,58 @@ class DocumentationTests(unittest.TestCase):
             "governance",
         ):
             self.assertIn(f'id="{section_id}"', first.html)
+
+    def test_blueprint_page_renders_model_graph_and_readable_markdown(self):
+        (self.root / "docs/architecture/system-context.md").write_text(
+            "# Context\n\n**Current runtime** uses `Core`.\n\n"
+            "| State | Scope |\n| --- | --- |\n| Planned | Agent |\n",
+            encoding="utf-8",
+        )
+        page = build_docs(self.root, generated_at="fixed", commit="abc").html
+        self.assertIn('class="shell"', page)
+        self.assertIn('class="rail"', page)
+        self.assertIn('<svg', page)
+        self.assertIn('data-component="core"', page)
+        self.assertIn('<strong>Current runtime</strong>', page)
+        self.assertIn('<code>Core</code>', page)
+        self.assertIn('<td>Planned</td>', page)
+        self.assertNotIn('<pre># Context', page)
+
+    def test_blueprint_has_valid_navigation_and_no_remote_assets(self):
+        class Audit(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.ids = []
+                self.targets = []
+                self.assets = []
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if "id" in attrs:
+                    self.ids.append(attrs["id"])
+                if tag == "a" and attrs.get("href", "").startswith("#"):
+                    self.targets.append(attrs["href"][1:])
+                if tag in {"script", "link", "img", "iframe", "source"}:
+                    self.assets.extend(attrs[key] for key in ("src", "href", "srcset") if key in attrs)
+        page = build_docs(self.root, generated_at="fixed", commit="abc").html
+        audit = Audit()
+        audit.feed(page)
+        self.assertEqual(len(audit.ids), len(set(audit.ids)))
+        self.assertTrue(set(audit.targets).issubset(audit.ids))
+        self.assertEqual(audit.assets, [])
+        self.assertIn('aria-expanded="false"', page)
+        self.assertIn('prefers-color-scheme: dark', page)
+
+    def test_document_markdown_cannot_inject_active_html_or_unsafe_urls(self):
+        (self.root / "docs/architecture/system-context.md").write_text(
+            '# Context\n<img src=x onerror=alert(1)>\n\n'
+            '[unsafe](javascript:alert) [protocol](//evil.invalid) '
+            '[safe](https://docs.example.com/) [malformed](https://[broken)\n', encoding="utf-8",
+        )
+        page = build_docs(self.root, generated_at="fixed", commit="abc").html
+        self.assertNotIn('<img src=x', page)
+        self.assertNotIn('href="javascript:', page)
+        self.assertNotIn('href="//evil.invalid', page)
+        self.assertIn('href="https://docs.example.com/"', page)
 
     def test_check_detects_stale_committed_html(self):
         write_docs(
