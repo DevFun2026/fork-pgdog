@@ -1,0 +1,9 @@
+# Project-scoped child-agent defaults only.
+# The primary model, reasoning, provider, permissions and service tier remain
+# those selected when starting the session; do not set them at the top level.
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "high"
+# Defaults are not a hard model/cost ceiling. Each shipped role also pins them.
