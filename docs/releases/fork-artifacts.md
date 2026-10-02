@@ -5,6 +5,13 @@ local implementation or plan approval. Initial chart source is 0.1.0 with
 appVersion 0.1.60. Exact production versions/digests are recorded only after a
 successful authorized workflow and pull-back verification.
 
+The owner subsequently approved **image 0.1.0 and chart 0.1.0** for the first
+release in [PR #7 comment](https://github.com/DevFun2026/fork-pgdog/pull/7#issuecomment-5948092075).
+Publication passes image version 0.1.0 to the source Dockerfile and packages
+chart appVersion 0.1.0; this distribution version does not rewrite the upstream
+Cargo package version. Artifact source remains the reviewed, merged
+`09026eec63e0cb2da60389ef623e56ff1e4ba74b`.
+
 Validation is pull-request/manual and read-only. The manual package workflow
 accepts a full source SHA, exact new image/chart SemVer and an owner-approved
 canonical receipt JSON/SHA256. Inputs enter scripts via environment/files and
@@ -37,6 +44,51 @@ independent assessment or a detached signer replacement. After integration the
 default branch may equal source, so retain the genuine pre-integration receipt
 without forging an intermediate trusted base. Preserve the candidate SHA through
 fast-forward; changed source needs new reviewed evidence.
+
+## Explicit first-release owner exception
+
+The approved schema-2 route is separate from the schema-1 signed release gate.
+It does not enroll a signer, lower the Standard security profile, fabricate a
+passed GateResult or call absent SSH clearance passed. Authorization explicitly
+records `ssh_clearance: waived-by-owner` and `canonical_release_gate: not-claimed`.
+The canonical security/runtime gates remain unchanged for other releases.
+
+This route accepts only the exact PR #7 source, image 0.1.0 and chart 0.1.0.
+Receipt metadata separately binds the publication workflow commit, both source
+and workflow independent Gemini reviews, real source/workflow full-suite and
+native CI run IDs/attempts, and security/threat/rollback/residual-risk hashes.
+Every required job must be successful; skipped or failed jobs, wrong paths,
+revisions or changed attempts block. Historical source review retains its real
+pre-integration base; it does not pretend main still points to that base.
+
+Create a receipt only after the workflow candidate is committed, reviewed and
+its exact-source CI has passed:
+
+```sh
+python3 scripts/verify-artifacts owner-receipt \
+  --source-review .agent/.runs/review-083a78d8-5c3a-4423-8925-e72850c8c974 \
+  --workflow-review .agent/.runs/review-WORKFLOW-PACKAGE \
+  --quality-run WORKFLOW_QUALITY_RUN_ID \
+  --artifact-run WORKFLOW_NATIVE_RUN_ID \
+  --output .agent/.runs/artifacts/first-release-receipt.json
+```
+
+Replace placeholders with actual completed evidence, compare the exported
+metadata and approve its canonical checksum before main-only dispatch. Preflight
+and the protected job before login re-read the exact owner comment, numeric
+identity, current repository admin permission, packages owner reviewer,
+main-only branch policy and all required CI jobs. Withdrawal or edit of the
+comment blocks. The dispatch actor must be the approved owner and the dispatch
+SHA must equal the reviewed workflow SHA in the receipt. Native jobs still build
+and verify the exact selected artifact source and approved version.
+
+In GitHub Actions, open **Publish fork image and OCI chart**, choose **Run
+workflow**, branch main, and provide the source SHA, versions 0.1.0/0.1.0 and the
+approved JSON/checksum. After preflight and both native builds, the owner reviews
+the packages deployment and selects **Approve and deploy**. Registry tag absence,
+byte-preserving copies, signing/attestation and chart pull-back are unchanged.
+The pinned versions/source prevent this receipt from authorizing another
+release. Partial publication remains a failure, and existing tags prevent replay.
 
 Build jobs test amd64 and arm64 natively. BuildKit records max provenance;
 the archive metadata binds actual image config/manifest, source label and checksum.

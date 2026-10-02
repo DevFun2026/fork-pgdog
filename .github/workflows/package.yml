@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       receipt_json:
-        description: Genuine bounded pre-integration release receipt JSON
+        description: Genuine signed-release receipt or explicitly approved first-release owner-exception receipt JSON
         required: true
         type: string
       receipt_sha256:
@@ -41,6 +41,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -48,6 +49,8 @@ jobs:
           persist-credentials: false
       - run: python3 -m pip install --requirement tests/artifacts/requirements.txt
       - name: Validate approved receipt and source ancestry
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"receipt.json").write_text(os.environ["RECEIPT_JSON"])'
           python3 scripts/verify-artifacts publish-preflight --receipt "$RUNNER_TEMP/receipt.json" --receipt-sha256 "$RECEIPT_SHA256" --source-sha "$SOURCE_SHA" --image-version "$IMAGE_VERSION" --chart-version "$CHART_VERSION"
@@ -120,6 +123,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       packages: write
       id-token: write
     steps:
@@ -144,6 +148,12 @@ jobs:
           pattern: fork-native-*
           path: ${{ runner.temp }}/fork-publish
           merge-multiple: true
+      - name: Revalidate receipt after owner approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"receipt.json").write_text(os.environ["RECEIPT_JSON"])'
+          python3 scripts/verify-artifacts publish-preflight --receipt "$RUNNER_TEMP/receipt.json" --receipt-sha256 "$RECEIPT_SHA256" --source-sha "$SOURCE_SHA" --image-version "$IMAGE_VERSION" --chart-version "$CHART_VERSION"
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io

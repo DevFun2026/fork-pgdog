@@ -6,6 +6,13 @@ data_categories = ["configuration", "evidence-metadata"]
 trust_boundary = "hosted-ci-to-repository"
 
 [[data_flows]]
+id = "first-release-owner-approval"
+source = "release-owner"
+target = "ci-wrappers"
+data_categories = ["evidence-metadata"]
+trust_boundary = "github-owner-to-protected-ci"
+
+[[data_flows]]
 id = "documentation-model"
 source = "canonical-core"
 target = "docs-generator"

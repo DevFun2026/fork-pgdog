@@ -50,10 +50,15 @@ def parse_receipt(raw, expected_hash, source_sha):
         receipt = json.loads(raw, object_pairs_hook=unique_object)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise ValueError("Malformed receipt JSON") from None
-    if not isinstance(receipt, dict) or set(receipt) != FIELDS:
+    if not isinstance(receipt, dict):
         raise ValueError("Unexpected receipt fields")
     if not isinstance(expected_hash, str) or not HASH.fullmatch(expected_hash) or hashlib.sha256(canonical(receipt)).hexdigest() != expected_hash:
         raise ValueError("Receipt differs from the owner-approved canonical SHA256")
+    if receipt.get("schema_version") == 2:
+        from artifacts.owner_approval import parse_initial_receipt
+        return parse_initial_receipt(receipt, source_sha)
+    if set(receipt) != FIELDS:
+        raise ValueError("Unexpected receipt fields")
     if receipt["schema_version"] != 1 or isinstance(receipt["schema_version"], bool) or receipt["repository"] != REPOSITORY:
         raise ValueError("Unsupported receipt schema/repository")
     if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha) or receipt["source_sha"] != source_sha:
@@ -123,6 +128,15 @@ def publish_preflight(root, raw, checksum, source, image_version, chart_version,
         raise ValueError("Publication dispatch must come from this repository's main branch")
     receipt = parse_receipt(raw, checksum, source)
     validate_version(image_version); validate_version(chart_version)
+    if receipt["schema_version"] == 2:
+        import os
+        from artifacts.owner_approval import validate_live
+        if image_version != receipt["image_version"] or chart_version != receipt["chart_version"]:
+            raise ValueError("Selected versions differ from the approved first release")
+        validate_live(receipt, actor_id=os.environ.get("GITHUB_ACTOR_ID"), workflow_sha=os.environ.get("GITHUB_SHA"))
+        subprocess.run(["git", "merge-base", "--is-ancestor", source, receipt["workflow_sha"]], cwd=root, check=True)
+        subprocess.run(["git", "merge-base", "--is-ancestor", receipt["workflow_sha"], "origin/main"], cwd=root, check=True)
+        return receipt
     subprocess.run(["git", "merge-base", "--is-ancestor", source, "origin/main"], cwd=root, check=True)
     subprocess.run(["git", "merge-base", "--is-ancestor", receipt["base_sha"], source], cwd=root, check=True)
     return receipt

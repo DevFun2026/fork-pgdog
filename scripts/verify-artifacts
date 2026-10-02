@@ -62,6 +62,16 @@ def main():
     receipt = commands.add_parser("receipt")
     receipt.add_argument("--output", type=pathlib.Path, required=True)
     receipt.set_defaults(run=lambda args: print(create_receipt(ROOT, args.output)))
+    owner_receipt = commands.add_parser("owner-receipt", help="Explicit approved first-release exception; not signed clearance")
+    owner_receipt.add_argument("--output", type=pathlib.Path, required=True)
+    owner_receipt.add_argument("--source-review", type=pathlib.Path, required=True)
+    owner_receipt.add_argument("--workflow-review", type=pathlib.Path, required=True)
+    owner_receipt.add_argument("--quality-run", type=int, required=True)
+    owner_receipt.add_argument("--artifact-run", type=int, required=True)
+    def owner_receipt_run(args):
+        from artifacts.owner_approval import create_initial_receipt
+        print(create_initial_receipt(ROOT, args.output, args.source_review, args.workflow_review, args.quality_run, args.artifact_run))
+    owner_receipt.set_defaults(run=owner_receipt_run)
     preflight = commands.add_parser("publish-preflight")
     preflight.add_argument("--receipt", type=pathlib.Path, required=True)
     preflight.add_argument("--receipt-sha256", required=True)

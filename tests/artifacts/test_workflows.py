@@ -54,6 +54,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "false")
         self.assertIn("source-sha", str(workflow["jobs"]["publish"]))
 
+    def test_authorization_is_rechecked_after_environment_approval_before_login(self):
+        workflow = self.load("package")
+        self.assertEqual(workflow["jobs"]["preflight"]["permissions"]["actions"], "read")
+        steps = workflow["jobs"]["publish"]["steps"]
+        recheck = next(i for i, step in enumerate(steps) if step.get("name") == "Revalidate receipt after owner approval")
+        login = next(i for i, step in enumerate(steps) if "docker/login-action@" in step.get("uses", ""))
+        self.assertLess(recheck, login)
+        self.assertIn("publish-preflight", steps[recheck]["run"])
+        self.assertIn("GH_TOKEN", steps[recheck]["env"])
+        self.assertEqual(workflow["jobs"]["publish"]["permissions"]["actions"], "read")
+
 
 if __name__ == "__main__":
     unittest.main()

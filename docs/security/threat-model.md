@@ -23,8 +23,10 @@ registry publication and production deployment.
 | External registry writer race | Restrict writers/immutability through registry process; residual risk remains | Registry administrator |
 
 Required dependency/license/SAST/IaC/container scans preserve the standard profile;
-High/Critical findings block. Missing independent provider review, enrolled signer,
-signed clearance or actual native/registry evidence blocks release. TLS/network
+High/Critical findings block. Missing independent provider review or actual
+native/registry evidence blocks release. The normal signed route also requires
+an enrolled signer and signed clearance; the bounded first-release exception
+below explicitly waives that mechanism. TLS/network
 policy, durable 2PC storage and production recovery remain outside this design.
 
 ## Scope
@@ -96,3 +98,32 @@ Provider and scanner defects can miss vulnerabilities. Local plaintext depends
 on host permissions and full-disk security. A compromised maintainer or CI
 credential can bypass repository process. Real product runtime and deployment
 remain outside this template-only assessment.
+# First-release GitHub authorization delta (2026-10-02)
+
+The owner explicitly waived SSH security signatures for image/chart 0.1.0 in PR
+#7 comment 5948092075. The Standard profile and deterministic/independent reviews
+are unchanged. Artifact source is fixed to 09026eec; publication workflow has a
+separate immutable reviewed SHA. This is an alternate authorization decision,
+not a passed canonical security clearance.
+
+Assets: registry write/OIDC capabilities, exact image/chart bytes, review/CI
+metadata and owner approval. Actor: GitHub user ID 107181711, current repository
+admin and required packages reviewer. Entry points: bounded receipt JSON, owner
+comment API, CI run/job API, manual main dispatch and protected deployment.
+
+- Tampered, withdrawn or impersonated approval: pin comment ID, exact content,
+  numeric owner identity and current admin permission; revalidate after approval.
+- Workflow/source substitution: bind separate source/workflow SHAs and both
+  independent reviews; dispatch SHA must match the receipt; validate ancestry.
+- Forged/skipped/stale CI: fetch real run paths, SHAs, attempts and required job
+  conclusions. Every required quality/scanner/native job must succeed.
+- Broader releases/replay: pin image/chart 0.1.0 and original source; immutable tag
+  absence checks block reuse, including partial-publication recovery.
+- Credential exposure: argument-array gh API calls, token only in normal
+  environment/keyring, generic errors without credential-bearing diagnostics.
+
+Owner: release maintainer. Compromised GitHub administration/CI or external
+registry writers remain residual risks. No complete security certification is
+claimed. Tests cover owner, scope, CI and metadata failures; missing API evidence
+always blocks publication. Rollback removes the schema-2 route without deleting
+packages or modifying schema-1 signed clearance.

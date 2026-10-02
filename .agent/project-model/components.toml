@@ -14,8 +14,15 @@ trust_boundary = "local-repository"
 id = "ci-wrappers"
 name = "CI Wrappers"
 kind = "automation"
-responsibility = "Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Architecture Pages and fork artifact publication are manual; artifact writes require owner-reviewed release receipt and protected packages environment."
+responsibility = "Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance."
 trust_boundary = "hosted-ci"
+
+[[components]]
+id = "release-owner"
+name = "GitHub Release Owner"
+kind = "human-reviewer"
+responsibility = "Owns the bounded first-release decision recorded in PR #7 comment 5948092075. Numeric GitHub identity, unchanged comment, current admin permission and required packages reviewer are validated before publication and after environment approval."
+trust_boundary = "authenticated-github-owner"
 
 [[components]]
 id = "docs-generator"

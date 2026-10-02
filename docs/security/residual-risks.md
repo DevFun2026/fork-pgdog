@@ -16,11 +16,21 @@ trust boundaries, dependencies, infrastructure, or recovery design changes.
 
 ## Fork artifact delta
 
+- Owner: release maintainer. The explicitly approved first image/chart 0.1.0
+  release uses GitHub owner/environment approval instead of SSH clearance.
+  Account/runner compromise, owner withdrawal between final check and registry
+  writes, and registry administrators remain trust risks. Exact comment, numeric
+  identity, current admin permission, workflow/source reviews and live CI are
+  verified before publication and after environment approval. The route never
+  claims a passed canonical release gate or signed security clearance, and cannot
+  authorize a different version/source. Later releases require normal signed
+  clearance or a separately approved governance decision.
+
 - Owner: release maintainer. Native amd64 CI, authorized GHCR pull-back/signature
   verification and first registry publication need current external evidence.
   Local arm64/Kind tests do not certify all supported Kubernetes/Helm versions.
 - Owner: governance maintainer. The trusted signer file has no enrolled signer;
-  no signed clearance/release receipt can pass until separate approved enrollment
+  no signed clearance/schema-1 release receipt can pass until separate approved enrollment
   and independent review. Receipt checksum provides integrity, not independent
   authenticity; the owner must compare exported metadata to actual local evidence.
 - Owner: registry administrator. Workflow serialization cannot prevent external

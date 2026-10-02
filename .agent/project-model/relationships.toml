@@ -5,6 +5,12 @@ target = "runtime"
 label = "invokes repository-owned gates"
 
 [[relationships]]
+id = "owner-authorizes-first-release"
+source = "release-owner"
+target = "ci-wrappers"
+label = "binds explicit one-release exception and protected environment approval"
+
+[[relationships]]
 id = "core-configures-runtime"
 source = "canonical-core"
 target = "runtime"

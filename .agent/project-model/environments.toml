@@ -26,4 +26,4 @@ description = "Helm 3.8+/Kubernetes 1.28+ stable API target. Local Kind 0.33.0/K
 [[environments]]
 id = "ghcr"
 name = "GHCR packages environment"
-description = "Manual main-only package workflow consumes owner-approved genuine release receipt, source ancestry and new versions. Protected packages environment reviewers gate writes/OIDC. Registry visibility and first publication are separately authorized external setup; no release clearance is claimed without signed security evidence."
+description = "Manual main-only package workflow consumes an owner-reviewed receipt. Schema 1 retains genuine signed clearance; schema 2 is the explicit PR #7 owner exception for source 09026eec and image/chart 0.1.0, with separate current workflow review and live CI validation. Protected packages approval gates writes/OIDC. The exception is recorded as waived SSH clearance, never as passed canonical security/release gates."
