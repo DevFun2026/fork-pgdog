@@ -10,6 +10,24 @@ Controls are verified by repository tests and gate evidence. OWASP ASVS, SAMM,
 and threat-modeling materials are requirement references only; this template
 does not claim certification or full coverage of any framework.
 
+## Fork distribution controls
+
+Pinned Docker bases, locked Cargo, excluded Git/private context and numeric
+non-root image reduce build/runtime exposure. Chart schema rejects unknown or
+conflicting inputs; literal TOML is never executed through tpl. Read-only root
+and secret mounts, RuntimeDefault seccomp, no capabilities/escalation/token,
+bounded tmp and backend-aware readiness are exercised by artifact/Kind tests.
+Standard profile now requires dependency, license, SAST, IaC and container scans;
+binding checks reject stale source/image/generated input and missing tool/DB coverage.
+
+Read-only native validation has no package-write/OIDC credential. Protected
+manual publication validates exact owner-approved receipt/source ancestry,
+confirmed authenticated tag absence and exact tested archive identity before
+copying; source-aware signatures/attestations are verified before chart publish.
+These controls do not supply production TLS/network/Secret policy or signed
+repository security clearance. A trusted independent signer is still required.
+
+
 ## Reference mapping
 
 | Template requirement | Reference baseline | Use |

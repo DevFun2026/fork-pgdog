@@ -65,8 +65,30 @@ fetched at run time, with metrics disabled: scanner reports are evidence for tha
 run, not a pinned/reproducible ruleset or comprehensive security clearance.
 A finding is a review candidate; unsafe Rust matches are not automatically
 confirmed exploitable vulnerabilities. Rule coverage and exclusions appear in logs.
-Container/IaC scanners remain outside the approved standard profile's required
-scanner list. EKS/Vault connectivity and production audit guarantees are untested.
+The approved fork artifact change extends required scans to IaC/container while
+retaining standard profile and dependency/license/SAST. EKS/Vault connectivity
+and production audit guarantees remain untested.
+
+## Fork artifact checks
+
+```sh
+python3 -m unittest discover -s tests/artifacts -v
+python3 scripts/verify-artifacts chart --values charts/fork-pgdog/examples/values.yaml
+bash scripts/container-smoke.sh fork-pgdog:local EXPECTED_VERSION
+bash scripts/helm-smoke.sh --image fork-pgdog:local
+python3 scripts/verify-artifacts prepare-scan --image fork-pgdog:local
+./scripts/agent release run-scanner --scanner iac --timeout 600
+./scripts/agent release run-scanner --scanner container --timeout 600
+```
+
+Prepare scan binding again after source changes; missing/stale source/image/input
+fails. Trivy 0.74.0 updates its DB/check bundle and fails on High/Critical or update
+errors. Downloaded CI tools/actions/builder are pinned. Ubuntu CI Skopeo 1.13.3
+is checked; local Skopeo 1.24.1 is recorded separately. Helm 4.1.3, Kind 0.33.0,
+Kubernetes 1.36.4 and arm64 Docker release smoke were exercised locally. CI pins
+Helm 3.19.0 and tests each native architecture; no CI/amd64 pass is inferred.
+See [operator](operations/containers-and-helm.md) and [release](releases/fork-artifacts.md)
+runbooks for source/digest pairing and unavailable release boundaries.
 
 ## Independent review and release
 

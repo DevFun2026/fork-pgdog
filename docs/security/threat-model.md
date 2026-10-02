@@ -1,5 +1,32 @@
 # Threat Model
 
+## Fork container/chart delta
+
+Assets: source-bound OCI image/chart bytes, release receipt, registry credentials,
+database users/configuration/TLS secrets, running proxy and in-flight queries.
+Actors: owner, release/deployment operators, CI contributor, registry writer and
+compromised dependency. Boundaries: source-to-builder, read-only build-to-protected
+publish, owner-approved receipt handoff, CI-to-GHCR, operator-to-cluster and
+Secret-store-to-Pod. Implemented sources and local smoke are distinct from first
+registry publication and production deployment.
+
+| Threat | Control/evidence | Owner |
+| --- | --- | --- |
+| Official PgDog artifacts disappear/change | Fork-owned source build/chart; dependency/Compose tests | Build maintainer |
+| Build leaks Git/credentials | Context exclusions, bounded uploads and no Git COPY; container contract tests | Build maintainer |
+| Malformed config/privilege escalation/secret exposure | Closed schema, literal TOML, existing Secrets, configcheck and hardening; chart/Kind tests | Deployment operator |
+| Backend outage restart loop or forced query loss | Separate TCP liveness/HTTP readiness, finite SIGINT grace; live outage/drain smoke | Workload operator |
+| External Secret rollout/rollback confusion | Explicit rollout/version restoration runbook and live Secret rotation | Deployment operator |
+| Receipt forgery/source mismatch | Genuine local release gate, owner-approved canonical hash, exact source/evidence checks and ancestry tests; no detached authenticity claim | Release owner |
+| Untested/rebuilt bytes or wrong provenance | Native OCI archive/config/source checks, preserve-digests copy and explicit source vs dispatch SHA | Release maintainer |
+| Existing-tag overwrite/partial publication | Authenticated MANIFEST_UNKNOWN only, serialized/repeated checks, signatures before chart-last push and pull-back | Registry administrator |
+| External registry writer race | Restrict writers/immutability through registry process; residual risk remains | Registry administrator |
+
+Required dependency/license/SAST/IaC/container scans preserve the standard profile;
+High/Critical findings block. Missing independent provider review, enrolled signer,
+signed clearance or actual native/registry evidence blocks release. TLS/network
+policy, durable 2PC storage and production recovery remain outside this design.
+
 ## Scope
 
 This model covers the template runtime, canonical policy and skills, local

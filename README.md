@@ -43,18 +43,25 @@ PgDog is an open source proxy for scaling PostgreSQL. It supports connection poo
 
 ### Kubernetes
 
-Helm chart is **[here](https://github.com/pgdogdev/helm)**. To install it, run:
+This fork owns [charts/fork-pgdog](charts/fork-pgdog) and builds its image from
+source. Prepare an existing users Secret and your backend configuration following
+the [container and Helm runbook](docs/operations/containers-and-helm.md), then install:
 
 ```bash
-helm repo add pgdogdev https://helm.pgdog.dev
-helm install pgdog pgdogdev/pgdog
+helm upgrade --install pgdog ./charts/fork-pgdog -f operator-values.yaml
 ```
+
+After the first approved publication, the chart is available at
+`oci://ghcr.io/devfun2026/charts/fork-pgdog`. Use an exact published chart version.
+The image location is `ghcr.io/devfun2026/fork-pgdog`; published charts pin its
+multi-platform digest. These registry artifacts are not assumed to exist before
+publication. The chart requires existing PostgreSQL backends; it installs no database.
 
 ### AWS
 
 If you're using AWS RDS, you can deploy PgDog using one of two supported methods:
 
-1. [Helm chart](https://github.com/pgdogdev/helm) with [EKS](https://aws.amazon.com/eks/), or a self-hosted Kubernetes cluster
+1. This fork's [Helm chart](charts/fork-pgdog) with [EKS](https://aws.amazon.com/eks/), or a self-hosted Kubernetes cluster
 2. [Terraform module](https://github.com/pgdogdev/pgdog-ecs-terraform) to deploy PgDog on [ECS](https://aws.amazon.com/ecs/)
 
 ### Try in Docker
@@ -65,8 +72,7 @@ You can try PgDog quickly using Docker. Install [Docker Compose](https://docs.do
 docker compose -f applications/pgdog/docker-compose.yml up
 ```
 
-This demo uses the upstream `ghcr.io/pgdogdev/pgdog:main` image. To build this fork,
-see [Development and containers](#development-and-containers).
+This demo builds `fork-pgdog:local` from this repository's Dockerfile.
 
 Once started, you can connect to PgDog with psql or any other PostgreSQL client:
 
@@ -720,11 +726,11 @@ Full test fixtures and merge gates are described in
 [verification](docs/VERIFICATION.md). For direct Cargo commands, first
 `cd applications/pgdog`.
 
-Build this fork's container with the repository root as context (the build
-includes Git metadata):
+Build this fork's container with the repository root as context. Git and private
+files are excluded; an optional full source SHA supplies version metadata:
 
 ```sh
-docker build -f applications/pgdog/Dockerfile -t pgdog .
+docker build -f applications/pgdog/Dockerfile -t fork-pgdog:local .
 ```
 
 ### CI

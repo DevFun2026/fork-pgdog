@@ -14,3 +14,19 @@
 - Adapted UX/UI documentation is pinned and attributed in `.agent/sources/UX_UI_AUDIT.md`; native projections retain local licenses. No upstream installer, binary, database, remote guideline loader or hook is part of this extension. Missing research or browser evidence stays unverified; local UX review never supplies cross-provider independence or accessibility certification.
 
 All consumers fail closed on unknown configuration, malformed payloads, stale hashes, provider identity collisions, or artifacts bound to another Git state.
+
+## Fork artifacts
+
+The source Dockerfile builds binary/plugin with Cargo.lock, numeric UID/GID 10001,
+SIGINT and explicit full source revision without shipping Git/private context.
+The closed-schema chart requires one TOML source and existing users Secret,
+uses one image for configcheck/main, and keeps fixed selectors, secret mounts,
+TCP startup/liveness, HTTP readiness and bounded drain. External object updates
+and restoration require explicit operator action; stateless 2PC WAL is not durable.
+
+Artifact check/scanner inputs bind source tree and actual loaded image config.
+Manual publish consumes a bounded owner-approved receipt of the genuine existing
+pre-integration release gate. Native tested OCI archives are copied unchanged;
+combined digest/signatures precede chart-last publication. Existing immutable
+tags and ambiguous/auth/network registry failures block. See the operational and
+release contracts in docs/operations/containers-and-helm.md and docs/releases/fork-artifacts.md.

@@ -1,6 +1,10 @@
 services:
   pgdog:
-    image: ghcr.io/pgdogdev/pgdog:main
+    image: fork-pgdog:local
+    pull_policy: build
+    build:
+      context: ../..
+      dockerfile: applications/pgdog/Dockerfile
     volumes:
       - ./docker/pgdog.toml:/pgdog/pgdog.toml
       - ./docker/users.toml:/pgdog/users.toml

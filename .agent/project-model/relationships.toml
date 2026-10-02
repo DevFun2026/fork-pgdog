@@ -45,3 +45,39 @@ id = "proxy-database"
 source = "pgdog-proxy"
 target = "postgresql"
 label = "opens backend connections and forwards queries"
+
+[[relationships]]
+id = "ci-builds-container"
+source = "ci-wrappers"
+target = "container-builder"
+label = "builds/tests each native archive without write credentials"
+
+[[relationships]]
+id = "builder-registry"
+source = "container-builder"
+target = "artifact-registry"
+label = "protected publish copies exact verified archives and pairs chart by digest"
+
+[[relationships]]
+id = "helm-registry"
+source = "helm-release"
+target = "artifact-registry"
+label = "retrieves exact chart version and image digest after publication"
+
+[[relationships]]
+id = "helm-pod"
+source = "helm-release"
+target = "kubernetes-pod"
+label = "installs stateless hardened Deployment and configcheck"
+
+[[relationships]]
+id = "secrets-pod"
+source = "operator-secrets"
+target = "kubernetes-pod"
+label = "mounts protected configuration/users/TLS read-only"
+
+[[relationships]]
+id = "pod-proxy"
+source = "kubernetes-pod"
+target = "pgdog-proxy"
+label = "runs PgDog as PID 1 with SIGINT drain"

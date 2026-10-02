@@ -25,3 +25,13 @@ implemented or validated as part of this repository setup.
 These source-review calls are development operations. They do not send live
 PostgreSQL query traffic to the planned LLM agent. That future boundary requires
 its own authorization, data minimization and audit design.
+## Fork artifact and deployment flows
+
+Repository source and locked dependencies enter a pinned native container builder.
+Bounded synthetic manifests and the actual built image enter Trivy checks; only
+explicit native archives/metadata move between CI jobs. A protected owner-approved
+manual job copies tested OCI bytes to GHCR and publishes a chart pinned to the
+combined image digest. Operator Helm/image pulls cross the registry boundary.
+Existing configuration/users/TLS objects enter read-only Pod mounts; database
+credentials stay in operator Secrets, outside inline chart/CI artifacts. No LLM
+process or PostgreSQL server is installed by this chart.

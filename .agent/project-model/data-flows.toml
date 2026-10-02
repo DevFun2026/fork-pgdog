@@ -53,3 +53,24 @@ source = "pgdog-proxy"
 target = "sql-client"
 data_categories = ["query-results"]
 trust_boundary = "proxy-to-client"
+
+[[data_flows]]
+id = "native-artifact-egress"
+source = "container-builder"
+target = "artifact-registry"
+data_categories = ["project-source", "evidence-metadata"]
+trust_boundary = "protected-ci-to-registry"
+
+[[data_flows]]
+id = "operator-config-mount"
+source = "operator-secrets"
+target = "kubernetes-pod"
+data_categories = ["configuration", "database-credentials"]
+trust_boundary = "secret-store-to-workload"
+
+[[data_flows]]
+id = "chart-image-deployment"
+source = "artifact-registry"
+target = "helm-release"
+data_categories = ["configuration", "project-source"]
+trust_boundary = "registry-to-operator-cluster"

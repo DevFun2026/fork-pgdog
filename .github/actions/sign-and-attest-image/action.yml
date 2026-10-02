@@ -5,6 +5,9 @@ inputs:
   image:
     description: Fully qualified image digest
     required: true
+  source-sha:
+    description: Explicit checked and reviewed full source SHA, independent of dispatch SHA
+    required: true
 
 runs:
   using: composite
@@ -17,12 +20,15 @@ runs:
     - name: Sign and attest image
       env:
         IMAGE: ${{ inputs.image }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
         BUILDER_ID: https://github.com/${{ github.workflow_ref }}
         INVOCATION_ID: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         REPOSITORY_ID: ${{ github.repository_id }}
         REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
         RUNNER_ENVIRONMENT: ${{ runner.environment }}
       run: |
+        [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid source SHA' >&2; exit 1; }
+        [[ "$IMAGE" =~ ^ghcr\.io/devfun2026/fork-pgdog@sha256:[0-9a-f]{64}$ ]] || { echo 'Invalid owned image digest' >&2; exit 1; }
         workflow="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
         workflow_path="${workflow%@*}"
         workflow_ref="${GITHUB_WORKFLOW_REF##*@}"
@@ -31,8 +37,9 @@ runs:
           --arg repository "https://github.com/${GITHUB_REPOSITORY}" \
           --arg workflow_path "${workflow_path}" \
           --arg workflow_ref "${workflow_ref}" \
-          --arg source_ref "${GITHUB_REF}" \
-          --arg sha "${GITHUB_SHA}" \
+          --arg source_ref "${SOURCE_SHA}" \
+          --arg sha "${SOURCE_SHA}" \
+          --arg dispatch_sha "${GITHUB_SHA}" \
           --arg event_name "${GITHUB_EVENT_NAME}" \
           --arg repository_id "${REPOSITORY_ID}" \
           --arg repository_owner_id "${REPOSITORY_OWNER_ID}" \
@@ -50,6 +57,7 @@ runs:
                 repository_id: $repository_id,
                 repository_owner_id: $repository_owner_id,
                 runner_environment: $runner_environment
+                , dispatch_sha: $dispatch_sha
               }},
               resolvedDependencies: [{
                 uri: ("git+" + $repository + "@" + $source_ref),
@@ -64,4 +72,6 @@ runs:
         # Keyless signing records the workflow identity in Sigstore's public transparency log.
         cosign sign --yes "${IMAGE}"
         cosign attest --yes --type slsaprovenance1 --predicate provenance.json "${IMAGE}"
+        cosign verify --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" --certificate-oidc-issuer https://token.actions.githubusercontent.com "${IMAGE}" > /dev/null
+        cosign verify-attestation --type slsaprovenance1 --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" --certificate-oidc-issuer https://token.actions.githubusercontent.com "${IMAGE}" > /dev/null
       shell: bash

@@ -1,0 +1,47 @@
+# Required operator inputs are deliberately empty. See examples/values.yaml.
+image:
+  repository: ghcr.io/devfun2026/fork-pgdog
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+replicaCount: 1
+containerPort: 6432
+healthcheckPort: 9090
+service:
+  type: ClusterIP
+  port: 6432
+config:
+  pgdogToml: ""
+  existingConfigMap: ""
+  existingSecret: ""
+users:
+  existingSecret: ""
+tls:
+  existingSecret: ""
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+terminationGracePeriodSeconds: 150
+probes:
+  startup:
+    periodSeconds: 2
+    timeoutSeconds: 1
+    failureThreshold: 60
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 2

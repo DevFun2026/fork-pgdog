@@ -17,3 +17,13 @@ description = "macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11
 id = "github-pages"
 name = "GitHub Pages"
 description = "Public static architecture reference at https://devfun2026.github.io/fork-pgdog/. The architecture-pages workflow validates on PRs and publishes only after manual dispatch from main. It uploads only index.html and .nojekyll, not repository files or local evidence. First publication requires Actions-based Pages setup and a protected github-pages environment. This host has no database access or LLM runtime."
+
+[[environments]]
+id = "kubernetes"
+name = "Operator Kubernetes"
+description = "Helm 3.8+/Kubernetes 1.28+ stable API target. Local Kind 0.33.0/Kubernetes 1.36.4 smoke with Helm 4.1.3 is verified; pinned Helm 3.19.0/native amd64+arm64 CI is authored and requires an actual run. Production network/TLS/Secret policy and durable 2PC storage remain external."
+
+[[environments]]
+id = "ghcr"
+name = "GHCR packages environment"
+description = "Manual main-only package workflow consumes owner-approved genuine release receipt, source ancestry and new versions. Protected packages environment reviewers gate writes/OIDC. Registry visibility and first publication are separately authorized external setup; no release clearance is claimed without signed security evidence."

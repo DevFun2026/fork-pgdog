@@ -1,171 +1,175 @@
-name: package
+name: Publish fork image and OCI chart
 on:
   workflow_dispatch:
-
+    inputs:
+      source_sha:
+        description: Owner-reviewed full source SHA reachable from main
+        required: true
+        type: string
+      image_version:
+        description: New exact image SemVer without v prefix
+        required: true
+        type: string
+      chart_version:
+        description: New exact chart SemVer without v prefix
+        required: true
+        type: string
+      receipt_json:
+        description: Genuine bounded pre-integration release receipt JSON
+        required: true
+        type: string
+      receipt_sha256:
+        description: Owner-approved canonical receipt SHA256
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: fork-artifact-publication
+  cancel-in-progress: false
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  BUILDER_BASE: ghcr.io/${{ github.repository }}-base-builder:latest
-  RUNTIME_BASE: ghcr.io/${{ github.repository }}-base-runtime:latest
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  IMAGE_VERSION: ${{ inputs.image_version }}
+  CHART_VERSION: ${{ inputs.chart_version }}
+  RECEIPT_JSON: ${{ inputs.receipt_json }}
+  RECEIPT_SHA256: ${{ inputs.receipt_sha256 }}
 jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 -m pip install --requirement tests/artifacts/requirements.txt
+      - name: Validate approved receipt and source ancestry
+        run: |
+          python3 -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"receipt.json").write_text(os.environ["RECEIPT_JSON"])'
+          python3 scripts/verify-artifacts publish-preflight --receipt "$RUNNER_TEMP/receipt.json" --receipt-sha256 "$RECEIPT_SHA256" --source-sha "$SOURCE_SHA" --image-version "$IMAGE_VERSION" --chart-version "$CHART_VERSION"
+      - name: Require owner reviewers on publish environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          reviewers=$(gh api repos/DevFun2026/fork-pgdog/environments/packages --jq '[.protection_rules[] | select(.type == "required_reviewers")] | length')
+          test "$reviewers" -gt 0
+      - name: Require authenticated absence of immutable tags
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/verify-artifacts registry-absent --name devfun2026/fork-pgdog --tag "$IMAGE_VERSION"
+          python3 scripts/verify-artifacts registry-absent --name devfun2026/fork-pgdog --tag "$SOURCE_SHA"
+          python3 scripts/verify-artifacts registry-absent --name devfun2026/charts/fork-pgdog --tag "$CHART_VERSION"
   build:
+    needs: preflight
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            runner: blacksmith-4vcpu-ubuntu-2404
-          - platform: linux/arm64
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    env:
+      PGDOG_TEST_TOOLCHAIN: 1.96.1
+      ARTIFACT_ARCH: ${{ matrix.arch }}
     permissions:
       contents: read
-      packages: write
-      id-token: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-tags: true
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
-
-      - name: Prepare
+          persist-credentials: false
+      - name: Prepare artifact tools
         run: |
-          platform='${{ matrix.platform }}'
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
+          python3 -m pip install --requirement tests/artifacts/requirements.txt
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version | grep -E '^skopeo version 1\.13\.3$'
+          python3 scripts/install-artifact-tools --directory "$RUNNER_TEMP/artifact-bin"
+          echo "$RUNNER_TEMP/artifact-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
+          version: v0.37.2
+          driver-opts: image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - run: rustup toolchain install 1.96.1 --profile minimal
+      - name: Build and verify exact publishable OCI bytes
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}
+        run: bash scripts/build-artifact
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: applications/pgdog/Dockerfile
-          # Only tag by registry + image name to to push by digest
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ matrix.platform }}
-          build-args: |
-            BUILDER_BASE=${{ env.BUILDER_BASE }}
-            RUNTIME_BASE=${{ env.RUNTIME_BASE }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-
-      - name: Export digest
-        run: |
-          mkdir -p ${{ runner.temp }}/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: ${{ runner.temp }}/digests/*
+          name: fork-native-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}/image-${{ matrix.arch }}.tar
+            ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}/image-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 1
-
-      - name: Sign and attest artifact
-        uses: ./.github/actions/sign-and-attest-image
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-
-  merge:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs:
-      - build
+          compression-level: 0
+  publish:
+    needs: [preflight, build]
+    environment: packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
       id-token: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-tags: true
           fetch-depth: 0
-
-      - name: Get short commit SHA
-        id: commit
+          persist-credentials: false
+      - name: Prepare artifact tools
         run: |
-          COMMIT_SHA=$(git rev-parse --short HEAD)
-          echo "sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-          echo "Short commit SHA: $COMMIT_SHA"
-
-      - name: Download digests
-        uses: actions/download-artifact@v4
+          python3 -m pip install --requirement tests/artifacts/requirements.txt
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version | grep -E '^skopeo version 1\.13\.3$'
+          python3 scripts/install-artifact-tools --directory "$RUNNER_TEMP/artifact-bin"
+          echo "$RUNNER_TEMP/artifact-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
-          path: ${{ runner.temp }}/digests
-          pattern: digests-*
+          version: v0.37.2
+          driver-opts: image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: fork-native-*
+          path: ${{ runner.temp }}/fork-publish
           merge-multiple: true
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Check for git tag
-        id: tag
-        run: |
-          TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || echo "")
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          if [ -n "$TAG" ]; then
-            echo "Git tag found: $TAG"
-          else
-            echo "No git tag found for current commit"
-          fi
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
+          password: ${{ github.token }}
+      - name: Copy tested archives and publish paired image manifest
+        id: images
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-artifacts images --directory "$RUNNER_TEMP/fork-publish"
+      - uses: ./.github/actions/sign-and-attest-image
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ steps.tag.outputs.tag }},enable=${{ steps.tag.outputs.tag != '' }}
-            type=raw,value=${{ steps.commit.outputs.sha }}
-
-      - name: Create manifest list and push
-        working-directory: ${{ runner.temp }}/digests
-        run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
-
-      - name: Get manifest digest
-        id: manifest
-        run: |
-          digest=$(docker buildx imagetools inspect \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} \
-            --format '{{json .Manifest}}' | jq -r '.digest')
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Sign and attest merged artifact
-        uses: ./.github/actions/sign-and-attest-image
+          image: ghcr.io/devfun2026/fork-pgdog@${{ steps.images.outputs.amd64 }}
+          source-sha: ${{ inputs.source_sha }}
+      - uses: ./.github/actions/sign-and-attest-image
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.manifest.outputs.digest }}
-
-      - name: Inspect image
+          image: ghcr.io/devfun2026/fork-pgdog@${{ steps.images.outputs.arm64 }}
+          source-sha: ${{ inputs.source_sha }}
+      - uses: ./.github/actions/sign-and-attest-image
+        with:
+          image: ghcr.io/devfun2026/fork-pgdog@${{ steps.images.outputs.combined }}
+          source-sha: ${{ inputs.source_sha }}
+      - name: Publish digest-pinned chart last and pull it back
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          IMAGE_DIGEST: ${{ steps.images.outputs.combined }}
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          printf '%s' "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          python3 scripts/publish-artifacts chart --image-digest "$IMAGE_DIGEST"

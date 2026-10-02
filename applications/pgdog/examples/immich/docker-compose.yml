@@ -48,7 +48,11 @@ services:
       disable: false
 
   database:
-    image: ghcr.io/pgdogdev/pgdog:main
+    image: fork-pgdog:local
+    pull_policy: build
+    build:
+      context: ../../../..
+      dockerfile: applications/pgdog/Dockerfile
     volumes:
       - ./pgdog.toml:/pgdog/pgdog.toml
       - ./users.toml:/pgdog/users.toml

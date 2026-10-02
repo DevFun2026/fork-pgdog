@@ -7,9 +7,16 @@
 - PostgreSQL backends: external database servers, including primaries, replicas
   or shards depending on pgdog.toml. They execute SQL and return results.
 - PostgreSQL clients: psql, application drivers or other compatible clients.
-- Local Docker demo: applications/pgdog/docker-compose.yml starts the upstream
-  PgDog image and three PostgreSQL shards. It does not run a fork-specific LLM
-  agent. The fork image is built separately from applications/pgdog/Dockerfile.
+- Local Docker demo: applications/pgdog/docker-compose.yml builds fork-pgdog:local
+  from the repository-root Dockerfile and starts three PostgreSQL shards.
+- Fork artifact builder: pinned Ubuntu/Rust stages compile the locked workspace
+  and plugin without official PgDog base images or Git/private build context.
+- Helm release: charts/fork-pgdog creates a hardened stateless PgDog Pod,
+  configcheck initContainer, ClusterIP PostgreSQL Service and token-disabled
+  ServiceAccount; existing backend/users/config/TLS objects are operator-owned.
+- GHCR image/chart destinations are owned by DevFun2026 and paired by digest
+  after protected manual publication. Local source/runtime validation does not
+  establish that first external publication has occurred.
 
 ## Development and documentation
 

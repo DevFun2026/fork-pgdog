@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Native CI build. The OCI bytes imported here are the only bytes eligible for publish.
+set -euo pipefail
+source_sha=${SOURCE_SHA:?SOURCE_SHA required}
+arch=${ARTIFACT_ARCH:?ARTIFACT_ARCH required}
+artifact_dir=${ARTIFACT_DIR:?ARTIFACT_DIR required}
+image_version=${IMAGE_VERSION:-0.1.60}
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 2
+case "$arch:$(uname -m)" in amd64:x86_64|arm64:aarch64) ;; *) echo 'Native runner architecture mismatch' >&2; exit 2 ;; esac
+[[ "$(git rev-parse HEAD)" == "$source_sha" ]] || { echo 'Selected source differs from checkout' >&2; exit 1; }
+mkdir -p "$artifact_dir"
+python3 -m unittest discover -s tests/artifacts -v
+python3 scripts/verify-artifacts chart --values charts/fork-pgdog/examples/values.yaml
+docker buildx build --file applications/pgdog/Dockerfile --platform "linux/$arch" \
+  --build-arg "PGDOG_BUILD_REVISION=$source_sha" --build-arg "VERSION=$image_version" \
+  --provenance=mode=max --tag fork-pgdog:local --output "type=oci,dest=$artifact_dir/image-$arch.tar" .
+python3 scripts/verify-artifacts import-image --archive "$artifact_dir/image-$arch.tar" --arch "$arch" --source-sha "$source_sha" --metadata "$artifact_dir/image-$arch.json"
+bash scripts/container-smoke.sh fork-pgdog:local "${source_sha:0:7}"
+bash scripts/helm-smoke.sh --image fork-pgdog:local
+python3 scripts/verify-artifacts prepare-scan --image fork-pgdog:local
+python3 scripts/verify-artifacts scan --scanner iac
+python3 scripts/verify-artifacts scan --scanner container
+python3 - "$artifact_dir/image-$arch.json" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); data=json.loads(p.read_text()); data['checks']={key:'passed' for key in ('chart','container','kubernetes','iac','container_scan')}; p.write_text(json.dumps(data,sort_keys=True)+'\n')
+PY

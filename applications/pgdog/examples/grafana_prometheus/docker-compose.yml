@@ -28,7 +28,11 @@ services:
       - shard_2:/var/lib/postgresql/data
 
   pgdog:
-    image: ghcr.io/pgdogdev/pgdog:main
+    image: fork-pgdog:local
+    pull_policy: build
+    build:
+      context: ../../../..
+      dockerfile: applications/pgdog/Dockerfile
     depends_on:
       - db0
       - db1

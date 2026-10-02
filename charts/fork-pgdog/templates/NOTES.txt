@@ -1,0 +1,12 @@
+PgDog Service: {{ include "fork-pgdog.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Connect using your PostgreSQL client and the credentials in your existing users Secret.
+For a local tunnel:
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "fork-pgdog.fullname" . }} 6432:{{ .Values.service.port }}
+
+External configuration/Secret changes require an explicit rollout:
+  kubectl --namespace {{ .Release.Namespace }} rollout restart deployment/{{ include "fork-pgdog.fullname" . }}
+
+This chart uses a stateless Deployment. It does not provision durable 2PC WAL.
+Align TOML listener/health ports and shutdown bounds with the chart values.
+Image/chart distribution must be published before registry installation is available.

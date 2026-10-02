@@ -1,0 +1,10 @@
+{{- if .Values.config.pgdogToml }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fork-pgdog.fullname" . }}
+  labels:
+    {{- include "fork-pgdog.labels" . | nindent 4 }}
+data:
+  {{- dict "pgdog.toml" .Values.config.pgdogToml | toYaml | nindent 2 }}
+{{- end }}

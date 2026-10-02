@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Explicit local artifact checks; never publishes as a side effect."""
+import argparse
+import hashlib
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+import yaml
+from artifacts.chart_checks import validate_rendered_chart
+from artifacts.package_chart import package_chart
+from artifacts.release_receipt import create_receipt, publish_preflight
+from artifacts.registry import assert_tag_absent
+from artifacts.scan import prepare_scan, run_scan
+from artifacts.oci import import_image
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def merge(base, override):
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def chart_check(args):
+    chart = pathlib.Path(args.chart)
+    values = merge(yaml.safe_load((chart / "values.yaml").read_text()), yaml.safe_load(pathlib.Path(args.values).read_text()) or {})
+    subprocess.run(["helm", "lint", str(chart), "--strict", "--values", args.values], check=True)
+    rendered = subprocess.run(["helm", "template", "artifact-check", str(chart), "--values", args.values], check=True, capture_output=True, text=True)
+    validate_rendered_chart(list(yaml.safe_load_all(rendered.stdout)), values)
+    with tempfile.TemporaryDirectory(prefix="fork-pgdog-chart-") as directory:
+        subprocess.run(["helm", "package", str(chart), "--destination", directory], check=True)
+    print("PASS: Helm lint, render, TOML/manifest contracts and package")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    chart = commands.add_parser("chart")
+    chart.add_argument("--chart", default=str(ROOT / "charts/fork-pgdog"))
+    chart.add_argument("--values", required=True)
+    chart.set_defaults(run=chart_check)
+    prepare = commands.add_parser("prepare-scan")
+    prepare.add_argument("--image", required=True)
+    prepare.set_defaults(run=lambda args: prepare_scan(ROOT, args.image))
+    import_cmd = commands.add_parser("import-image")
+    import_cmd.add_argument("--archive", type=pathlib.Path, required=True)
+    import_cmd.add_argument("--arch", choices=("amd64", "arm64"), required=True)
+    import_cmd.add_argument("--source-sha", required=True)
+    import_cmd.add_argument("--metadata", type=pathlib.Path, required=True)
+    import_cmd.set_defaults(run=lambda args: import_image(args.archive, args.arch, args.source_sha, args.metadata))
+    scan = commands.add_parser("scan")
+    scan.add_argument("--scanner", choices=("iac", "container"), required=True)
+    scan.set_defaults(run=lambda args: run_scan(ROOT, args.scanner))
+    receipt = commands.add_parser("receipt")
+    receipt.add_argument("--output", type=pathlib.Path, required=True)
+    receipt.set_defaults(run=lambda args: print(create_receipt(ROOT, args.output)))
+    preflight = commands.add_parser("publish-preflight")
+    preflight.add_argument("--receipt", type=pathlib.Path, required=True)
+    preflight.add_argument("--receipt-sha256", required=True)
+    preflight.add_argument("--source-sha", required=True)
+    preflight.add_argument("--image-version", required=True)
+    preflight.add_argument("--chart-version", required=True)
+    preflight.set_defaults(run=lambda args: publish_preflight(ROOT, args.receipt.read_bytes(), args.receipt_sha256, args.source_sha, args.image_version, args.chart_version, os.environ.get("GITHUB_REF"), os.environ.get("GITHUB_REPOSITORY")))
+    registry = commands.add_parser("registry-absent")
+    registry.add_argument("--name", required=True)
+    registry.add_argument("--tag", required=True)
+    registry.set_defaults(run=lambda args: assert_tag_absent(args.name, args.tag))
+    package = commands.add_parser("package-chart")
+    package.add_argument("--source", type=pathlib.Path, default=ROOT / "charts/fork-pgdog")
+    package.add_argument("--image-digest", required=True)
+    package.add_argument("--image-version", required=True)
+    package.add_argument("--chart-version", required=True)
+    package.add_argument("--output", type=pathlib.Path, required=True)
+    def package_run(args):
+        path = package_chart(args.source, args.image_digest, args.image_version, args.chart_version, args.output)
+        print(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+    package.set_defaults(run=package_run)
+    args = parser.parse_args()
+    try:
+        args.run(args)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

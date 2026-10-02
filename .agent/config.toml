@@ -26,26 +26,26 @@ gemini = ["agy"]
 system_html = "docs/architecture/system.html"
 
 [security]
-required_scanners = ["dependency", "license", "sast"]
+required_scanners = ["dependency", "license", "sast", "iac", "container"]
 
 [security.scanner_commands]
-container = []
+container = ["python3", "scripts/verify-artifacts", "scan", "--scanner", "container"]
 dependency = ["bash", "scripts/pgdog", "cargo", "deny", "--locked", "check", "advisories"]
-iac = []
+iac = ["python3", "scripts/verify-artifacts", "scan", "--scanner", "iac"]
 license = ["bash", "scripts/pgdog", "cargo", "deny", "--locked", "check", "licenses"]
 sast = ["semgrep", "scan", "--json", "--config", "p/rust", "--error", "--strict", "--metrics=off", "--disable-version-check", "--exclude", "target", "--exclude", ".agent", "--exclude", "docs/import", "."]
 
 [security.scanner_version_commands]
-container = []
+container = ["trivy", "--version"]
 dependency = ["cargo-deny", "--version"]
-iac = []
+iac = ["trivy", "--version"]
 license = ["cargo-deny", "--version"]
 sast = ["semgrep", "--version"]
 
 [security.scanner_support_paths]
-container = []
+container = ["scripts/artifacts/scan.py", "tests/artifacts/tool-versions.json"]
 dependency = ["applications/pgdog/deny.toml"]
-iac = []
+iac = ["scripts/artifacts/scan.py", "scripts/artifacts/chart_checks.py", "tests/artifacts/tool-versions.json"]
 license = ["applications/pgdog/deny.toml"]
 sast = []
 

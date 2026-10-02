@@ -6,13 +6,13 @@ Build the Rust workspace from the repository root:
 
     ./scripts/pgdog cargo build --locked --workspace
 
-Run the upstream Docker demo:
+Run the fork source-built Docker demo:
 
     docker compose -f applications/pgdog/docker-compose.yml up
 
 Build this fork's container using the repository root as its build context:
 
-    docker build -f applications/pgdog/Dockerfile -t pgdog .
+    docker build -f applications/pgdog/Dockerfile -t fork-pgdog:local .
 
 Configuration and client connection examples are in README.md. The Docker demo
 contains synthetic credentials and data for local evaluation.
@@ -22,8 +22,11 @@ contains synthetic credentials and data for local evaluation.
 The intended deployment is an EKS-hosted proxy reached through a load balancer
 restricted to company IPs, with PostgreSQL in a private subnet and Vault dynamic
 credentials. This repository setup has not provisioned that infrastructure or
-established production query-audit coverage. Upstream Helm and Terraform links
-in README.md describe upstream deployment options.
+established production query-audit coverage. The standalone fork Helm chart and
+owned GHCR destinations are implemented; first publication and production
+infrastructure remain external steps. See [container and Helm operations](../operations/containers-and-helm.md)
+and [artifact release](../releases/fork-artifacts.md). Terraform remains an
+upstream option outside this feature.
 
 The LLM agent is planned; this overview does not declare an LLM runtime, model
 provider, database access policy or production deployment for it.

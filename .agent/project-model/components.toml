@@ -14,7 +14,7 @@ trust_boundary = "local-repository"
 id = "ci-wrappers"
 name = "CI Wrappers"
 kind = "automation"
-responsibility = "Invokes repository-owned quality gates on pull requests or manual runs; publishes only the generated architecture HTML through manual GitHub Pages deployment from main."
+responsibility = "Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Architecture Pages and fork artifact publication are manual; artifact writes require owner-reviewed release receipt and protected packages environment."
 trust_boundary = "hosted-ci"
 
 [[components]]
@@ -72,3 +72,38 @@ name = "PostgreSQL Client"
 kind = "client"
 responsibility = "Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data."
 trust_boundary = "client-process"
+
+[[components]]
+id = "container-builder"
+name = "Fork Container Builder"
+kind = "build-tooling"
+responsibility = "Builds applications/pgdog/Dockerfile from pinned Ubuntu/Rust bases with Cargo.lock and plugin; excludes Git/private context. Produces native OCI archives verified before publication."
+trust_boundary = "hosted-ci"
+
+[[components]]
+id = "artifact-registry"
+name = "Owned GHCR Artifacts"
+kind = "registry"
+responsibility = "Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores versioned images/chart paired by digest after authorized manual publication; first external publication remains unverified."
+trust_boundary = "external-registry"
+
+[[components]]
+id = "helm-release"
+name = "Fork Helm Release"
+kind = "deployment-tooling"
+responsibility = "Standalone charts/fork-pgdog creates a stateless Linux Deployment, configcheck initContainer, PostgreSQL-only Service and token-disabled ServiceAccount. No database or durable 2PC WAL provisioned."
+trust_boundary = "operator-to-cluster"
+
+[[components]]
+id = "kubernetes-pod"
+name = "Hardened PgDog Pod"
+kind = "container-runtime"
+responsibility = "Runs UID/GID 10001 with read-only root/mounts, bounded tmp, TCP liveness and backend-aware HTTP readiness, and image SIGINT with bounded drain. Verified locally in isolated Kind; production infrastructure remains operator-owned."
+trust_boundary = "cluster-workload"
+
+[[components]]
+id = "operator-secrets"
+name = "Operator Configuration and Secrets"
+kind = "external-configuration"
+responsibility = "Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management."
+trust_boundary = "cluster-secret-store"

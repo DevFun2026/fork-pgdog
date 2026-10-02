@@ -1,0 +1,58 @@
+name: Fork artifact quality
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fork-artifact-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    env:
+      PGDOG_TEST_TOOLCHAIN: 1.96.1
+      ARTIFACT_ARCH: ${{ matrix.arch }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare artifact tools
+        run: |
+          python3 -m pip install --requirement tests/artifacts/requirements.txt
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version | grep -E '^skopeo version 1\.13\.3$'
+          python3 scripts/install-artifact-tools --directory "$RUNNER_TEMP/artifact-bin"
+          echo "$RUNNER_TEMP/artifact-bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          version: v0.37.2
+          driver-opts: image=moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - run: rustup toolchain install 1.96.1 --profile minimal
+      - name: Check workflows
+        run: actionlint .github/workflows/artifact-quality.yml .github/workflows/package.yml
+      - name: Build and verify native OCI bytes
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}
+        run: bash scripts/build-artifact
+      - name: Kubernetes isolation contract
+        run: python3 -m unittest discover -s tests/artifacts -p 'test_smoke_isolation.py' -v
+      - name: Retain bounded metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fork-artifact-check-${{ matrix.arch }}
+          path: ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}/image-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7

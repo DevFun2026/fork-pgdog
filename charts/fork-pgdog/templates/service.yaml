@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fork-pgdog.fullname" . }}
+  labels:
+    {{- include "fork-pgdog.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "fork-pgdog.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: pgsql
+      port: {{ .Values.service.port }}
+      targetPort: pgsql
+      protocol: TCP

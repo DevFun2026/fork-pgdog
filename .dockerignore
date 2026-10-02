@@ -1,4 +1,14 @@
 applications/pgdog/target*
+.git
+.superpowers
+.aws
+.codex
+.env*
+**/.env*
+**/credentials
+**/users.toml
+**/node_modules
+**/__pycache__
 applications/pgdog/docs
 applications/pgdog/web
 .github
