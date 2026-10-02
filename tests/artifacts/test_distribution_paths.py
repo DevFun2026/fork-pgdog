@@ -1,6 +1,6 @@
 from pathlib import Path
 import unittest
-import subprocess
+import json
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +19,7 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual((path.parent / build.get("context", ".")).resolve(), ROOT)
                 self.assertEqual(build.get("dockerfile"), "applications/pgdog/Dockerfile")
                 self.assertEqual(service.get("pull_policy"), "build")
-                original = yaml.safe_load(subprocess.run(["git", "show", "HEAD:" + relative], cwd=ROOT, text=True, capture_output=True, check=True).stdout)
+                original = json.loads((ROOT / "tests/artifacts/fixtures/compose-contracts.json").read_text())["models"][relative]
                 current = yaml.safe_load(path.read_text())
                 key = "database" if "immich" in relative else "pgdog"
                 old_service = original["services"].pop(key)
