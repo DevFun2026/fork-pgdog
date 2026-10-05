@@ -1,13 +1,23 @@
 import json
+import multiprocessing
+import os
 import subprocess
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
 from agent_cli.providers.base import Capability, validated_result
 from agent_cli.review.models import ReviewPackageRequest
 from agent_cli.review.partition_orchestrator import PartitionOrchestrator
+
+
+def _exit_while_holding_operation_lock(runtime, part, ready):
+    runtime._claim_operation(part)
+    ready.set()
+    os._exit(0)
 
 
 class Provider:
@@ -17,10 +27,11 @@ class Provider:
         self.fail_at = None
         self.invalid_at = None
         self.identity_at = None
+        self.available = True
 
     def detect(self):
         self.probes += 1
-        return Capability("claude", True, "claude", "fixture", True, True, None)
+        return Capability("claude", self.available, "claude", "fixture", True, True, None)
 
     def review(self, request):
         self.calls += 1
@@ -188,6 +199,35 @@ class PartitionOrchestratorTests(unittest.TestCase):
             trusted_partition_enabled=True,
         )
         self.assertEqual(result.verdict, "fail")
+        self.assertFalse(self.runtime.clearance_valid(part))
+
+    def test_changed_child_result_cannot_replace_a_persisted_failed_row(self):
+        part = self.prepare()
+        self.provider.fail_at = 1
+        first = self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(first.verdict, "fail")
+        calls = self.provider.calls
+        child = part.children[0]
+        findings_path = child.path / "findings.json"
+        findings_path.write_text('{"verdict":"pass","findings":[]}\n')
+        audit_path = child.path / "audit.jsonl"
+        audit = json.loads(audit_path.read_text())
+        audit["verdict"] = "pass"
+        audit_path.write_text(json.dumps(audit, sort_keys=True) + "\n")
+
+        resumed = PartitionOrchestrator({"claude": self.provider}).run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(resumed.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
         self.assertFalse(self.runtime.clearance_valid(part))
 
     def test_tampered_child_result_blocks_second_stage(self):
@@ -389,3 +429,258 @@ class PartitionOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(result.verdict, "pass")
         self.assertTrue(self.runtime.clearance_valid(part))
+
+    def test_completed_child_and_integration_outputs_are_reused_on_resume(self):
+        part = self.prepare()
+        first = self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        integration = self.runtime.integration_package(part, self.request)
+        calls = self.provider.calls
+        probes = self.provider.probes
+
+        resumed = PartitionOrchestrator({"claude": self.provider})
+        second = resumed.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        same_integration = resumed.integration_package(part, self.request)
+        self.assertEqual(first.status, "integration_manifest_pending")
+        self.assertEqual(second.status, "integration_manifest_pending")
+        self.assertEqual(same_integration.path, integration.path)
+        self.assertEqual(same_integration.manifest_sha256, integration.manifest_sha256)
+        self.assertEqual(self.provider.calls, calls)
+        self.assertEqual(self.provider.probes, probes)
+
+        completed = resumed.run_integration(
+            part,
+            self.request,
+            integration,
+            approved_manifest_sha256=integration.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        calls = self.provider.calls
+        probes = self.provider.probes
+        again = PartitionOrchestrator({"claude": self.provider}).run_integration(
+            part,
+            self.request,
+            integration,
+            approved_manifest_sha256=integration.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual((completed.status, completed.verdict), ("completed", "pass"))
+        self.assertEqual((again.status, again.verdict), ("completed", "pass"))
+        self.assertEqual(self.provider.calls, calls)
+        self.assertEqual(self.provider.probes, probes)
+
+    def test_completed_output_without_bound_dispatch_marker_stays_pending(self):
+        part = self.prepare()
+        self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        state_path = part.root_package.path / "partition-results.json"
+        state = json.loads(state_path.read_text())
+        state["dispatches"].pop(f"child:{part.children[0].path.name}")
+        state_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
+        calls = self.provider.calls
+
+        result = PartitionOrchestrator({"claude": self.provider}).run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
+
+    def test_completed_marker_without_persisted_row_stays_pending(self):
+        part = self.prepare()
+        self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        state_path = part.root_package.path / "partition-results.json"
+        state = json.loads(state_path.read_text())
+        state["children"] = []
+        state_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
+        calls = self.provider.calls
+
+        result = PartitionOrchestrator({"claude": self.provider}).run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
+
+    def test_started_marker_with_unrecorded_completed_output_stays_pending(self):
+        part = self.prepare()
+        self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        state_path = part.root_package.path / "partition-results.json"
+        state = json.loads(state_path.read_text())
+        state["children"] = []
+        state["dispatches"][f"child:{part.children[0].path.name}"]["status"] = "started"
+        state_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
+        calls = self.provider.calls
+
+        result = PartitionOrchestrator({"claude": self.provider}).run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
+
+    def test_operation_lock_is_released_when_holder_process_exits(self):
+        part = self.prepare()
+        context = multiprocessing.get_context("fork")
+        ready = context.Event()
+        process = context.Process(
+            target=_exit_while_holding_operation_lock,
+            args=(self.runtime, part, ready),
+        )
+        process.start()
+        self.assertTrue(ready.wait(5), "child process did not acquire operation lock")
+        process.join(5)
+        self.assertEqual(process.exitcode, 0)
+
+        descriptor = self.runtime._claim_operation(part)
+        self.assertIsNotNone(descriptor)
+        self.runtime._release_operation(descriptor)
+
+    def test_ambiguous_child_dispatch_is_not_retried_after_restart(self):
+        part = self.prepare()
+
+        def interrupted(_request):
+            self.provider.calls += 1
+            raise RuntimeError("simulated interruption after dispatch")
+
+        self.provider.review = interrupted
+        with self.assertRaisesRegex(RuntimeError, "simulated interruption"):
+            self.runtime.run_partition(
+                part,
+                self.request,
+                approved_manifest_sha256=part.manifest_sha256,
+                trusted_partition_enabled=True,
+            )
+        calls = self.provider.calls
+        resumed = PartitionOrchestrator({"claude": self.provider})
+        result = resumed.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
+
+    def test_ambiguous_integration_dispatch_is_not_retried_after_restart(self):
+        part = self.prepare()
+        self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        integration = self.runtime.integration_package(part, self.request)
+
+        def interrupted(_request):
+            self.provider.calls += 1
+            raise RuntimeError("simulated integration interruption")
+
+        self.provider.review = interrupted
+        with self.assertRaisesRegex(RuntimeError, "integration interruption"):
+            self.runtime.run_integration(
+                part,
+                self.request,
+                integration,
+                approved_manifest_sha256=integration.manifest_sha256,
+                trusted_partition_enabled=True,
+            )
+        calls = self.provider.calls
+        resumed = PartitionOrchestrator({"claude": self.provider})
+        result = resumed.run_integration(
+            part,
+            self.request,
+            integration,
+            approved_manifest_sha256=integration.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        self.assertEqual(self.provider.calls, calls)
+
+    def test_failed_offline_probe_without_audit_can_retry(self):
+        part = self.prepare()
+        self.provider.available = False
+        result = self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(result.status, "review_pending")
+        results_path = part.root_package.path / "partition-results.json"
+        if results_path.exists():
+            state = json.loads(results_path.read_text())
+            self.assertEqual(state["dispatches"], {})
+        self.assertFalse((part.children[0].path / "audit.jsonl").exists())
+
+        self.provider.available = True
+        retried = self.runtime.run_partition(
+            part,
+            self.request,
+            approved_manifest_sha256=part.manifest_sha256,
+            trusted_partition_enabled=True,
+        )
+        self.assertEqual(retried.status, "integration_manifest_pending")
+
+    def test_concurrent_partition_resumes_claim_only_one_child_dispatch(self):
+        part = self.prepare()
+        entered = threading.Event()
+        release = threading.Event()
+
+        def held_review(_request):
+            self.provider.calls += 1
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("timed out waiting for concurrent test")
+            raw = json.dumps({"verdict": "pass", "findings": []})
+            return validated_result("claude", json.loads(raw), raw)
+
+        self.provider.review = held_review
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(
+                self.runtime.run_partition,
+                part,
+                self.request,
+                approved_manifest_sha256=part.manifest_sha256,
+                trusted_partition_enabled=True,
+            )
+            self.assertTrue(entered.wait(5), "first review did not enter provider")
+            second = PartitionOrchestrator({"claude": self.provider}).run_partition(
+                part,
+                self.request,
+                approved_manifest_sha256=part.manifest_sha256,
+                trusted_partition_enabled=True,
+            )
+            self.assertEqual(second.status, "review_pending")
+            self.assertEqual(self.provider.calls, 1)
+            release.set()
+            self.assertEqual(first.result(timeout=10).status, "integration_manifest_pending")

@@ -13,6 +13,8 @@ user approval of the previously previewed partition design on 2026-10-05.
 3. Require second immutable integration package approval with validated child
    outputs and explicit cross-boundary context. Test partial/tampered results,
    aggregate overflow and inability to override failed child verdicts.
+   Verify idempotent resume, exclusive dispatch claims and refusal to retry an
+   ambiguous remote attempt within the same immutable operation.
 4. Add trusted-base configuration and CLI flags; default partitioning disabled
    when fields are absent. Test feature-local enablement cannot authorize egress.
 5. Extend merge evidence loading for root-bound partition operations, preserving

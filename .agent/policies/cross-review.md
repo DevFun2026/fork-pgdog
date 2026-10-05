@@ -46,6 +46,11 @@ new catalog fixture may split only at complete records with original offsets.
 Treat fragments as fragments: use supplied scope and registry table/record
 metadata, do not mistake them for independently applicable patches.
 
+Resume reuses validated completed results and the same integration package.
+Claim each immutable invocation exclusively before dispatch, allowing at most
+one remote attempt. Interrupted or ambiguous attempts remain pending; only a
+capability failure proven to have dispatched no review permits a retry.
+
 All children require exact root-manifest approval before provider probing.
 They produce no standalone merge clearance. A separate integration package binds
 all validated child results, audit hashes and explicitly selected immutable

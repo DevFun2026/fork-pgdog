@@ -15,6 +15,7 @@ claimed by this local assessment.
 | Invalid provider output or identity | Validate schema, provider, exit/status/verdict; malformed or incomplete results remain pending. |
 | Hidden extra files or symlink expansion | Inventory checks and existing denied-path/content scanning; isolated provider package with existing sandbox. |
 | Aggregate resource/context overflow | Count actual complete invocation payloads, duplicated context, metadata, token rounding and integration reserve; reject overflow. |
+| Repeated or concurrent dispatch exceeds the approved operation | Persist an exclusive attempt claim before dispatch; reuse completed results and integration manifest; ambiguous attempts remain pending. |
 | Lost cross-shard architecture reasoning | Explicit immutable integration contracts, complete scope and all outputs; reviewer must reject insufficient context. |
 
 Residual risk: model reviews remain fallible; safe byte coverage does not itself

@@ -28,6 +28,12 @@ Root approval is exact and required before even probing a provider. Author and
 reviewer providers differ. Existing provider sandbox and output validation apply.
 Child invocations cannot publish standalone global merge-clearance records.
 
+Each immutable child or integration package permits at most one remote review
+attempt. Resuming reuses validated completed results and the same integration
+manifest. An interrupted or ambiguous attempt remains pending; it cannot silently
+send the payload again. Capability checks that demonstrably never dispatched a
+review may be retried. Concurrent callers must not both claim a dispatch.
+
 An additional integration review is mandatory. It receives explicitly selected
 immutable contracts/context, the complete inventory, all validated child outputs
 and their audit bindings. Because outputs do not exist at initial preview,
