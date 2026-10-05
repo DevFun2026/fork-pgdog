@@ -33,3 +33,30 @@ or provider identity conflict is `REVIEW_PENDING`, never approval.
 Findings are advisory until reproduced and adjudicated against current source.
 Confirmed Critical or High findings block merge. Rejection requires an explicit
 evidence-based reason.
+
+## Partitioned operations (version 1)
+
+Partitioning is opt-in and must be enabled in the trusted remote-default base.
+The local feature branch cannot expand that authority. Each invocation remains
+within its byte/token limits; aggregate limits count repeated payloads, root
+metadata and integration. A complete full-Git projection remains locally bound.
+Ordered child ranges reconstruct the exact projected diff, with no missing or
+duplicated bytes. Ordinary file patches remain whole; an explicitly supported
+new catalog fixture may split only at complete records with original offsets.
+Treat fragments as fragments: use supplied scope and registry table/record
+metadata, do not mistake them for independently applicable patches.
+
+All children require exact root-manifest approval before provider probing.
+They produce no standalone merge clearance. A separate integration package binds
+all validated child results, audit hashes and explicitly selected immutable
+contracts; its different, exact manifest needs approval before the integration
+invocation. Review protocol lifecycle, SQL policy, catalog proof, deployment
+boundaries and regression coverage together. If necessary cross-boundary context
+is missing, report a finding rather than inferring safety from child passes.
+
+Automatic aggregate clearance requires every child and integration to complete
+with valid pass verdicts and no findings. Partial, stale, modified or malformed
+results block. Integration cannot override a failed child or a confirmed High or
+Critical finding. Reload all constituent evidence at merge, preserving existing
+finding adjudication requirements. This does not authorize provider egress or
+trusted-base integration merely because local packaging succeeds.

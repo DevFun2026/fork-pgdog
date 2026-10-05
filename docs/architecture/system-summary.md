@@ -1,6 +1,6 @@
 # PgDog fork: system architecture
 
-Generated: 2026-10-02T10:34:48+07:00 | Commit: 09026eec63e0
+Generated: 2026-10-02T16:04:15+07:00 | Commit: 960942d4254a
 
 ## Components
 
@@ -17,7 +17,7 @@ Generated: 2026-10-02T10:34:48+07:00 | Commit: 09026eec63e0
 - **project-memory** — Project Memory (`local-storage`): Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context. [boundary: local-repository]
 - **provider-adapters** — Provider Adapters (`adapter`): Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles. [boundary: provider-cli-process]
 - **release-owner** — GitHub Release Owner (`human-reviewer`): Owns the bounded first-release decision recorded in PR #7 comment 5948092075. Numeric GitHub identity, unchanged comment, current admin permission and required packages reviewer are validated before publication and after environment approval. [boundary: authenticated-github-owner]
-- **review-engine** — Cross-Review Engine (`orchestrator`): Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. [boundary: local-repository]
+- **review-engine** — Cross-Review Engine (`orchestrator`): Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory. [boundary: local-repository]
 - **runtime** — Agent Runtime (`python-cli`): Runs configuration, evidence, workflow, documentation, review, security, and release commands. [boundary: local-repository]
 - **sql-client** — PostgreSQL Client (`client`): Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data. [boundary: client-process]
 

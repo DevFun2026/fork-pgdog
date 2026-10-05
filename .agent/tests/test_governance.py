@@ -64,6 +64,9 @@ class GovernanceBaseTests(unittest.TestCase):
         (self.root / "second.txt").write_text("feature tip\n", encoding="utf-8")
         self.git("add", ".")
         self.git("commit", "-m", "feature tip")
+        # Advertise main as the remote default while cloning only the shallow
+        # feature branch. Otherwise Git may set origin/HEAD to feature itself.
+        self.git("switch", "main")
         clone_parent = tempfile.TemporaryDirectory(prefix="governance-shallow-")
         self.addCleanup(clone_parent.cleanup)
         clone = Path(clone_parent.name) / "clone"

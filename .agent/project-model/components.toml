@@ -49,7 +49,7 @@ trust_boundary = "provider-cli-process"
 id = "review-engine"
 name = "Cross-Review Engine"
 kind = "orchestrator"
-responsibility = "Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings."
+responsibility = "Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory."
 trust_boundary = "local-repository"
 
 [[components]]

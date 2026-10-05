@@ -178,6 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--requirements", type=Path)
     review.add_argument("--approve-manifest")
     review.add_argument("--package", type=Path)
+    review.add_argument("--partitioned", action="store_true")
+    review.add_argument("--integration-context", action="append", default=[])
+    review.add_argument("--approve-integration-manifest")
     review.add_argument("--max-package-bytes", type=int)
     review.add_argument("--profile", choices=tuple(PROFILES), default="standard")
     review.add_argument("--max-estimated-tokens", type=positive_argument)
@@ -202,6 +205,52 @@ def build_parser() -> argparse.ArgumentParser:
     license_check = license_commands.add_parser("check")
     license_check.add_argument("--json", action="store_true", dest="as_json")
     return parser
+
+
+def _partition_review_command(args, policy, base, head, adapters, byte_limit, token_limit):
+    from agent_cli.review.partition import load_partition, partition_usage
+    from agent_cli.review.partition_orchestrator import PartitionOrchestrator
+    try:
+        part = load_partition(args.package, root=ROOT) if args.package else None
+        reviewer = args.reviewer_provider or (part.root_package.manifest.reviewer_provider if part else
+                    next((name for name in policy.provider_order if name != args.author_provider), None))
+        if reviewer is None or reviewer not in policy.provider_order:
+            raise ProviderPolicyError("no approved independent reviewer is configured")
+        if args.approve_integration_manifest and part is None:
+            raise ReviewPackageBlocked("integration approval requires the existing root package")
+        requirements = (read_review_requirements(ROOT, args.requirements, max_bytes=byte_limit)
+                        if args.requirements else "Review correctness, security, tests, architecture and all cross-shard contracts.")
+        evidence = collect_fresh_verification_evidence(ROOT, tuple(k.replace("_", ".") for k in MERGE_COMMANDS))
+        request = ReviewPackageRequest(ROOT,base,head,args.author_provider,reviewer,tuple(args.context),
+                                       requirements,evidence,byte_limit,token_limit)
+        runtime = PartitionOrchestrator(adapters)
+        if part is None:
+            part = runtime.prepare(request,integration_context_paths=tuple(args.integration_context),
+                        max_aggregate_bytes=policy.max_aggregate_bytes,
+                        max_aggregate_tokens=policy.max_aggregate_tokens,target_bytes=policy.partition_target_bytes)
+        if args.approve_integration_manifest:
+            integration = runtime.integration_package(part,request)
+            result = runtime.run_integration(part,request,integration,
+                         approved_manifest_sha256=args.approve_integration_manifest,
+                         trusted_partition_enabled=policy.partition_enabled)
+        else:
+            result = runtime.run_partition(part,request,approved_manifest_sha256=args.approve_manifest,
+                                            trusted_partition_enabled=policy.partition_enabled)
+        integration_preview = None
+        if result.status == "integration_manifest_pending":
+            integration = runtime.integration_package(part,request)
+            integration_preview = {"package_path":str(integration.path),"manifest_sha256":integration.manifest_sha256,
+                                   "context":package_usage(integration)}
+        print(json.dumps({"status":result.status,"verdict":result.verdict,"provider":result.provider,
+                          "package_path":str(result.package_path),"manifest_sha256":result.manifest_sha256,
+                          "trusted_partition_enabled":policy.partition_enabled,"context":partition_usage(part),
+                          "integration":integration_preview},sort_keys=True))
+        if result.status == "completed":
+            return ExitCode.OK if result.verdict == "pass" else ExitCode.POLICY_BLOCKED
+        return ExitCode.REVIEW_PENDING
+    except (GovernanceBaseError,ReviewPackageBlocked,ProviderPolicyError,ConfigError,ValueError) as exc:
+        print(json.dumps({"status":"blocked","reasons":[str(exc)]}))
+        return ExitCode.POLICY_BLOCKED
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -749,6 +798,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "gemini": GeminiAdapter(command=review_policy.provider_commands["gemini"], repository_root=ROOT),
             "codex": CodexAdapter(command=review_policy.provider_commands["codex"], repository_root=ROOT),
         }
+        if args.partitioned or (args.package and (args.package / "partition.json").exists()):
+            return _partition_review_command(args, review_policy, trusted_base, trusted_head,
+                                             adapters, max_package_bytes, max_estimated_tokens)
         try:
             package = load_package(args.package, root=ROOT) if args.package else None
             reviewer = args.reviewer_provider

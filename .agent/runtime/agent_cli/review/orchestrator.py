@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from hashlib import sha256
 import json
-from pathlib import Path
 import shutil
 import tempfile
-from typing import Mapping
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
 
 from agent_cli.paths import atomic_write
-from agent_cli.providers.base import ReviewRequest
+from agent_cli.providers.base import ProviderResult, ReviewRequest, validated_result
 from agent_cli.review.models import ReviewPackageRequest, ReviewResult
 from agent_cli.review.package import (
+    REVIEW_INSTRUCTIONS,
     ReviewPackage,
     ReviewPackageBlocked,
+    _resolve_ref,
     build_package,
     load_package,
-    REVIEW_INSTRUCTIONS,
     package_usage,
-    _resolve_ref,
 )
 
 
@@ -51,6 +51,7 @@ class ReviewOrchestrator:
         request: ReviewPackageRequest,
         *,
         approved_manifest_sha256: str | None = None,
+        publish: bool = True,
     ) -> ReviewResult:
         package = load_package(package.path, root=request.root)
         usage = package_usage(package)
@@ -123,6 +124,16 @@ class ReviewOrchestrator:
                 timeout=300,
             )
             result = provider.review(provider_request)
+        if result.provider != request.reviewer_provider:
+            result = ProviderResult.invalid(request.reviewer_provider, "", "review result provider identity differs")
+        elif result.status == "completed":
+            try:
+                payload = json.loads(result.findings_json or "")
+                checked = validated_result(request.reviewer_provider, payload, result.findings_json or "")
+                if checked.status != "completed" or checked.verdict != result.verdict or result.exit_code != 0:
+                    result = ProviderResult.invalid(request.reviewer_provider, "", "invalid completed review result")
+            except (ValueError, TypeError):
+                result = ProviderResult.invalid(request.reviewer_provider, "", "malformed completed review result")
         audit = {
             "provider": request.reviewer_provider,
             "status": result.status,
@@ -159,32 +170,33 @@ class ReviewOrchestrator:
                 request.root.resolve()
             ).as_posix(),
         }
-        run_root = request.root / ".agent/.runs"
-        for name, kind in (
-            ("code-review.json", "independent-code-review"),
-            ("cross-review.json", "cross-provider-review"),
-        ):
-            atomic_write(
-                run_root / name,
-                json.dumps({**summary, "kind": kind}, sort_keys=True) + "\n",
-            )
-        if result.verdict == "pass":
-            atomic_write(
-                run_root / "adjudication.json",
-                json.dumps(
-                    {
-                        "status": "passed",
-                        "head_sha": package.manifest.head_sha,
-                        "manifest_sha256": package.manifest_sha256,
-                        "findings_sha256": summary["findings_sha256"],
-                        "package_path": summary["package_path"],
-                        "decisions": [],
-                        "blocking_ids": [],
-                    },
-                    sort_keys=True,
+        if publish:
+            run_root = request.root / ".agent/.runs"
+            for name, kind in (
+                ("code-review.json", "independent-code-review"),
+                ("cross-review.json", "cross-provider-review"),
+            ):
+                atomic_write(
+                    run_root / name,
+                    json.dumps({**summary, "kind": kind}, sort_keys=True) + "\n",
                 )
-                + "\n",
-            )
+            if result.verdict == "pass":
+                atomic_write(
+                    run_root / "adjudication.json",
+                    json.dumps(
+                        {
+                            "status": "passed",
+                            "head_sha": package.manifest.head_sha,
+                            "manifest_sha256": package.manifest_sha256,
+                            "findings_sha256": summary["findings_sha256"],
+                            "package_path": summary["package_path"],
+                            "decisions": [],
+                            "blocking_ids": [],
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n",
+                )
         return ReviewResult(
             "completed",
             result.verdict,
