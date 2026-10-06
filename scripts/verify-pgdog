@@ -16,6 +16,9 @@ command -v pg_isready >/dev/null
 pg_isready -h 127.0.0.1 -p 5432 -U pgdog -d pgdog
 mkdir -p .agent/.runs/gate-logs
 exec > >(tee .agent/.runs/gate-logs/full-tests.log) 2>&1
+fatal_phase=""
+set -E
+trap 'status=$?; if [[ -n "$fatal_phase" ]]; then printf "FATAL_PHASE: %s\n" "$fatal_phase" >&2; fi; exit "$status"' ERR
 failed=0
 run_check() {
     local status=0
@@ -36,12 +39,16 @@ fi
 cd applications/pgdog
 run_check cargo nextest run --locked --workspace --no-fail-fast --test-threads=1
 run_check cargo test --locked --doc --workspace
+fatal_phase="pgdog-build"
 cargo build --locked --bin pgdog
+fatal_phase=""
 export PGDOG_BIN="$PWD/target/debug/pgdog"
 run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase all
 run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase protocol --pooler-mode transaction --query-parser off --prepared-statements full
+fatal_phase="legacy-start"
 source integration/common.sh
 run_pgdog "${PGDOG_TEST_CONFIG_DIR:-integration}"
+fatal_phase="legacy-ready"
 # Bound readiness waiting even when the process is alive but not accepting SQL.
 ready=false
 for attempt in $(seq 1 120); do
@@ -52,8 +59,10 @@ for attempt in $(seq 1 120); do
     sleep 1
 done
 if [[ "$ready" != true ]]; then
+    echo 'FATAL_PHASE: legacy-ready' >&2
     echo 'PgDog did not become ready within 120 seconds' >&2
     exit 1
 fi
+fatal_phase=""
 run_check cargo nextest run --locked --profile integration --no-fail-fast --test-threads=1
 exit "$failed"

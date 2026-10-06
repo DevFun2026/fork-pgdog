@@ -92,6 +92,25 @@ it never forces another paid turn, captures transcripts or promotes records.
 If a resumed conversation does not emit invocation 0, retrieve context manually
 with `./scripts/agent memory bootstrap --query "focused task" --profile light`.
 
+## Reading a partition review package
+
+Entries in `manifest.json`'s `files` list resolve under the package's `context/`
+directory. For example, a listed `partition-scope.json` is available as
+`context/partition-scope.json`.
+
+A partition child uses a legacy manifest with flat full-scope paths. Its
+`context/partition-scope.json` carries the root full-diff digest and the child's
+range bindings; the child manifest deliberately does not duplicate the root's
+`full_diff_sha256`. Verification records bind the tested source HEAD and its
+uncommitted working-tree diff. A clean working tree has the empty SHA-256; this
+is distinct from the base-to-head patch digest or a child patch digest.
+
+Registry shards contain pinned PostgreSQL catalog metadata, rather than an
+allowlist for every catalog row. Include the registry type whitelist and the
+resolver/admission source as review context when assessing which rows can be
+reached through the strict endpoint. Preserve the configured per-invocation and
+aggregate limits when adding context.
+
 ## Contract sources and evidence
 
 Current local executable: AGY `1.2.17`; `--help` and a normal-host `agy models`
@@ -112,3 +131,10 @@ JSON describes Gemini CLI at the time; it is not AGY evidence.
 
 Upstream CLI contracts can change; rerun capability and real authenticated
 smoke checks on your installed version before relying on automated clearance.
+
+Package instructions and partition guidance contribute to the payload budget.
+After a runtime instruction change, an older immutable package may fail current
+size or scope validation. Retain its original files, dispatch markers and audits;
+use its original runtime revision for historical inspection. Build a fresh
+package for the changed source and obtain its exact approval before dispatch.
+Do not rewrite old manifests or clear started markers to retry a pending call.
