@@ -55,6 +55,28 @@ pub(crate) struct ServerRequest {
 }
 
 impl ServerRequest {
+    /// Internal exchange which must preserve client prepared objects.
+    pub(crate) fn strict_internal(query: &str, params: &[BindParameter]) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let name = format!(
+            "__pgdog_strict_internal_{}",
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        Self {
+            messages: vec![
+                Parse::named(&name, query).into(),
+                Bind::new_params_codes(&name, params, &[Format::Text])
+                    .with_portal(&name)
+                    .into(),
+                Execute::new_portal(&name).into(),
+                Close::portal(&name).into(),
+                Close::named(&name).into(),
+                Sync.into(),
+            ],
+            expected: 1,
+        }
+    }
     /// Anonymous extended-protocol query with text-format parameters.
     /// Parameters are bound by the server, so values don't need to be
     /// escaped.
@@ -68,6 +90,38 @@ impl ServerRequest {
             ],
             expected: 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod strict_read_internal_tests {
+    use super::*;
+
+    #[test]
+    fn strict_read_internal_request_preserves_unnamed_objects() {
+        let request = ServerRequest::strict_internal("SHOW transaction_read_only", &[]);
+        let ProtocolMessage::Parse(parse) = &request.messages[0] else {
+            panic!("missing Parse")
+        };
+        assert!(
+            !parse.anonymous(),
+            "internal Parse overwrites client unnamed statement"
+        );
+        assert_eq!(
+            request
+                .messages
+                .iter()
+                .map(ProtocolMessage::code)
+                .collect::<String>(),
+            "PBEC CS".replace(' ', "")
+        );
+        let ProtocolMessage::Bind(bind) = &request.messages[1] else {
+            panic!("missing Bind")
+        };
+        assert!(
+            !bind.to_bytes()[5..].starts_with(&[0]),
+            "internal Bind overwrites client unnamed portal"
+        );
     }
 }
 
@@ -177,6 +231,38 @@ impl MemoryUsage for Server {
 }
 
 impl Server {
+    /// Strict sessions own preparation identity, rather than the global cache.
+    pub(crate) fn enable_strict_protocol(&mut self) -> Result<(), Error> {
+        if !self.in_sync() {
+            return Err(Error::NotInSync);
+        }
+        self.prepared_statements.enable_strict_protocol();
+        Ok(())
+    }
+
+    /// End an extended exchange without ending the explicit internal transaction.
+    /// This barrier is hidden from the client and preserves suspended portals.
+    pub(crate) async fn strict_barrier(&mut self) -> Result<char, Error> {
+        if !self.prepared_statements.strict_protocol() || self.has_more_messages() {
+            return Err(Error::ProtocolOutOfSync);
+        }
+        self.send(&vec![ProtocolMessage::Sync(Sync)].into()).await?;
+        let mut status = None;
+        while self.has_more_messages() {
+            let message = self.read().await?;
+            match message.code() {
+                'Z' if status.is_none() => {
+                    status = Some(ReadyForQuery::from_bytes(message.to_bytes())?.status)
+                }
+                'S' | 'N' => (),
+                _ => {
+                    self.force_close();
+                    return Err(Error::ProtocolOutOfSync);
+                }
+            }
+        }
+        status.ok_or(Error::ProtocolOutOfSync)
+    }
     /// Create new PostgreSQL server connection.
     pub(crate) async fn connect(
         addr: &Address,
@@ -407,6 +493,17 @@ impl Server {
         let key = key_data.unwrap_or_else(BackendKeyData::random_legacy);
         let params: Parameters = params.into();
 
+        // Check protocol-provided baseline facts before link_client can build
+        // SET commands containing an application_name supplied at startup.
+        let strict_process = crate::frontend::read_policy::process::current().mode()
+            == crate::frontend::read_policy::QueryPolicy::StrictRead;
+        if strict_process
+            && (params.get_default("standard_conforming_strings", "") != "on"
+                || params.get_default("client_encoding", "") != "UTF8")
+        {
+            return Err(Error::ProtocolOutOfSync);
+        }
+
         info!(
             "new server connection: auth={}, source={}, reason={} [{}] {}",
             auth_type,
@@ -443,6 +540,10 @@ impl Server {
             max_age: None,
             credentials_generation: 0,
         };
+
+        if strict_process {
+            server.enable_strict_protocol()?;
+        }
 
         server.stats.memory_used(server.memory_stats()); // Stream capacity.
 
@@ -549,7 +650,9 @@ impl Server {
     /// Send message to Postgres, checking for any errors
     /// and setting the server state accordingly.
     async fn send_stream(&mut self, message: &ProtocolMessage) -> Result<(), Error> {
-        trace!("{:#?} >>> [{}]", message, self.addr());
+        if !self.prepared_statements.strict_protocol() {
+            trace!("{:#?} >>> [{}]", message, self.addr());
+        }
 
         match self.stream().send(message).await {
             Ok(sent) => self.stats.send(sent, message.code() as u8),
@@ -701,7 +804,9 @@ impl Server {
         self.prepared_statements
             .set_server_state(self.stats.get_state());
 
-        trace!("{:#?} <<< [{}]", message, self.addr());
+        if !self.prepared_statements.strict_protocol() {
+            trace!("{:#?} <<< [{}]", message, self.addr());
+        }
 
         Ok(message)
     }
@@ -923,7 +1028,9 @@ impl Server {
 
         #[cfg(debug_assertions)]
         for message in &request.messages {
-            if let ProtocolMessage::Query(query) = message {
+            if !self.prepared_statements.strict_protocol()
+                && let ProtocolMessage::Query(query) = message
+            {
                 debug!("{} [{}]", query.query(), self.addr());
             }
         }

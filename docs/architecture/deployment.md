@@ -33,6 +33,12 @@ provider, database access policy or production deployment for it.
 
 ## Repository tooling and documentation
 
+The opt-in [strict read/write endpoint deployment](../operations/strict-read-endpoints.md)
+uses two independent Helm releases and Services against one PostgreSQL backend.
+The read process has an immutable manifest and catalog/READ ONLY enforcement;
+the write process keeps unrestricted behavior. This source change has no new
+published artifact version and does not configure a production cluster.
+
 scripts/agent runs from the checkout on macOS, Linux or WSL. Hosted CI uses the
 same local gates. Validation runs for pull requests or manual dispatch, and
 publishing is manual.

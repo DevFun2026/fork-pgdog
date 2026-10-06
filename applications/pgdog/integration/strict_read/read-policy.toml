@@ -1,0 +1,5 @@
+schema_revision = "fixture-v1"
+
+[[databases]]
+name = "app"
+relations = ["public.strict_items"]

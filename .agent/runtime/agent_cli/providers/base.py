@@ -420,7 +420,6 @@ class _sandboxed_command:
         )
         self.output_paths: tuple[Path, Path] | None = None
         self.allow_network = allow_network
-        self.agy_api_mode = provider == "gemini" and include_credentials
         self.argv, self.support_paths = _prepared_provider_command(
             argv,
             self.repository_root,
@@ -443,10 +442,6 @@ class _sandboxed_command:
             profile = Path(self.temporary.name) / "review.sb"
             scratch_path = (Path(self.temporary.name) / "scratch").resolve()
             scratch_path.mkdir(mode=0o700)
-            if self.agy_api_mode:
-                settings = scratch_path / ".gemini/antigravity-cli/settings.json"
-                settings.parent.mkdir(parents=True, mode=0o700)
-                settings.write_text('{"modelProvider":"gemini"}\n', encoding="utf-8")
             self.output_paths = (
                 scratch_path / "stdout.txt",
                 scratch_path / "stderr.txt",
@@ -513,12 +508,6 @@ class _sandboxed_command:
             ]
             if self.allow_network:
                 arguments.insert(arguments.index("--proc"), "--share-net")
-            if self.agy_api_mode:
-                self.temporary = tempfile.TemporaryDirectory(prefix="agent-agy-settings-")
-                settings = Path(self.temporary.name) / "settings.json"
-                settings.write_text('{"modelProvider":"gemini"}\n', encoding="utf-8")
-                arguments.extend(("--dir", "/tmp/.gemini", "--dir", "/tmp/.gemini/antigravity-cli",
-                                  "--ro-bind", str(settings), "/tmp/.gemini/antigravity-cli/settings.json"))
             for directory in ("/usr", "/bin", "/lib", "/lib64"):
                 path = Path(directory)
                 if path.exists():

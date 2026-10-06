@@ -248,6 +248,48 @@ class ProviderTests(unittest.TestCase):
                 self.assertIn("/review-package/schema.json", argv[command_index:])
                 self.assertNotIn(str(self.package.resolve()), argv[command_index:])
 
+    def test_linux_agy_keeps_disposable_home_without_synthetic_api_settings(self):
+        sandbox = _sandboxed_command(
+            ("/usr/bin/true",),
+            self.package,
+            self.package,
+            "gemini",
+        )
+        with mock.patch("platform.system", return_value="Linux"), mock.patch(
+            "shutil.which", return_value="/usr/bin/bwrap"
+        ), sandbox as argv:
+            self.assertEqual(sandbox.environment["HOME"], "/tmp")
+            self.assertEqual(sandbox.environment["TMPDIR"], "/tmp")
+            adjacent_arguments = tuple(
+                tuple(argv[index:index + 2]) for index in range(len(argv) - 1)
+            )
+            self.assertIn(("--tmpfs", "/tmp"), adjacent_arguments)
+            self.assertFalse(any(".gemini" in argument for argument in argv))
+            self.assertFalse(any("modelProvider" in argument for argument in argv))
+            self.assertNotIn(str(Path.home()), argv)
+
+    def test_darwin_agy_keeps_scratch_home_without_synthetic_api_settings(self):
+        sandbox = _sandboxed_command(
+            ("/usr/bin/true",),
+            self.package,
+            self.package,
+            "gemini",
+        )
+        with mock.patch("platform.system", return_value="Darwin"), mock.patch(
+            "shutil.which", return_value="/usr/bin/sandbox-exec"
+        ), sandbox as argv:
+            home = Path(sandbox.environment["HOME"])
+            self.assertNotEqual(home, Path.home())
+            self.assertEqual(sandbox.environment["TMPDIR"], str(home))
+            self.assertFalse(
+                (home / ".gemini/antigravity-cli/settings.json").exists()
+            )
+            profile_path = Path(argv[argv.index("-f") + 1])
+            profile = profile_path.read_text(encoding="utf-8")
+            self.assertNotIn(".gemini", profile)
+            self.assertNotIn("modelProvider", profile)
+            self.assertNotIn(str(Path.home()), profile)
+
     def test_provider_environment_is_minimal_and_provider_specific(self):
         with mock.patch.dict(
             "os.environ",

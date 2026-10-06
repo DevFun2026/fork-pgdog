@@ -21,6 +21,15 @@ from agent_cli.review.package import (
     package_usage,
 )
 
+
+PARTITION_REVIEW_GUIDANCE = (
+    "Manifest file paths are relative to package/context; read only listed files. "
+    "The child manifest diff_sha256 covers only this shard's diff.patch. This context "
+    "binds the root_manifest_sha256, full_diff_sha256, complete scope, and this shard's "
+    "ranges to the exact base_sha..head_sha commits; do not substitute the current "
+    "worktree or infer whole-review clearance from one shard."
+)
+
 REGISTRY_PATH = (
     "applications/pgdog/pgdog/src/backend/schema/read_policy/registry-pg18.json"
 )
@@ -417,12 +426,7 @@ def _build_child(
         ],
         "verified_renames": root_package.manifest.verified_renames,
         "ranges": ranges,
-        "review_guidance": (
-            "This is one complete byte range from a larger independent review. "
-            "The parent manifest binds every range to the full projected diff and full Git diff. "
-            "Use the complete scope inventory for cross-file reasoning; report local findings "
-            "with paths and evidence, and do not infer clearance from this shard alone."
-        ),
+        "review_guidance": PARTITION_REVIEW_GUIDANCE,
     }
     scope_bytes = _canonical_json(scope_payload) + b"\n"
     scope_file = child_path / "context" / "partition-scope.json"
@@ -547,6 +551,22 @@ def partition_usage(partition: PartitionedReview) -> dict[str, int]:
     }
 
 
+def _next_atom_budget(
+    *,
+    atom_budget: int,
+    invocation_byte_limit: int,
+    over_budget_children: tuple[tuple[int, int], ...],
+) -> int:
+    """Reduce diff payload allowance by each oversized child's measured overhead."""
+    payload_limits = [
+        invocation_byte_limit - (package_bytes - diff_bytes)
+        for diff_bytes, package_bytes in over_budget_children
+    ]
+    if not payload_limits:
+        return atom_budget
+    return min(atom_budget - 1, min(payload_limits))
+
+
 def build_partition(
     request: ReviewPackageRequest,
     *,
@@ -609,24 +629,28 @@ def build_partition(
             )
             children.append(child)
             entries.append(entry)
-        overages = []
+        over_budget_children = []
         for child in children:
             usage = package_usage(child)
-            overages.append(
-                max(
-                    int(usage["bytes"]) - invocation_byte_limit,
-                    (int(usage["estimated_tokens"]) - request.max_estimated_tokens) * 3,
-                    0,
+            package_bytes = int(usage["bytes"])
+            if (
+                package_bytes > invocation_byte_limit
+                or int(usage["estimated_tokens"]) > request.max_estimated_tokens
+            ):
+                over_budget_children.append(
+                    (len(child.diff_bytes), package_bytes)
                 )
-            )
-        excess = max(overages, default=0)
-        if excess == 0:
+        if not over_budget_children:
             break
         for child in children:
             shutil.rmtree(child.path)
         children = []
         entries = []
-        atom_budget -= max(excess, 1)
+        atom_budget = _next_atom_budget(
+            atom_budget=atom_budget,
+            invocation_byte_limit=invocation_byte_limit,
+            over_budget_children=tuple(over_budget_children),
+        )
         if atom_budget <= 0:
             raise ReviewPackageBlocked(
                 "package metadata and context exceed the per-invocation review budget"
@@ -892,12 +916,7 @@ def load_partition(path: Path, *, root: Path) -> PartitionedReview:
             ],
             "verified_renames": root_manifest.verified_renames,
             "ranges": expected_ranges,
-            "review_guidance": (
-                "This is one complete byte range from a larger independent review. "
-                "The parent manifest binds every range to the full projected diff and full Git diff. "
-                "Use the complete scope inventory for cross-file reasoning; report local findings "
-                "with paths and evidence, and do not infer clearance from this shard alone."
-            ),
+            "review_guidance": PARTITION_REVIEW_GUIDANCE,
         }
         if scope_path.read_bytes() != _canonical_json(expected_scope) + b"\n":
             raise ReviewPackageBlocked(

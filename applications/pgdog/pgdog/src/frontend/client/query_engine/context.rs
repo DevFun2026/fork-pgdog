@@ -16,6 +16,7 @@ use super::split::Pipeline;
 
 /// Context passed to the query engine to execute a query.
 pub(crate) struct QueryEngineContext<'a> {
+    pub(super) strict_session: Option<&'a mut crate::frontend::read_policy::StrictSession>,
     /// Client ID running the query.
     pub(super) id: FrontendPid,
     /// Prepared statements cache.
@@ -56,6 +57,7 @@ impl<'a> QueryEngineContext<'a> {
 
         (
             Self {
+                strict_session: client.strict_session.as_deref_mut(),
                 id: FrontendPid::from(&client.key),
                 prepared_statements: &mut client.prepared_statements,
                 params: &mut client.params,
@@ -87,6 +89,7 @@ impl<'a> QueryEngineContext<'a> {
     /// Create context from mirror.
     pub(crate) fn new_mirror(mirror: &'a mut Mirror) -> Self {
         Self {
+            strict_session: None,
             id: mirror.id,
             prepared_statements: &mut mirror.prepared_statements,
             params: &mut mirror.params,

@@ -12,8 +12,29 @@ use crate::api::tasks_storage;
 use crate::backend::databases::databases;
 use crate::backend::replication::resharding_state::ReshardingState;
 use crate::backend::schema::sync::config::ShardConfig;
+use crate::frontend::read_policy::{PolicyError, ProcessPolicy, QueryPolicy};
 use crate::frontend::router::cli::RouterCli;
 use pgdog_stats::Databases;
+
+#[cfg(test)]
+mod strict_read_cli_tests {
+    use super::*;
+
+    #[test]
+    fn strict_read_cli_accepts_process_flags_for_run_and_configcheck() {
+        for command in ["run", "configcheck"] {
+            let parsed = Cli::try_parse_from([
+                "pgdog",
+                "--query-policy",
+                "strict-read",
+                "--read-policy-file",
+                "read-policy.toml",
+                command,
+            ]);
+            assert!(parsed.is_ok(), "{parsed:?}");
+        }
+    }
+}
 
 /// PgDog is a PostgreSQL pooler, proxy, load balancer and query router.
 #[derive(Parser, Debug)]
@@ -28,9 +49,31 @@ pub(crate) struct Cli {
     /// Connection URL.
     #[arg(short, long)]
     pub(crate) database_url: Option<Vec<String>>,
+    /// Immutable query admission policy for this process.
+    #[arg(long, value_enum, default_value = "unrestricted")]
+    pub(crate) query_policy: QueryPolicy,
+    /// Protected read-surface manifest. Required by strict-read.
+    #[arg(long, required_if_eq("query_policy", "strict-read"))]
+    pub(crate) read_policy_file: Option<PathBuf>,
     /// Subcommand.
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
+}
+
+impl Cli {
+    pub(crate) fn process_policy(&self) -> Result<std::sync::Arc<ProcessPolicy>, PolicyError> {
+        if self.query_policy == QueryPolicy::StrictRead
+            && !matches!(
+                self.command,
+                None | Some(Commands::Run { .. } | Commands::Configcheck)
+            )
+        {
+            return Err(PolicyError::configuration(
+                "strict_read_subcommand_forbidden",
+            ));
+        }
+        ProcessPolicy::load(self.query_policy, self.read_policy_file.as_deref())
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]

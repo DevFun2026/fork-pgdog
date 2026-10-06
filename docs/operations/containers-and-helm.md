@@ -37,6 +37,14 @@ loopback-only API server, then deletes only that cluster. It never selects or
 changes the user's existing Kubernetes context. Do not run upstream database
 fixture setup against shared databases.
 
+## Separate read and write endpoints
+
+The feature-capable source supports two independent releases: a `strict-read`
+release and an `unrestricted` release. Follow the [strict endpoint guide](strict-read-endpoints.md)
+for the protected relation manifest, PostgreSQL 18 role/catalog prerequisites,
+SQL limits and paired Helm values. Published 0.1.0 artifacts do not include this
+feature; a locally verified candidate still needs the release gates.
+
 ## Operator inputs and installation
 
 Use an explicit context/namespace chosen by your operator process. Prepare

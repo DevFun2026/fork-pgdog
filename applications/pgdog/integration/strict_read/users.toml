@@ -1,0 +1,2 @@
+# Credentials arrive from the client through passthrough authentication.
+users = []

@@ -1,0 +1,37 @@
+# Install as a separate release from write-values.yaml. Replace the example
+# image tag with a strict-read-capable build; published 0.1.0 lacks this feature.
+# Create Secrets pgdog-users and pgdog-client-tls before installing. The users
+# Secret must contain users.toml; TLS Secret must contain tls.crt and tls.key.
+# Create ConfigMap pgdog-read-policy with key read-policy.toml from
+# read-policy.toml. Review/recreate the manifest after controlled schema DDL.
+# Client service DNS: pgdog-read-fork-pgdog.<namespace>.svc:6432. Restart this
+# release after changing the policy ConfigMap:
+# kubectl -n <namespace> rollout restart deployment/pgdog-read-fork-pgdog
+image:
+  repository: ghcr.io/devfun2026/fork-pgdog
+  tag: strict-read-capable-build
+queryPolicy: strict-read
+readPolicy:
+  existingConfigMap: pgdog-read-policy
+users:
+  existingSecret: pgdog-users
+tls:
+  existingSecret: pgdog-client-tls
+config:
+  pgdogToml: |
+    [general]
+    host = "0.0.0.0"
+    port = 6432
+    healthcheck_port = 9090
+    shutdown_timeout = 120000
+    shutdown_termination_timeout = 10000
+    passthrough_auth = "enabled"
+    tls_certificate = "/etc/pgdog/tls/tls.crt"
+    tls_private_key = "/etc/pgdog/tls/tls.key"
+
+    [[databases]]
+    name = "app"
+    database_name = "app"
+    host = "postgres.example.internal"
+    port = 5432
+    role = "primary"

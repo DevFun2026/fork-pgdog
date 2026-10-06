@@ -22,11 +22,11 @@ host = "postgres.example.internal"
 BASE = {"config": {"pgdogToml": CONFIG}, "users": {"existingSecret": "fixture-users"}}
 
 
-def helm_render(values):
+def helm_render(values, release="test"):
     with tempfile.TemporaryDirectory(prefix="fork-chart-values-") as directory:
         path = Path(directory) / "values.yaml"
         path.write_text(yaml.safe_dump(values))
-        return subprocess.run(["helm", "template", "test", str(CHART), "-f", str(path)],
+        return subprocess.run(["helm", "template", release, str(CHART), "-f", str(path)],
                               text=True, capture_output=True)
 
 
@@ -73,6 +73,79 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(service["spec"]["type"], "ClusterIP")
         self.assertEqual(service["spec"]["ports"], [{"name": "pgsql", "port": 6432,
                                                     "targetPort": "pgsql", "protocol": "TCP"}])
+        self.assertEqual(self.values().get("queryPolicy"), "unrestricted")
+        self.assertEqual(self.values().get("readPolicy"), {"existingConfigMap": ""})
+        self.assertTrue(all("--query-policy" not in container["args"]
+                            for container in pod["containers"] + pod["initContainers"]))
+
+    def values(self):
+        return yaml.safe_load((CHART / "values.yaml").read_text())
+
+    def test_strict_read_requires_configmap_and_applies_to_both_containers(self):
+        values = {**BASE, "queryPolicy": "strict-read",
+                  "readPolicy": {"existingConfigMap": "pgdog-read-policy"}}
+        docs = self.render(values)
+        pod = next(doc for doc in docs if doc["kind"] == "Deployment")["spec"]["template"]["spec"]
+        containers = pod["containers"] + pod["initContainers"]
+        expected = ["--query-policy", "strict-read", "--read-policy-file",
+                    "/etc/pgdog/read-policy/read-policy.toml"]
+        for container in containers:
+            self.assertEqual(container["args"][:4], ["--config", "/etc/pgdog/config/pgdog.toml",
+                                                     "--users", "/etc/pgdog/users/users.toml"])
+            self.assertEqual(container["args"][4:8], expected)
+            mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+            self.assertEqual(mounts["read-policy"]["mountPath"],
+                             "/etc/pgdog/read-policy/read-policy.toml")
+            self.assertTrue(mounts["read-policy"]["readOnly"])
+        self.assertEqual(pod["initContainers"][0]["args"][-1], "configcheck")
+        volume = {entry["name"]: entry for entry in pod["volumes"]}["read-policy"]
+        self.assertEqual(volume["configMap"]["name"], "pgdog-read-policy")
+        self.assertEqual(volume["configMap"]["items"],
+                         [{"key": "read-policy.toml", "path": "read-policy.toml"}])
+
+    def test_query_policy_values_fail_closed(self):
+        cases = [({**BASE, "queryPolicy": "strict-read"}, "readPolicy"),
+                 ({**BASE, "queryPolicy": "unknown"}, "queryPolicy"),
+                 ({**BASE, "queryPolicy": "unrestricted",
+                   "readPolicy": {"existingConfigMap": "unused-policy"}}, "readPolicy"),
+                 ({**BASE, "queryPolicy": "strict-read",
+                   "readPolicy": {"existingConfigMap": "pgdog-read-policy", "extra": True}}, "extra"),
+                 ({**BASE, "unknownPolicySetting": True}, "unknownPolicySetting")]
+        for values, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic, values=values):
+                result = helm_render(values)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(diagnostic.lower(), result.stderr.lower())
+                self.assertNotIn("kind: Deployment", result.stdout)
+
+    def test_read_and_write_releases_have_disjoint_selectors_and_same_backend_image(self):
+        read_values = {**BASE, "queryPolicy": "strict-read",
+                       "readPolicy": {"existingConfigMap": "pgdog-read-policy"}}
+        write_values = {**BASE, "queryPolicy": "unrestricted"}
+        read_result = helm_render(read_values, "pgdog-read")
+        write_result = helm_render(write_values, "pgdog-write")
+        self.assertEqual(read_result.returncode, 0, read_result.stderr)
+        self.assertEqual(write_result.returncode, 0, write_result.stderr)
+        read_docs = [d for d in yaml.safe_load_all(read_result.stdout) if d]
+        write_docs = [d for d in yaml.safe_load_all(write_result.stdout) if d]
+        read_deployment = next(d for d in read_docs if d["kind"] == "Deployment")
+        write_deployment = next(d for d in write_docs if d["kind"] == "Deployment")
+        read_selector = read_deployment["spec"]["selector"]["matchLabels"]
+        write_selector = write_deployment["spec"]["selector"]["matchLabels"]
+        self.assertNotEqual(read_selector, write_selector)
+        self.assertNotEqual(read_selector["app.kubernetes.io/instance"],
+                            write_selector["app.kubernetes.io/instance"])
+        for docs in (read_docs, write_docs):
+            deployment = next(d for d in docs if d["kind"] == "Deployment")
+            images = {c["image"] for c in deployment["spec"]["template"]["spec"]["containers"] +
+                      deployment["spec"]["template"]["spec"]["initContainers"]}
+            self.assertEqual(images, {"ghcr.io/devfun2026/fork-pgdog:0.1.60"})
+            config = next((d for d in docs if d["kind"] == "ConfigMap"), None)
+            self.assertEqual(config["data"]["pgdog.toml"], CONFIG)
+        self.assertTrue(any("--query-policy" in c["args"]
+                            for c in read_deployment["spec"]["template"]["spec"]["containers"]))
+        self.assertFalse(any("--query-policy" in c["args"]
+                             for c in write_deployment["spec"]["template"]["spec"]["containers"]))
 
     def test_probe_roles_and_custom_ports(self):
         pod = self.deployment({"containerPort": 6543, "healthcheckPort": 9191,

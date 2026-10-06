@@ -17,6 +17,10 @@ config:
   existingSecret: ""
 users:
   existingSecret: ""
+# Immutable process-level query policy. strict-read requires a separate policy ConfigMap.
+queryPolicy: unrestricted
+readPolicy:
+  existingConfigMap: ""
 tls:
   existingSecret: ""
 resources:

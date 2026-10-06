@@ -206,7 +206,9 @@ impl Listener {
         let tls = acceptor();
 
         loop {
-            let startup = match Startup::from_stream(&mut stream).await {
+            let strict = super::read_policy::process::current().mode()
+                == super::read_policy::QueryPolicy::StrictRead;
+            let startup = match Startup::from_stream_policy(&mut stream, strict).await {
                 Ok(startup) => startup,
                 Err(net::Error::Io(io_err)) => {
                     // Load balancers like AWS ELB use TCP to health check

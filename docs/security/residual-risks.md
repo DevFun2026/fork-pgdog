@@ -1,5 +1,21 @@
 # Residual Risks
 
+## Strict read endpoint delta
+
+- Owner: database operator. Only the reviewed PostgreSQL 18 catalog/binary and
+  controlled schema epoch are supported. DBA/catalog/native extension compromise
+  and concurrent uncontrolled DDL are outside the contract. Drain readers before
+  schema or role changes, review and restart; a revision label alone is not proof.
+- Owner: proxy maintainer. The SQL/type resolver is deliberately conservative
+  and can reject safe application queries or driver initialization. Extend it only
+  with exact dependency proof, negative cases and independent review.
+- Owner: deployment operator. Both endpoints may use the same database role;
+  callers who can reach the write Service retain its grants. Production network
+  policy and endpoint selection must reflect application access requirements.
+- Owner: release maintainer. Local test results do not grant external publication,
+  production deployment or signed security clearance. The 0.1.0 authorization
+  exception does not cover this feature or a new release.
+
 - AI-generated and AI-reviewed changes may contain defects not detected by the
   selected evidence or reviewer.
 - Local plaintext memory and review artifacts rely on operating-system account

@@ -24,6 +24,37 @@ class RenderedChartValidationTests(unittest.TestCase):
     def test_aligned_config_and_manifests_pass(self):
         self.validate(self.docs, self.values)
 
+    def test_strict_read_policy_requires_matching_args_mount_and_key(self):
+        values = deepcopy(self.values)
+        values["queryPolicy"] = "strict-read"
+        values["readPolicy"] = {"existingConfigMap": "pgdog-read-policy"}
+        result = helm_render({**BASE, **values})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = list(yaml.safe_load_all(result.stdout))
+        self.validate(docs, values)
+
+        cases = [
+            (lambda pod: pod["initContainers"][0]["args"].remove("strict-read"), "query-policy"),
+            (lambda pod: pod["containers"][0]["volumeMounts"].pop(), "read-policy"),
+            (lambda pod: pod["volumes"].append(deepcopy(next(v for v in pod["volumes"] if v["name"] == "read-policy"))), "read-policy"),
+            (lambda pod: next(v for v in pod["volumes"] if v["name"] == "read-policy")
+             ["configMap"]["items"].clear(), "read-policy.toml"),
+        ]
+        for mutate, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic):
+                changed = deepcopy(docs)
+                pod = next(d for d in changed if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+                mutate(pod)
+                with self.assertRaisesRegex(ValueError, diagnostic):
+                    self.validate(changed, values)
+
+    def test_unrestricted_mode_rejects_read_policy_intent_and_artifacts(self):
+        values = deepcopy(self.values)
+        values["queryPolicy"] = "unrestricted"
+        values["readPolicy"] = {"existingConfigMap": "pgdog-read-policy"}
+        with self.assertRaisesRegex(ValueError, "readPolicy"):
+            self.validate(self.docs, values)
+
     def test_toml_errors_and_port_mismatch_fail(self):
         for config, diagnostic in [("[invalid", "TOML"),
                                    (CONFIG.replace("port = 6432", "port = 6543"), "containerPort"),

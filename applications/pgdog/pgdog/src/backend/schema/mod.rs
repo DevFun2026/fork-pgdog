@@ -1,6 +1,7 @@
 //! Schema operations.
 pub(crate) mod cache;
 pub(crate) mod columns;
+pub(crate) mod read_policy;
 pub(crate) mod relation;
 pub(crate) mod sync;
 

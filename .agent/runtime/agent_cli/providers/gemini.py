@@ -86,6 +86,48 @@ class GeminiAdapter:
             "plan",
         )
 
+    @staticmethod
+    def _response_matches_structured(response: str, structured: object) -> bool:
+        decoder = json.JSONDecoder()
+        cursor = 0
+        objects = 0
+        allowed_fields = {"verdict", "findings", "toolAction", "toolSummary"}
+        while True:
+            while cursor < len(response) and response[cursor].isspace():
+                cursor += 1
+            if objects == 0:
+                # AGY may prepend explanatory prose before its terminal JSON.
+                cursor = response.find("{", cursor)
+                if cursor < 0:
+                    return False
+            elif cursor == len(response):
+                return True
+            elif response[cursor] != "{":
+                # Once terminal output begins, reject trailing prose or any
+                # other content instead of silently discarding it.
+                return False
+
+            item, end = decoder.raw_decode(response, cursor)
+            if (
+                not isinstance(item, dict)
+                or not {"verdict", "findings"} <= set(item)
+                or set(item) - allowed_fields
+                or any(
+                    not isinstance(item[key], str)
+                    for key in ("toolAction", "toolSummary")
+                    if key in item
+                )
+                or {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"toolAction", "toolSummary"}
+                }
+                != structured
+            ):
+                return False
+            objects += 1
+            cursor = end
+
     def parse(self, raw: str) -> ProviderResult:
         if len(raw.encode("utf-8", errors="replace")) > 1_000_000:
             return ProviderResult.invalid(self.provider, raw, "provider output exceeds limit")
@@ -99,20 +141,10 @@ class GeminiAdapter:
                 response = payload["response"]
                 if not isinstance(response, str) or not response.strip():
                     return ProviderResult.invalid(self.provider, raw, "agy response is empty or invalid")
-                # Native AGY may concatenate repeated terminal objects, including
-                # display metadata. Every object must agree with the strict result.
-                decoder = json.JSONDecoder()
-                remaining = response.strip()
-                while remaining:
-                    item, end = decoder.raw_decode(remaining)
-                    if (not isinstance(item, dict)
-                            or set(item) - {"verdict", "findings", "toolAction", "toolSummary"}
-                            or any(not isinstance(item[key], str)
-                                   for key in ("toolAction", "toolSummary") if key in item)
-                            or {key: value for key, value in item.items()
-                                if key not in {"toolAction", "toolSummary"}} != structured):
-                        return ProviderResult.invalid(self.provider, raw, "agy output fields disagree")
-                    remaining = remaining[end:].strip()
+                # Every embedded terminal object must agree with schema output;
+                # only the prose before the first JSON object is advisory.
+                if not self._response_matches_structured(response, structured):
+                    return ProviderResult.invalid(self.provider, raw, "agy output fields disagree")
         except (json.JSONDecodeError, TypeError):
             return ProviderResult.invalid(self.provider, raw)
         try:
