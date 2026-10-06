@@ -1,5 +1,30 @@
 # Threat Model
 
+## Strict read endpoint delta
+
+Assets are database rows/schema/sequences, application credentials, query results,
+the immutable read manifest and protected backend transactions. The attacker is an
+authenticated DML-capable application using the read endpoint, including arbitrary
+SQL and PostgreSQL wire messages. The read and unrestricted write processes are
+separate trust boundaries. DBAs, the PostgreSQL 18 binary/built-ins and the drained,
+reviewed schema epoch are trusted; native extension effects and malicious DBA
+changes are outside this boundary.
+
+| Threat | Control and verification scope | Owner |
+| --- | --- | --- |
+| Write hidden behind SELECT, CTE, batch or function | Closed recursive AST admission before any client forwarding; deny unknown nodes/functions and reject whole mixed batch; SQL denial/snapshot tests | Proxy maintainer |
+| Planner, type input or index invokes unreviewed code | Same-backend catalog identity and exact pinned dependency metadata; ordinary-table/role checks and local typed proof before Parse/Bind; catalog negative fixtures | Proxy maintainer |
+| SET/startup escape or parser grammar mismatch | Restricted startup, no SET or role changes, UTF8/standard_conforming_strings verification and acknowledged READ ONLY transaction | Proxy maintainer |
+| Cached authorization or stale portal | Original SQL/type identity, private proofs, per-client generations and backend/database/role/manifest/transaction binding | Proxy maintainer |
+| Flush/Sync/error/cancel recycles a writable or busy connection | Separate client/backend transaction states, reserved internal names, hidden housekeeping replies, discard uncertain backends; owned wire/failure tests | Proxy maintainer |
+| Config reload or DNS alias bypass | Immutable process policy, config-publication checks, two distinct release selectors/Services and same init/runtime flags | Deployment operator |
+| DDL races with proof | Drain/stop readers for controlled migration, review catalog/manifest revision, restart and smoke before resuming | Database operator |
+| Query/credential leakage | Existing TLS/auth boundary, passthrough credentials, bounded reason codes, strict raw-SQL log rejection | Deployment operator |
+
+These controls require the dedicated runtime/catalog/protocol and paired Service
+checks. Authored tests are not passing evidence until executed. This delta does
+not inherit the separate, source-specific image/chart 0.1.0 release exception.
+
 ## Fork container/chart delta
 
 Assets: source-bound OCI image/chart bytes, release receipt, registry credentials,

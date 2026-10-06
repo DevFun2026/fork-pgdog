@@ -110,7 +110,14 @@ impl Pool {
         if !guard.online {
             guard.online = true;
             Monitor::run(self);
-            LsnMonitor::run(self);
+            // LSN/Aurora discovery can invoke extension-defined SQL. Strict
+            // mode targets an explicitly configured primary and does not run
+            // this background path outside its catalog/transaction gate.
+            if crate::frontend::read_policy::process::current().mode()
+                == crate::frontend::read_policy::QueryPolicy::Unrestricted
+            {
+                LsnMonitor::run(self);
+            }
         }
     }
 

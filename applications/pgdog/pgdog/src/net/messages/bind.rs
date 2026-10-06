@@ -147,6 +147,16 @@ impl Default for Bind {
 }
 
 impl Bind {
+    pub(crate) fn with_portal(mut self, portal: &str) -> Self {
+        self.portal = c_string_bytes(portal);
+        self.original = None;
+        self
+    }
+
+    pub(crate) fn portal(&self) -> &str {
+        // FromBytes and the constructors validate the complete string.
+        from_utf8(&self.portal[..self.portal.len() - 1]).expect("validated portal")
+    }
     pub(crate) fn len(&self) -> usize {
         self.portal.len()
             + self.statement.len()

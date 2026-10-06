@@ -6,6 +6,11 @@ if [[ "${1:-}" != "full" ]]; then
     echo 'Usage: bash scripts/verify-pgdog full' >&2
     exit 2
 fi
+postgres_mode="${PGDOG_STRICT_POSTGRES_MODE:-docker}"
+case "$postgres_mode" in
+    docker|native) ;;
+    *) echo "Invalid PGDOG_STRICT_POSTGRES_MODE: $postgres_mode (expected docker or native)" >&2; exit 2 ;;
+esac
 # Never create/drop databases here. Bootstrap only an isolated test database.
 command -v pg_isready >/dev/null
 pg_isready -h 127.0.0.1 -p 5432 -U pgdog -d pgdog
@@ -33,6 +38,8 @@ run_check cargo nextest run --locked --workspace --no-fail-fast --test-threads=1
 run_check cargo test --locked --doc --workspace
 cargo build --locked --bin pgdog
 export PGDOG_BIN="$PWD/target/debug/pgdog"
+run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase all
+run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase protocol --pooler-mode transaction --query-parser off --prepared-statements full
 source integration/common.sh
 run_pgdog "${PGDOG_TEST_CONFIG_DIR:-integration}"
 # Bound readiness waiting even when the process is alive but not accepting SQL.

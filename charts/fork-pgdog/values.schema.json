@@ -166,6 +166,26 @@
         "existingSecret"
       ]
     },
+    "queryPolicy": {
+      "enum": [
+        "unrestricted",
+        "strict-read"
+      ]
+    },
+    "readPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingConfigMap": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+        }
+      },
+      "required": [
+        "existingConfigMap"
+      ]
+    },
     "tls": {
       "type": "object",
       "additionalProperties": false,
@@ -358,6 +378,8 @@
     "service",
     "config",
     "users",
+    "queryPolicy",
+    "readPolicy",
     "tls",
     "resources",
     "nodeSelector",

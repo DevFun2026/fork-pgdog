@@ -2,11 +2,11 @@
 slow-timeout = { period = "15s", terminate-after = 8 }
 fail-fast = true
 # ignore integration tests since they require a running pgdog instance
-default-filter = "not package(integration_tests_rust)"
+default-filter = "not package(integration_tests_rust) and not test(strict_read)"
 test-threads = 1
 
 [profile.dev]
 inherits = "default"
 
 [profile.integration]
-default-filter = "package(integration_tests_rust)"
+default-filter = "package(integration_tests_rust) and not binary(strict_read)"

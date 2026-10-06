@@ -16,6 +16,14 @@ use tracing::error;
 
 const HEADER_SIZE: usize = 5;
 
+fn blocked_query_log_sample(sample: String, strict: bool) -> String {
+    if strict {
+        "[redacted]".to_owned()
+    } else {
+        sample
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub(crate) struct MessageBuffer {
     buffer: BytesMut,
@@ -54,6 +62,7 @@ impl MessageBuffer {
     async fn read_internal(
         &mut self,
         stream: &mut (impl Unpin + AsyncReadExt),
+        strict: bool,
     ) -> Result<Message, Error> {
         loop {
             if let Some(size) = self.message_size()? {
@@ -61,11 +70,10 @@ impl MessageBuffer {
                     && size > limit
                     && self.is_query_message()
                 {
+                    let sample = blocked_query_log_sample(self.log_sample(size), strict);
                     error!(
                         "[large_query] blocking message: size={}B query_size_limit={}B partial_query='{}...'",
-                        size,
-                        limit,
-                        self.log_sample(size),
+                        size, limit, sample,
                     );
                     // Returning here leaves `size - buffer.len()` bytes unread on the
                     // socket. The caller must be abrupt and reconnect;
@@ -190,7 +198,9 @@ impl MessageBuffer {
         &mut self,
         stream: &mut (impl Unpin + AsyncReadExt),
     ) -> Result<Message, Error> {
-        self.read_internal(stream).await
+        let strict = crate::frontend::read_policy::process::current().mode()
+            == crate::frontend::read_policy::QueryPolicy::StrictRead;
+        self.read_internal(stream, strict).await
     }
 }
 
@@ -455,6 +465,55 @@ mod test {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::MessageTooLarge { limit: 3, .. }));
+    }
+
+    #[test]
+    fn strict_read_oversized_query_log_redacts_sql_but_unrestricted_keeps_sample() {
+        use std::{
+            io::Write,
+            sync::{Arc, Mutex},
+        };
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl Write for Capture {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let output = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || Capture(output.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let query = "SELECT secret_value".to_owned() + &"x".repeat(64);
+                    let message = Parse::named("large", &query).to_bytes();
+                    let mut buffer = MessageBuffer::new(4096, Some(16));
+                    let error = buffer
+                        .read_internal(&mut Cursor::new(message.to_vec()), true)
+                        .await
+                        .unwrap_err();
+                    assert!(matches!(error, Error::MessageTooLarge { limit: 16, .. }));
+                });
+        });
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("partial_query='[redacted]..."), "{log}");
+        assert!(!log.contains("secret_value"), "{log}");
+        assert_eq!(
+            blocked_query_log_sample("SELECT secret_value".to_owned(), false),
+            "SELECT secret_value"
+        );
     }
 
     #[tokio::test]

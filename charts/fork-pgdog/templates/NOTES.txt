@@ -1,6 +1,8 @@
 PgDog Service: {{ include "fork-pgdog.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
 
-Connect using your PostgreSQL client and the credentials in your existing users Secret.
+Connect using your PostgreSQL client and configured application credentials.
+With passthrough authentication, use the application's database credentials;
+the required users Secret can contain an empty users list.
 For a local tunnel:
   kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "fork-pgdog.fullname" . }} 6432:{{ .Values.service.port }}
 
@@ -10,3 +12,12 @@ External configuration/Secret changes require an explicit rollout:
 This chart uses a stateless Deployment. It does not provision durable 2PC WAL.
 Align TOML listener/health ports and shutdown bounds with the chart values.
 Image/chart distribution must be published before registry installation is available.
+{{- if eq .Values.queryPolicy "strict-read" }}
+
+This release uses immutable strict-read query policy. The image must contain the
+strict-read CLI support; published image/chart version 0.1.0 does not. Replace
+that version with the same strict-read-capable image for the read and write releases.
+Policy ConfigMap changes are not watched. Restart this Deployment after every
+policy update so the process reloads the reviewed manifest:
+  kubectl --namespace {{ .Release.Namespace }} rollout restart deployment/{{ include "fork-pgdog.fullname" . }}
+{{- end }}

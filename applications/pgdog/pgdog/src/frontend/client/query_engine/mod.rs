@@ -36,6 +36,7 @@ pub(crate) mod route_query;
 pub(crate) mod set;
 pub(crate) mod split;
 pub(crate) mod start_transaction;
+mod strict_read;
 mod temp_table;
 #[cfg(test)]
 mod test;
@@ -60,6 +61,8 @@ pub(crate) use two_pc::*;
 /// State here is preserved between requests.
 #[derive(Debug)]
 pub(crate) struct QueryEngine {
+    strict: Box<strict_read::StrictState>,
+    policy: std::sync::Arc<crate::frontend::read_policy::ProcessPolicy>,
     begin_stmt: Option<BufferedQuery>,
     router: Router,
     comms: ClientComms,
@@ -91,6 +94,8 @@ impl QueryEngine {
         let backend = Connection::new(user, database, admin)?;
 
         Ok(Self {
+            strict: Box::default(),
+            policy: crate::frontend::read_policy::process::current(),
             backend,
             comms: comms.clone(),
             hooks: QueryEngineHooks::new(),
@@ -108,7 +113,9 @@ impl QueryEngine {
     }
 
     pub(crate) fn from_client(client: &Client) -> Result<Self, Error> {
-        Self::new(&client.params, &client.comms, client.admin)
+        let mut engine = Self::new(&client.params, &client.comms, client.admin)?;
+        engine.policy = client.policy.clone();
+        Ok(engine)
     }
 
     /// Token cancelled when an admin terminates this client's cluster (FORCE_RELOAD).
@@ -137,6 +144,9 @@ impl QueryEngine {
         context: &mut QueryEngineContext<'_>,
         client_request: &mut ClientRequest,
     ) -> Result<QueryEngineResult, Error> {
+        if self.policy.mode() == crate::frontend::read_policy::QueryPolicy::StrictRead {
+            return Box::pin(self.handle_strict_guarded(context, client_request)).await;
+        }
         if let Some(result) = Self::check_extended_pipeline_rewrite(client_request)? {
             return Ok(result);
         }

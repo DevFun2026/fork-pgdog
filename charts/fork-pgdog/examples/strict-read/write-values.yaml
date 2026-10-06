@@ -1,0 +1,32 @@
+# Install as a separate release from read-values.yaml. Use the same
+# strict-read-capable image and backend configuration on both endpoints.
+# Create Secrets pgdog-users and pgdog-client-tls before installing. The users
+# Secret must contain users.toml; TLS Secret must contain tls.crt and tls.key.
+# Published 0.1.0 artifacts do not support strict-read; replace this example tag.
+# Client service DNS: pgdog-write-fork-pgdog.<namespace>.svc:6432.
+image:
+  repository: ghcr.io/devfun2026/fork-pgdog
+  tag: strict-read-capable-build
+queryPolicy: unrestricted
+users:
+  existingSecret: pgdog-users
+tls:
+  existingSecret: pgdog-client-tls
+config:
+  pgdogToml: |
+    [general]
+    host = "0.0.0.0"
+    port = 6432
+    healthcheck_port = 9090
+    shutdown_timeout = 120000
+    shutdown_termination_timeout = 10000
+    passthrough_auth = "enabled"
+    tls_certificate = "/etc/pgdog/tls/tls.crt"
+    tls_private_key = "/etc/pgdog/tls/tls.key"
+
+    [[databases]]
+    name = "app"
+    database_name = "app"
+    host = "postgres.example.internal"
+    port = 5432
+    role = "primary"

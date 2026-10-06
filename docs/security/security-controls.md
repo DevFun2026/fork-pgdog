@@ -30,6 +30,14 @@ repository security clearance. A trusted independent signer is still required.
 
 ## Reference mapping
 
+Strict-read controls and their SQL, role, catalog and deployment limits are
+specified in [strict read/write operations](../operations/strict-read-endpoints.md).
+The mode is explicitly selected at process creation, rejects unsafe reloads and
+keeps the unrestricted endpoint separate. Parser admission and PostgreSQL READ
+ONLY are independent controls; neither a manifest name nor the original PgDog
+`read_only` routing setting alone authorizes a read query. Core and raw-wire tests
+use disposable fixtures and compare state after denied writes.
+
 | Template requirement | Reference baseline | Use |
 |---|---|---|
 | Technical application controls | OWASP ASVS 5.0.0 | Select applicable, version-qualified requirement IDs for the adopting project |

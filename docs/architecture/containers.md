@@ -20,6 +20,12 @@
 
 ## Development and documentation
 
+Strict endpoint mode is inside the PgDog process. It admits original SQL before
+normal routing/rewrite/cache behavior, binds per-client statements and portals to
+the protected backend epoch, and verifies supported catalog dependencies before
+client preparation. Deploy separate read and write processes with separate pools;
+see [the contract and operations guide](../operations/strict-read-endpoints.md).
+
 - Canonical core: .agent/ policies, skills, schemas, templates and project model.
 - Runtime: Python 3.11 standard-library CLI invoked through scripts/agent.
 - Review engine and provider adapters: approved, bounded source review packages

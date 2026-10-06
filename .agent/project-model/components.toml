@@ -67,6 +67,20 @@ responsibility = "Contains the application workspace at applications/pgdog/ and 
 trust_boundary = "proxy-process"
 
 [[components]]
+id = "strict-read-policy"
+name = "Strict Read Enforcement"
+kind = "authorization-boundary"
+responsibility = "Opt-in immutable process policy: bounds and admits original SQL, proves the selected PostgreSQL 18 catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/objects deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers."
+trust_boundary = "untrusted-client-to-protected-backend"
+
+[[components]]
+id = "read-manifest"
+name = "Reviewed Read Manifest"
+kind = "external-configuration"
+responsibility = "Closed TOML database aliases, exact ordinary-table names and schema revision; loaded and hashed once at process startup from a protected read-only ConfigMap. An upper bound for catalog proof, not permission inferred from names."
+trust_boundary = "operator-to-read-process"
+
+[[components]]
 id = "postgresql"
 name = "PostgreSQL"
 kind = "database"
