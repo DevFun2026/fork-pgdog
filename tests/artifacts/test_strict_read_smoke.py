@@ -12,6 +12,17 @@ SCRIPT = ROOT / "scripts/strict-read-helm-smoke.sh"
 
 
 class StrictReadSmokeIsolationTests(unittest.TestCase):
+    def test_postgres_fixture_readiness_requires_the_tcp_endpoint_used_by_the_smoke(self):
+        documents = list(yaml.safe_load_all(
+            (ROOT / "tests/artifacts/kubernetes/postgres.yaml").read_text()
+        ))
+        deployment = next(item for item in documents if item.get("kind") == "Deployment")
+        probe = deployment["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+        command = probe.get("exec", {}).get("command", [])
+        self.assertIn("pg_isready", command)
+        self.assertEqual(command[command.index("-h") + 1], "127.0.0.1")
+        self.assertEqual(command[command.index("-p") + 1], "5432")
+
     def _run_isolated_harness(self, temp, *, kind_create_fails=False):
         fake_bin = temp / "bin"
         fake_bin.mkdir()

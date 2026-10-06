@@ -156,7 +156,17 @@ impl WireClient {
         request.put_i32(80877102);
         request.put_u32(backend_pid);
         request.put_u32(backend_secret);
-        stream.write_all(&request).await.map_err(io_error)
+        stream.write_all(&request).await.map_err(io_error)?;
+        // CancelRequest has no response packet. The server closes this socket
+        // after dispatching it; wait for that boundary before returning. This
+        // does not acknowledge that the backend has processed cancellation.
+        let mut response = [0; 1];
+        match timeout(Duration::from_secs(5), stream.read(&mut response)).await {
+            Ok(Ok(0)) => Ok(()),
+            Ok(Ok(_)) => Err(WireError("unexpected CancelRequest response".into())),
+            Ok(Err(error)) => Err(io_error(error)),
+            Err(_) => Err(WireError("CancelRequest completion timed out".into())),
+        }
     }
 
     pub async fn query(&mut self, sql: &str) -> Result<Vec<Message>, WireError> {
@@ -263,4 +273,37 @@ fn error_message(payload: &[u8]) -> String {
 
 fn io_error(error: std::io::Error) -> WireError {
     WireError(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn cancel_request_waits_for_server_completion() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cancellation = tokio::spawn(WireClient::cancel_request(("127.0.0.1", port), 123, 456));
+        let (mut server, _) = timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut request = [0; 16];
+        timeout(Duration::from_secs(2), server.read_exact(&mut request))
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !cancellation.is_finished(),
+            "CancelRequest completed before the server finished handling it"
+        );
+        drop(server);
+        timeout(Duration::from_secs(2), cancellation)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
 }
