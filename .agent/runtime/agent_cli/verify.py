@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-import json
 from pathlib import Path
-import shutil
-import subprocess
 
 from agent_cli.config import ConfigError, ProjectConfig, load_config_at_revision
 from agent_cli.evidence import EvidenceStore, record_result
@@ -23,7 +23,6 @@ from agent_cli.security import (
     validate_signed_approval,
 )
 from agent_cli.workflow import WorkflowState
-
 
 QUICK_COMMANDS = ("format_check", "lint", "test_changed")
 MERGE_COMMANDS = ("lint", "test_full", "build")
@@ -329,12 +328,22 @@ def _review_artifact_valid(
     if not all(isinstance(value, str) and value for value in (package_value, manifest_sha, findings_sha)):
         return False
     try:
-        package = load_package(root / str(package_value), root=root)
-    except ReviewPackageBlocked:
+        if review.get("partitioned") is True:
+            from agent_cli.review.partition import load_partition
+            from agent_cli.review.partition_orchestrator import PartitionOrchestrator
+            operation = load_partition(root / str(package_value), root=root)
+            if not PartitionOrchestrator({}).clearance_valid(operation):
+                return False
+            package = operation.root_package
+            actual_manifest_sha = operation.manifest_sha256
+        else:
+            package = load_package(root / str(package_value), root=root)
+            actual_manifest_sha = package.manifest_sha256
+    except (ReviewPackageBlocked, ValueError, OSError):
         return False
     manifest = package.manifest
     if (
-        package.manifest_sha256 != manifest_sha
+        actual_manifest_sha != manifest_sha
         or manifest.base_sha != review.get("base_sha")
         or manifest.head_sha != current_head
         or manifest.diff_sha256 != review.get("diff_sha256")

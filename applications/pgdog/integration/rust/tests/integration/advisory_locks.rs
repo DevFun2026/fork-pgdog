@@ -1,6 +1,6 @@
 use std::process;
 
-use integration_tests_rust::setup::{admin_sqlx, connections_sqlx};
+use integration_tests_rust::setup::{admin_sqlx, connection_sqlx_direct_db, connections_sqlx};
 use sqlx::{Connection, Executor, PgConnection, Pool, Postgres, Row, postgres::PgConnectOptions};
 
 // Same test as `advisory_locks_working_generally` but with an inner hashtext() & hashtextextended func.
@@ -166,24 +166,79 @@ pub async fn advisory_locks_unlock_all() {
 #[tokio::test]
 pub async fn advisory_locks_catalog_table() {
     let fetch_all_active_advisory_locks_query =
-        "SELECT objid FROM pg_catalog.pg_locks WHERE locktype = 'advisory'";
+        "SELECT pid, classid::BIGINT, objid::BIGINT, objsubid
+        FROM pg_catalog.pg_locks
+        WHERE locktype = 'advisory' AND pid IS NOT NULL";
 
-    let sharded_conn = connections_sqlx().await;
-    let sharded_conn = sharded_conn.get(1).unwrap();
-    for lock in [1, 2] {
-        sqlx::raw_sql(format!("SELECT pg_advisory_lock({lock})").as_str())
-            .execute(sharded_conn)
+    // Hold locks on the unsharded database with the same keys as the locks
+    // below. pg_locks is cluster-wide, so these unrelated rows must not satisfy
+    // or invalidate the checks for this test's own backend sessions.
+    let foreign_conn = connection_sqlx_direct_db("pgdog").await;
+    let foreign_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&foreign_conn)
+        .await
+        .unwrap();
+    for lock in [1_i64, 2] {
+        sqlx::query(format!("SELECT pg_advisory_lock({lock})").as_str())
+            .execute(&foreign_conn)
             .await
             .unwrap();
     }
 
-    let advisory_lock_rows = sqlx::raw_sql(fetch_all_active_advisory_locks_query)
-        .fetch_all(sharded_conn)
+    let sharded_conn = connections_sqlx().await;
+    let sharded_conn = sharded_conn.get(1).unwrap();
+    let mut owned_locks = Vec::new();
+    for lock in [1_i64, 2] {
+        let row = sqlx::query("SELECT pg_backend_pid(), pg_advisory_lock($1)")
+            .bind(lock)
+            .fetch_one(sharded_conn)
+            .await
+            .unwrap();
+        owned_locks.push((row.get::<i32, _>(0), lock as u32));
+    }
+
+    assert_ne!(
+        owned_locks[0].0, owned_locks[1].0,
+        "the two test keys should be routed to distinct shard backends"
+    );
+    assert!(owned_locks.iter().all(|(pid, _)| *pid != foreign_pid));
+
+    let advisory_lock_rows =
+        sqlx::query_as::<_, (i32, i64, i64, i16)>(fetch_all_active_advisory_locks_query)
+            .fetch_all(sharded_conn)
+            .await
+            .unwrap();
+
+    for key in [1_i64, 2] {
+        assert!(
+            advisory_lock_rows
+                .iter()
+                .any(|(lock_pid, classid, objid, objsubid)| {
+                    *lock_pid == foreign_pid && *classid == 0 && *objid == key && *objsubid == 1
+                }),
+            "expected unrelated bigint key {key} held by direct backend PID {foreign_pid}"
+        );
+    }
+
+    for (pid, key) in &owned_locks {
+        assert!(
+            advisory_lock_rows
+                .iter()
+                .any(|(lock_pid, classid, objid, objsubid)| {
+                    lock_pid == pid && *classid == 0 && *objid == i64::from(*key) && *objsubid == 1
+                }),
+            "expected advisory bigint key {key} held by backend PID {pid}; observed {advisory_lock_rows:?}"
+        );
+    }
+
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(sharded_conn)
         .await
         .unwrap();
-
-    // despite being on different shards, both are present!
-    assert_eq!(advisory_lock_rows.len(), 2);
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&foreign_conn)
+        .await
+        .unwrap();
 }
 
 // Try obtaining multiple advisory locks which resolve to multiple shards.

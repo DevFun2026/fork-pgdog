@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-import json
-import subprocess
-import tempfile
-import tomllib
 
+import tomllib
 
 SUPPORTED_PROVIDERS = frozenset({"claude", "gemini", "codex"})
 SUPPORTED_SECURITY_PROFILES = frozenset({"baseline", "standard", "high"})
@@ -28,6 +28,10 @@ class ReviewConfig:
     provider_order: tuple[str, ...]
     provider_commands: Mapping[str, tuple[str, ...]]
     max_estimated_tokens: int = 64000
+    partition_enabled: bool = False
+    max_aggregate_bytes: int = 2500000
+    max_aggregate_tokens: int = 800000
+    partition_target_bytes: int = 250000
 
 
 @dataclass(frozen=True)
@@ -157,7 +161,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError("duplicate scanner in security.required_scanners")
     unknown_scanners = set(required_scanners) - SUPPORTED_SCANNERS
     if unknown_scanners:
-        raise ConfigError(f"unsupported scanner: {sorted(unknown_scanners)[0]}")
+        raise ConfigError(f"unsupported scanner: {min(unknown_scanners)}")
     scanner_commands_table = _table(security, "scanner_commands")
     scanner_commands: dict[str, tuple[str, ...]] = {}
     for scanner in SUPPORTED_SCANNERS:
@@ -214,6 +218,10 @@ def load_config(path: str | Path) -> ProjectConfig:
             provider_commands=MappingProxyType(provider_commands),
             max_estimated_tokens=_positive_int(review.get("max_estimated_tokens", 64000),
                                                "review.max_estimated_tokens"),
+            partition_enabled=_boolean(review.get("partition_enabled", False), "review.partition_enabled"),
+            max_aggregate_bytes=_positive_int(review.get("max_aggregate_bytes", 2500000), "review.max_aggregate_bytes"),
+            max_aggregate_tokens=_positive_int(review.get("max_aggregate_tokens", 800000), "review.max_aggregate_tokens"),
+            partition_target_bytes=_positive_int(review.get("partition_target_bytes", 250000), "review.partition_target_bytes"),
         ),
         memory=MemoryConfig(
             enabled=_boolean(memory.get("enabled", True), "memory.enabled"),
@@ -277,7 +285,7 @@ def config_text_from_answers(data: object) -> str:
         raise ConfigError("init answer sections must be objects")
     if set(project) != {"name", "security_profile"}:
         raise ConfigError("project answers must contain name and security_profile")
-    if set(review) - {"max_estimated_tokens"} != {
+    if set(review) - {"max_estimated_tokens", "partition_enabled", "max_aggregate_bytes", "max_aggregate_tokens", "partition_target_bytes"} != {
         "enabled",
         "require_independent_provider",
         "max_package_bytes",
@@ -361,10 +369,14 @@ def config_text_from_answers(data: object) -> str:
             "",
             "[review]",
             f"enabled = {boolean(review.get('enabled'))}",
-            "require_independent_provider = "
-            f"{boolean(review.get('require_independent_provider'))}",
+            ("require_independent_provider = "
+            f"{boolean(review.get('require_independent_provider'))}"),
             f"max_package_bytes = {review.get('max_package_bytes')}",
             f"max_estimated_tokens = {review.get('max_estimated_tokens', 64000)}",
+            f"partition_enabled = {boolean(review.get('partition_enabled', False))}",
+            f"max_aggregate_bytes = {review.get('max_aggregate_bytes', 2500000)}",
+            f"max_aggregate_tokens = {review.get('max_aggregate_tokens', 800000)}",
+            f"partition_target_bytes = {review.get('partition_target_bytes', 250000)}",
             f"provider_order = {json.dumps(provider_order)}",
             "",
             "[review.provider_commands]",

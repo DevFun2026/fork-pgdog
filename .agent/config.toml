@@ -15,6 +15,10 @@ enabled = true
 require_independent_provider = true
 max_package_bytes = 500000
 max_estimated_tokens = 96000
+partition_enabled = true
+max_aggregate_bytes = 2500000
+max_aggregate_tokens = 800000
+partition_target_bytes = 250000
 provider_order = ["claude", "codex", "gemini"]
 
 [review.provider_commands]

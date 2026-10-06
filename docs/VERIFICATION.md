@@ -174,3 +174,17 @@ backends for at most one second, below the integration proxy's two-second query
 timeout. Linux coverage observed two backends still cleaning up after the former
 fixed 100 ms sleep. The zero-backend assertion and all 50 clients are retained.
 The Rust client matrix runs serially and without fail-fast so every case runs.
+
+Partitioned independent review is opt-in via `agent review --partitioned` and
+requires explicit `--integration-context <path>` contracts. Per-call limits stay
+500,000 bytes / 96,000 estimated tokens; the target is 250,000 bytes, with a
+2,500,000-byte / 800,000-estimated-token aggregate ceiling. These are estimates,
+not billed usage. Missing trusted-base `partition_enabled` means disabled.
+
+Preview and approve the exact root manifest for child reviews. Resume with
+`--package <root-package> --approve-manifest <root-sha>`. After all children pass,
+a second preview binds their validated outputs and integration contracts. Resume
+with the same root package and `--approve-integration-manifest <integration-sha>`.
+No provider probe happens before the applicable exact approval. Merge revalidates
+all child and integration packages/results. Preparing a preview does not grant
+policy integration, provider egress, commit or publication authority.
