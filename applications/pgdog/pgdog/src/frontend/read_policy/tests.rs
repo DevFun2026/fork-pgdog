@@ -18,6 +18,8 @@ fn manifest(db_name: &str, relation: &str) -> String {
 fn admission_accepts_read_queries_from_the_postgres_parser() {
     for sql in [
         "SELECT 1",
+        "SELECT 1::pg_catalog.int4",
+        "SELECT 1::\"pg_catalog\".\"int4\"",
         "SELECT CASE WHEN 1 = 1 THEN 'DELETE FROM x' ELSE 'x' END",
         "SELECT COALESCE(NULLIF(1, 2), 3)",
         "SELECT 1 UNION SELECT 2",
@@ -26,6 +28,16 @@ fn admission_accepts_read_queries_from_the_postgres_parser() {
         "SELECT (SELECT 1)",
     ] {
         assert!(admit_sql(sql).is_ok(), "should admit {sql:?}");
+    }
+}
+
+#[test]
+fn admission_rejects_dotted_or_quoted_type_atoms() {
+    for sql in [
+        "SELECT 1::\"pg_catalog.int4\"",
+        "SELECT 1::\"pg_catalog.int\"\"4\"",
+    ] {
+        assert_eq!(admit_sql(sql).unwrap_err().sqlstate(), "0A000", "{sql}");
     }
 }
 

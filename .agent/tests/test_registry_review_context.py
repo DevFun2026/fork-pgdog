@@ -16,7 +16,7 @@ class RegistryReviewContextTests(unittest.TestCase):
         metadata = json.loads(re.search(r"```json\n(.*?)\n```", text, re.S).group(1))
         self.assertEqual({item["path"] for item in metadata}, {
             PREFIX + name for name in ("registry.rs", "resolve.rs", "rows.rs", "mod.rs")
-        })
+        } | {"applications/pgdog/pgdog/src/frontend/read_policy/admission.rs"})
         excerpts = re.findall(r"```rust\n(.*?)\n```", text, re.S)
         expected = []
         for item in metadata:

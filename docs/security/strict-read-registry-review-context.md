@@ -4,7 +4,15 @@ This supplemental context links the pinned PostgreSQL catalog snapshot to the
 strict endpoint's type gates. Catalog rows are not an allowlist for every
 function or operator they describe. The `PUBLIC_SCALARS` list excludes `inet`
 (OID 869) and `tid` (OID 27); parameter, cast, result and relation-column checks
-use the same type gate.
+use the same type gate. The snapshot also retains unsupported geometric and
+internal catalog rows; those rows are not authorized operations.
+
+SQL admission checks structured TypeName components against exact built-in
+names before catalog resolution. A quoted single identifier containing a dot
+is rejected; two separately qualified pg_catalog/type components remain valid.
+The resolver helper receives an exact base identifier and does not reparse it.
+Parameter references are held in a BTreeSet, so last() is the maximum index
+regardless of AST traversal order.
 
 The complete implementation remains in the review's full diff and child ranges;
 these excerpts supplement that review rather than replace its source coverage.
@@ -16,11 +24,11 @@ exact excerpt bytes, so any source change requires refreshing this context.
 [
   {
     "path": "applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs",
-    "sha256": "86706d01ce1095b8f34cbb51a334244f2ebb5f893d99a72843566c06dc935f45",
+    "sha256": "ce91c6212b0db6c06c6bd5594341fc8ec28d54062211e3b688c60bc1521be31a",
     "ranges": [
       {
         "start": 190,
-        "end": 241
+        "end": 232
       }
     ]
   },
@@ -65,11 +73,29 @@ exact excerpt bytes, so any source change requires refreshing this context.
         "end": 472
       }
     ]
+  },
+  {
+    "path": "applications/pgdog/pgdog/src/frontend/read_policy/admission.rs",
+    "sha256": "6942e77283d48a9bb6e2dbd9447b099a03fb3d9c2ef230a7e16de0b0c916410d",
+    "ranges": [
+      {
+        "start": 38,
+        "end": 55
+      },
+      {
+        "start": 373,
+        "end": 382
+      },
+      {
+        "start": 491,
+        "end": 533
+      }
+    ]
   }
 ]
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:190-241
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:190-232
 
 ```rust
 pub(crate) fn scalar_type(oid: u32) -> bool {
@@ -106,15 +132,6 @@ pub(crate) fn trusted_type_io(
 }
 
 pub(crate) fn type_oid(name: &str) -> Option<u32> {
-    let mut parts = name.split('.').map(|part| part.trim_matches('"'));
-    let (schema, name) = match (parts.next()?, parts.next(), parts.next()) {
-        (name, None, None) => ("pg_catalog", name),
-        ("pg_catalog", Some(name), None) => ("pg_catalog", name),
-        _ => return None,
-    };
-    if schema != "pg_catalog" {
-        return None;
-    }
     table("pg_type")?
         .iter()
         .find(|row| {
@@ -284,4 +301,90 @@ impl ColumnRow {
         }
     }
     resolve::prove(admitted, catalog, parameter_oids)?;
+```
+
+## applications/pgdog/pgdog/src/frontend/read_policy/admission.rs:38-55
+
+```rust
+pub(crate) struct CatalogRequirements {
+    pub(crate) relations: BTreeSet<String>,
+    /// Unqualified references resolved within the current WITH/CTE scope.
+    pub(crate) cte_references: BTreeSet<String>,
+    pub(crate) functions: BTreeSet<String>,
+    pub(crate) operators: BTreeSet<String>,
+    pub(crate) types: BTreeSet<String>,
+    /// Bare references are ambiguous between a scalar column and a whole-row
+    /// relation alias; catalog proof must resolve or deny them.
+    pub(crate) column_refs: BTreeSet<String>,
+    pub(crate) possible_whole_row_refs: BTreeSet<String>,
+    /// Placeholder indexes are references, not resolved PostgreSQL OIDs.
+    pub(crate) parameter_refs: BTreeSet<u32>,
+    /// Explicit `$n::type` requirements captured from the original AST.
+    pub(crate) parameter_type_requirements: BTreeMap<u32, BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+```
+
+## applications/pgdog/pgdog/src/frontend/read_policy/admission.rs:373-382
+
+```rust
+        TypeName(ty) => {
+            let name = type_name(ty);
+            if !supported_type_name(ty) {
+                return NodeDisposition::Unsupported;
+            }
+            if !name.is_empty() {
+                catalog.types.insert(name);
+            }
+            NodeDisposition::Allowed
+        }
+```
+
+## applications/pgdog/pgdog/src/frontend/read_policy/admission.rs:491-533
+
+```rust
+fn supported_type_name(ty: &nodes::TypeName) -> bool {
+    if ty.pct_type || ty.setof || !ty.array_bounds().is_empty() {
+        return false;
+    }
+    let parts = ty
+        .names()
+        .into_iter()
+        .filter_map(|part| part.sval())
+        .collect::<Vec<_>>();
+    let name = match parts.as_slice() {
+        [name] => *name,
+        ["pg_catalog", name] => *name,
+        _ => return false,
+    };
+    matches!(
+        name,
+        "bool"
+            | "boolean"
+            | "int2"
+            | "smallint"
+            | "int4"
+            | "integer"
+            | "int8"
+            | "bigint"
+            | "numeric"
+            | "decimal"
+            | "float4"
+            | "real"
+            | "float8"
+            | "text"
+            | "varchar"
+            | "bpchar"
+            | "char"
+            | "bytea"
+            | "date"
+            | "time"
+            | "timetz"
+            | "timestamp"
+            | "timestamptz"
+            | "interval"
+            | "uuid"
+    )
+}
 ```

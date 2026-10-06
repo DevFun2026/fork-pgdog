@@ -179,14 +179,11 @@ def render_file(source: Path, target: Path, substitutions: dict[str, str]) -> No
 def start_fixture(resources: OwnedResources, temp: Path, env: dict[str, str], app_password: str,
                   owner_password: str) -> int:
     bootstrap = (FIXTURES / "bootstrap.sql").read_text().replace("__APP_PASSWORD__", app_password)
-    bootstrap_path = temp / "bootstrap.sql"
-    write_private(bootstrap_path, bootstrap)
     cidfile = temp / "postgres.cid"
     command = [
         "docker", "run", "--pull=never", "--detach", "--name", new_resource_name(), "--cidfile", str(cidfile),
         "--publish", "127.0.0.1::5432", "--env", "POSTGRES_USER=fixture_owner",
         "--env", f"POSTGRES_PASSWORD={owner_password}", "--env", "POSTGRES_DB=app",
-        "--mount", f"type=bind,source={bootstrap_path},target=/docker-entrypoint-initdb.d/001-bootstrap.sql,readonly",
         pinned_postgres_image(),
     ]
     created = subprocess.run(command, env=env, text=True, capture_output=True, check=False)
@@ -205,6 +202,19 @@ def start_fixture(resources: OwnedResources, temp: Path, env: dict[str, str], ap
     except ValueError as error:
         raise RuntimeError("Docker did not publish PostgreSQL on a loopback port") from error
     wait_for_postgres(port, env)
+
+    # The official image runs initialization SQL as its postgres OS account.
+    # A private host bind mount is owned by the runner and mode 0600, so that
+    # account cannot read it on Linux. Keep the SQL private and stream it to a
+    # psql process inside the already-recorded container instead.
+    bootstrap_result = subprocess.run(
+        ["docker", "exec", "--user", "postgres", "--interactive", container_id,
+         "psql", "--username=fixture_owner", "--dbname=app", "--no-psqlrc",
+         "--no-password", "--set=ON_ERROR_STOP=1", "--file", "-"],
+        input=bootstrap, env=env, text=True, capture_output=True, check=False,
+    )
+    if bootstrap_result.returncode != 0:
+        raise RuntimeError("PostgreSQL fixture bootstrap failed")
     return port
 
 

@@ -30,3 +30,22 @@ that package, its native provider audits, and the bound adjudications.
 6. After complete independent review and CI evidence, run the merge gate and
    merge the already-authorized PR. Revert only these scoped repairs if they
    regress existing package validation.
+
+## Follow-up from the completed e4c93459 review
+
+All eight native AGY calls completed with valid output: four pass and four fail
+with five findings. Bound adjudication rejected the quoted-type network bypass
+(admission denies it with 0A000), unsupported raw snapshot types (not an
+allowlist), and unsorted parameters (stored in BTreeSet). The redundant internal
+type-name reparsing and unreachable schema check are accepted maintenance
+findings; simplify type_oid to the exact AST base identifier and retain the
+namespace/scalar gates, with malformed-name and positive SQL controls.
+
+GitHub test_full failed in both strict fixture phases. Reproduction with the
+pinned PostgreSQL18 image and a runner-owned 0600 bootstrap showed permission
+denied under the container postgres account. Docker Desktop bind ownership did
+not reproduce the Linux inode behavior, so retain both observations. Stream SQL
+to psql stdin in the recorded container after readiness; never widen private
+file permissions. Verify failure cleanup and live isolated stdin bootstrap, then
+run fresh committed-head full verification and CI. A changed-source review needs
+a new exact manifest approval; preserve the e4c outputs and dispatch markers.

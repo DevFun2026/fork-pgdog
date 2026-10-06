@@ -1,10 +1,12 @@
 """Safety contracts for the isolated strict-read integration fixture."""
 import importlib.util
+import io
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +23,63 @@ def load_helper():
 
 
 class StrictReadFixtureIsolationTests(unittest.TestCase):
+    def test_docker_bootstrap_uses_private_stdin_and_cleans_owned_container_on_failure(self):
+        fixture = load_helper()
+        commands = []
+        container_id = "a1" * 32
+        resources_class = fixture.OwnedResources
+
+        def fake_run(command, *, input=None, **kwargs):
+            commands.append((command, input, kwargs))
+            if command[:2] == ["docker", "run"]:
+                cidfile = Path(command[command.index("--cidfile") + 1])
+                cidfile.write_text(container_id)
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if command[:2] == ["docker", "exec"]:
+                self.assertIsNotNone(input)
+                self.assertEqual(kwargs.get("text"), True)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="permission denied")
+            if command[:3] == ["docker", "rm", "--force"]:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            self.fail("unexpected Docker command")
+
+        stderr = io.StringIO()
+        with patch.object(fixture, "required_tools", return_value={"docker": "/usr/bin/docker"}), \
+             patch.object(fixture.secrets, "token_hex",
+                          side_effect=("app-password-sentinel", "owner-password-sentinel")), \
+             patch.object(fixture, "OwnedResources",
+                          side_effect=lambda: resources_class(docker=fake_run)), \
+             patch.object(fixture.subprocess, "run", side_effect=fake_run), \
+             patch.object(fixture, "run_checked", return_value=subprocess.CompletedProcess(
+                 ["docker", "inspect"], 0, stdout="43130\n", stderr="")), \
+             patch.object(fixture, "wait_for_postgres"), \
+             redirect_stderr(stderr):
+            status = fixture.execute(Path("/usr/bin/true"), "protocol", postgres_mode="docker")
+
+        self.assertEqual(status, 1)
+        run_command = next(command for command, _, _ in commands if command[:2] == ["docker", "run"])
+        execs = [(command, value, kwargs) for command, value, kwargs in commands
+                 if command[:2] == ["docker", "exec"]]
+        self.assertEqual(len(execs), 1, "bootstrap must run through docker exec stdin")
+        exec_command, bootstrap_sql, exec_kwargs = next(
+            iter(execs)
+        )
+        self.assertNotIn("--mount", run_command)
+        self.assertNotIn("bootstrap.sql", " ".join(run_command))
+        self.assertEqual(exec_command[2:5], ["--user", "postgres", "--interactive"])
+        self.assertEqual(exec_command[5], container_id)
+        self.assertIn("--username=fixture_owner", exec_command)
+        self.assertIn("--dbname=app", exec_command)
+        self.assertEqual(exec_command[-2:], ["--file", "-"])
+        self.assertIn("CREATE ROLE strict_app", bootstrap_sql)
+        self.assertIn("app-password-sentinel", bootstrap_sql)
+        self.assertNotIn("app-password-sentinel", " ".join(run_command + exec_command))
+        self.assertNotIn("strict_app", " ".join(exec_command))
+        self.assertNotIn("permission denied", stderr.getvalue())
+        self.assertEqual(exec_kwargs.get("capture_output"), True)
+        rm_commands = [command for command, _, _ in commands if command[:3] == ["docker", "rm", "--force"]]
+        self.assertEqual(rm_commands, [["docker", "rm", "--force", container_id]])
+
     def test_native_mode_requires_postgres_18_tools_and_never_requires_docker(self):
         fixture = load_helper()
         with patch.object(fixture.shutil, "which", side_effect=lambda name: "/pg/bin/" + name):

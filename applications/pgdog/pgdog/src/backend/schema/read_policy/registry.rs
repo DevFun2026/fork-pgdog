@@ -221,15 +221,6 @@ pub(crate) fn trusted_type_io(
 }
 
 pub(crate) fn type_oid(name: &str) -> Option<u32> {
-    let mut parts = name.split('.').map(|part| part.trim_matches('"'));
-    let (schema, name) = match (parts.next()?, parts.next(), parts.next()) {
-        (name, None, None) => ("pg_catalog", name),
-        ("pg_catalog", Some(name), None) => ("pg_catalog", name),
-        _ => return None,
-    };
-    if schema != "pg_catalog" {
-        return None;
-    }
     table("pg_type")?
         .iter()
         .find(|row| {
@@ -344,8 +335,11 @@ mod tests {
         assert_eq!(server_major(), Some(18));
         assert!(scalar_type(23));
         assert!(!scalar_type(50_001));
-        assert_eq!(type_oid("pg_catalog.int4"), Some(23));
-        assert_eq!(type_oid("\"pg_catalog\".\"int4\""), Some(23));
+        assert_eq!(type_oid("int4"), Some(23));
+        assert_eq!(type_oid("pg_catalog.int4"), None);
+        assert_eq!(type_oid("\"pg_catalog.int4\""), None);
+        assert_eq!(type_oid("\"pg_catalog\".\"int4\""), None);
+        assert_eq!(type_oid("\"int4\""), None);
         assert_eq!(type_oid("public.int4"), None);
     }
 
