@@ -35,20 +35,33 @@ test model entitlement, quota or authentication.
 Review first produces a bounded package; approve its exact manifest separately
 before execution. No fallback to the legacy `gemini` executable occurs.
 
-## Automated review is isolated from interactive login
+## Automated review authentication
 
-AGY's usual interactive login uses the host keyring. Automated review does not
-mount the host HOME, copy token files, import plugins, or authorize that keyring.
-It creates minimal `{"modelProvider":"gemini"}` settings under disposable HOME
-and forwards only `GEMINI_API_KEY` for this provider. Supplying a key alone
-without this setting is insufficient for AGY API-key mode. Set the key in your
-process environment; never commit it or pass it in command arguments.
+Automated review runs AGY with a disposable HOME. It does not mount the host
+HOME or copy host token files. The adapter does not write synthetic
+`modelProvider` settings to select an authentication backend. AGY may support
+its own cached or keyring-based sign-in; whether that authentication is
+available to an isolated invocation depends on the installed AGY version and
+platform. On macOS with AGY 1.2.17, a live invocation with the existing sandbox
+and disposable HOME requested OAuth and timed out after 60 seconds; it did not
+reuse the normal host session. A successful interactive login alone
+does not establish automated-review readiness. The sandboxed route therefore
+remains pending until native authentication works within that boundary.
 
-`GOOGLE_API_KEY`, Vertex settings and custom Gemini endpoint variables are not
-forwarded. If API-key mode/model access is unavailable, the review remains
-pending. A paid subscription login in interactive AGY is not proof of isolated
-automated-review readiness. No live authenticated review is claimed by fixtures
-or a successful `--help` probe.
+On 2026-10-06, the user explicitly authorized one native-host invocation to
+check the logged-in AGY CLI. That run returned `SUCCESS` with a schema-valid
+`pass` and no findings, and an independent check confirmed the approved package
+was unchanged. The result was a one-time host exception: it does not establish
+that the normal sandboxed route can reuse host authentication or grant default
+host access.
+
+The provider environment allowlist can pass `GEMINI_API_KEY` when a user has
+configured it in the process environment. That is separate from AGY's native
+cached/keyring authentication. `GOOGLE_API_KEY`, Vertex settings and custom
+Gemini endpoint variables are not forwarded. Never commit an API key or pass it
+in command arguments. If the selected authentication route or model access is
+unavailable, the review remains pending. Fixtures and successful `--help`
+probes do not establish a live authenticated review.
 
 The adapter uses `--print`, `--output-format json`, `--json-schema`, and
 `--mode plan`, with a fresh disposable session. Plan mode is advisory, not a
@@ -56,8 +69,10 @@ security boundary. The existing OS sandbox denies project/package writes and
 non-allowlisted host file reads. AGY may write session data only inside its
 disposable HOME. No `--dangerously-skip-permissions` or conversation resume is
 used. Only a `SUCCESS` envelope with valid `structured_output` can complete a
-review; errors, partial/malformed output and conflicting response fields fail
-closed.
+review. AGY may prepend explanatory prose before its terminal JSON objects; the
+adapter accepts that prefix only when every subsequent terminal object agrees
+with `structured_output`. Conflicting verdicts/findings, malformed embedded
+objects, trailing prose, errors and non-`SUCCESS` envelopes fail closed.
 
 ## Native files and memory
 
@@ -77,13 +92,37 @@ it never forces another paid turn, captures transcripts or promotes records.
 If a resumed conversation does not emit invocation 0, retrieve context manually
 with `./scripts/agent memory bootstrap --query "focused task" --profile light`.
 
+## Reading a partition review package
+
+Entries in `manifest.json`'s `files` list resolve under the package's `context/`
+directory. For example, a listed `partition-scope.json` is available as
+`context/partition-scope.json`.
+
+A partition child uses a legacy manifest with flat full-scope paths. Its
+`context/partition-scope.json` carries the root full-diff digest and the child's
+range bindings; the child manifest deliberately does not duplicate the root's
+`full_diff_sha256`. Verification records bind the tested source HEAD and its
+uncommitted working-tree diff. A clean working tree has the empty SHA-256; this
+is distinct from the base-to-head patch digest or a child patch digest.
+
+Registry shards contain pinned PostgreSQL catalog metadata, rather than an
+allowlist for every catalog row. Include the registry type whitelist and the
+resolver/admission source as review context when assessing which rows can be
+reached through the strict endpoint. Preserve the configured per-invocation and
+aggregate limits when adding context.
+
 ## Contract sources and evidence
 
-Verified local executable: AGY `1.2.7`, successful no-network/no-credential
-`--version` and `--help`. Help is emitted on stderr. A model-list probe could
-not run without the local network listener, so no live model availability or
-authenticated result is inferred from it. The older template-acceptance JSON
-describes Gemini CLI at the time; it is not AGY evidence.
+Current local executable: AGY `1.2.17`; `--help` and a normal-host `agy models`
+probe succeeded, with `gemini-3.1-pro-high` listed. The authorized native review
+attempt inside the isolated provider environment requested OAuth and timed out.
+Under a separate explicit user exception, a native-host invocation returned
+schema-valid `pass` with zero findings and the approved payload stayed
+unchanged. The automatic audit remains pending because that first invocation's
+prose-prefixed response did not match the then-current parser. The parser now
+checks every terminal JSON object against the schema result. Host success does
+not establish sandboxed authentication readiness. The older template-acceptance
+JSON describes Gemini CLI at the time; it is not AGY evidence.
 
 - [CLI migration: context and skills](https://antigravity.google/docs/cli/gcli-migration/)
 - [Headless output and schema contract](https://antigravity.google/docs/cli/headless/)
@@ -92,3 +131,10 @@ describes Gemini CLI at the time; it is not AGY evidence.
 
 Upstream CLI contracts can change; rerun capability and real authenticated
 smoke checks on your installed version before relying on automated clearance.
+
+Package instructions and partition guidance contribute to the payload budget.
+After a runtime instruction change, an older immutable package may fail current
+size or scope validation. Retain its original files, dispatch markers and audits;
+use its original runtime revision for historical inspection. Build a fresh
+package for the changed source and obtain its exact approval before dispatch.
+Do not rewrite old manifests or clear started markers to retry a pending call.

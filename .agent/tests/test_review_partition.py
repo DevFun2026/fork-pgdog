@@ -5,10 +5,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from agent_cli.review.models import ReviewPackageRequest
 from agent_cli.review.package import ReviewPackageBlocked, package_usage
 from agent_cli.review.partition import (
+    PARTITION_REVIEW_GUIDANCE,
     build_partition,
     load_partition,
     partition_usage,
@@ -156,6 +158,96 @@ class PartitionedReviewTests(unittest.TestCase):
             [child.diff_bytes for child in partition.children],
             [child.diff_bytes for child in second.children],
         )
+
+    def test_shared_context_budget_converges_for_large_partitioned_registry(self):
+        rows = [
+            {"oid": str(index), "name": "record-" + str(index), "detail": "x" * 220}
+            for index in range(3_000)
+        ]
+        self.write(
+            REGISTRY_PATH,
+            json.dumps(
+                {
+                    "postgres_major": 18,
+                    "source_image": "postgres:18",
+                    "tables": {"pg_type": rows},
+                },
+                separators=(",", ":"),
+            ),
+        )
+        self.write("src/resolve.rs", "r" * 28_851)
+        self.write("src/rows.rs", "s" * 9_377)
+        self.git("add", ".")
+        self.git("commit", "-m", "registry and resolver changes")
+
+        request = self.request(
+            context_paths=("src/resolve.rs", "src/rows.rs"),
+            max_package_bytes=500_000,
+            max_estimated_tokens=96_000,
+        )
+        partition = build_partition(
+            request,
+            integration_context_paths=("docs/integration-contract.md",),
+            max_aggregate_bytes=2_500_000,
+            max_aggregate_tokens=800_000,
+            target_bytes=250_000,
+        )
+
+        self.assertGreater(len(partition.children), 1)
+        for child in partition.children:
+            self.assertLessEqual(package_usage(child)["bytes"], 250_000)
+            self.assertEqual(
+                {item.path for item in child.manifest.files},
+                {"src/resolve.rs", "src/rows.rs", "partition-scope.json"},
+            )
+            scope = json.loads(
+                (child.path / "context" / "partition-scope.json").read_text()
+            )
+            self.assertEqual(scope["root_manifest_sha256"], partition.root_package.manifest_sha256)
+            self.assertEqual(
+                scope["full_diff_sha256"],
+                partition.root_package.manifest.full_diff_sha256,
+            )
+            self.assertEqual(scope["head_sha"], partition.root_package.manifest.head_sha)
+            self.assertEqual(scope["review_guidance"], PARTITION_REVIEW_GUIDANCE)
+        self.assertLessEqual(partition_usage(partition)["bytes"], 2_500_000)
+
+    def test_sizing_retry_repartitions_after_small_package_overage(self):
+        for index in range(30):
+            self.write(
+                f"src/file-{index:02}.txt",
+                f"{index:02}" + "x" * 550 + "\n",
+            )
+        self.git("add", ".")
+        self.git("commit", "-m", "many indivisible changes")
+        request = self.request(max_package_bytes=500_000, max_estimated_tokens=96_000)
+        target_bytes = 20_000
+
+        def measured_usage(child):
+            diff_bytes = len(child.diff_bytes)
+            if diff_bytes >= 15_000:
+                # Model a package whose measured metadata/context makes it 9 B
+                # over the invocation cap; smaller regrouped shards fit.
+                package_bytes = target_bytes + 9
+            else:
+                package_bytes = diff_bytes + 4_600
+            return {
+                "bytes": package_bytes,
+                "estimated_tokens": (package_bytes + 2) // 3,
+            }
+
+        with patch("agent_cli.review.partition.package_usage", side_effect=measured_usage):
+            partition = build_partition(
+                request,
+                integration_context_paths=("docs/integration-contract.md",),
+                max_aggregate_bytes=100_000,
+                max_aggregate_tokens=100_000,
+                target_bytes=target_bytes,
+            )
+
+        self.assertGreater(len(partition.children), 1)
+        self.assertTrue(all(len(child.diff_bytes) < 15_000 for child in partition.children))
+        self.assertTrue(all(package_usage(child)["bytes"] <= target_bytes for child in partition.children))
 
     def test_oversized_ordinary_patch_is_blocked_instead_of_split(self):
         self.write("src/ordinary.txt", "x" * 8_000 + "\n")

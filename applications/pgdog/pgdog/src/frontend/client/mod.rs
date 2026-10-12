@@ -14,6 +14,7 @@ use tokio::{select, spawn};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level as LogLevel, debug, enabled, error, info, trace, warn};
 
+use super::read_policy::{ProcessPolicy, QueryPolicy, process};
 use super::{ClientRequest, Error, PreparedStatements};
 use crate::auth::AuthResult;
 use crate::auth::{md5, scram::Server};
@@ -50,6 +51,8 @@ pub(crate) use transaction_type::{QueryTimestamps, Transaction, TransactionType}
 ///
 #[derive(Debug)]
 pub(crate) struct Client {
+    strict_session: Option<Box<super::read_policy::StrictSession>>,
+    policy: Arc<ProcessPolicy>,
     // Client IP.
     addr: SocketAddr,
     // Client socket.
@@ -254,6 +257,7 @@ impl Client {
         config: Arc<ConfigAndUsers>,
         protocol_version: ProtocolVersion,
     ) -> Result<Option<Client>, Error> {
+        let policy = process::current();
         // Bail immediately if TLS is required but the connection isn't using it.
         if config.config.general.tls_client_required && !stream.is_tls() {
             stream.fatal(ErrorResponse::tls_required()).await?;
@@ -261,6 +265,24 @@ impl Client {
         }
 
         let (user, database) = user_database_from_params(&params);
+        if policy.mode() == QueryPolicy::StrictRead
+            && (database == config.config.admin.name
+                || !policy.manifest().is_some_and(|manifest| {
+                    manifest
+                        .databases()
+                        .iter()
+                        .any(|allowed| allowed.name() == database)
+                }))
+        {
+            stream
+                .fatal(ErrorResponse {
+                    code: "0A000".into(),
+                    message: "strict-read: database_not_admitted".into(),
+                    ..Default::default()
+                })
+                .await?;
+            return Ok(None);
+        }
         let admin = database == config.config.admin.name && config.config.admin.user == user;
         let admin_password = &config.config.admin.password;
         let auth_type = &config.config.general.auth_type;
@@ -418,6 +440,8 @@ impl Client {
         );
 
         Ok(Some(Self {
+            strict_session: (policy.mode() == QueryPolicy::StrictRead).then(Box::default),
+            policy,
             addr,
             stream,
             key,
@@ -459,6 +483,9 @@ impl Client {
         prepared_statements.level = config().config.general.prepared_statements;
 
         Self {
+            strict_session: (process::current().mode() == QueryPolicy::StrictRead)
+                .then(Box::default),
+            policy: process::current(),
             stream,
             addr: SocketAddr::from(([127, 0, 0, 1], 1234)),
             key,
@@ -541,7 +568,10 @@ impl Client {
                 }
 
                 // Async messages.
-                message = query_engine.read_backend() => {
+                // Strict exchanges consume every backend reply themselves.
+                // Background forwarding must not leak housekeeping responses
+                // or turn a lost protected backend into an unrestricted path.
+                message = query_engine.read_backend(), if self.policy.mode() == QueryPolicy::Unrestricted => {
                     let message = message?;
                     self.server_message(&mut query_engine, message).await?;
                 }
@@ -659,8 +689,17 @@ impl Client {
         self.timeouts = Timeouts::from_config(&config.config.general);
         self.query_log_stdout = config.config.general.query_log_stdout;
         self.query_size_limit = config.config.general.query_size_limit;
-        self.stream_buffer
-            .set_size_limit_block(config.config.general.frontend_query_size_limit_block());
+        let configured_limit = config.config.general.frontend_query_size_limit_block();
+        let strict = self.policy.mode() == QueryPolicy::StrictRead;
+        self.stream_buffer.set_size_limit_block(if strict {
+            Some(
+                configured_limit
+                    .unwrap_or(8 * 1024 * 1024)
+                    .min(8 * 1024 * 1024),
+            )
+        } else {
+            configured_limit
+        });
 
         let mut has_set_time: bool = false;
         while !self.client_request.is_complete() {
@@ -708,12 +747,42 @@ impl Client {
                 return Ok(BufferEvent::DisconnectGraceful);
             } else {
                 let message = ProtocolMessage::from_bytes(message.to_bytes())?;
+                if strict
+                    && (self.client_request.messages.len() >= 4096
+                        || self
+                            .client_request
+                            .total_message_len()
+                            .saturating_add(message.len())
+                            > 8 * 1024 * 1024)
+                {
+                    self.stream
+                        .fatal(ErrorResponse {
+                            code: "0A000".into(),
+                            message: "strict-read: request_limit_exceeded".into(),
+                            ..Default::default()
+                        })
+                        .await?;
+                    return Ok(BufferEvent::DisconnectAbrupt);
+                }
+                if self.policy.mode() == QueryPolicy::StrictRead
+                    && matches!(message.code(), 'F' | 'd' | 'c' | 'f')
+                    && let Err(error) = super::read_policy::gate_message(&message)
+                {
+                    self.stream
+                        .fatal(ErrorResponse {
+                            code: error.sqlstate().into(),
+                            message: format!("strict-read: {}", error.reason()),
+                            ..Default::default()
+                        })
+                        .await?;
+                    return Ok(BufferEvent::DisconnectAbrupt);
+                }
                 self.client_request.push(message);
             }
         }
 
         let elapsed_time = Utc::now() - self.statement_start;
-        if !enabled!(LogLevel::TRACE) {
+        if self.policy.mode() == QueryPolicy::StrictRead || !enabled!(LogLevel::TRACE) {
             debug!(
                 "request buffered [{:.4}ms] {:?}",
                 elapsed_time.as_seconds_f64() * 1000.0,

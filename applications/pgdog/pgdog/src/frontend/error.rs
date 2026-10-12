@@ -9,6 +9,8 @@ use crate::unique_id;
 /// Frontend error.
 #[derive(Debug, Error)]
 pub(crate) enum Error {
+    #[error("strict-read: {0}")]
+    ReadPolicy(#[from] crate::frontend::read_policy::PolicyError),
     #[error("{0}")]
     Io(#[from] std::io::Error),
 

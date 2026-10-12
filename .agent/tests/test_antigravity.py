@@ -93,16 +93,48 @@ class AntigravityTests(unittest.TestCase):
                 payload["response"] = response
                 self.assertEqual(GeminiAdapter().parse(json.dumps(payload)).status, "incomplete")
 
-    def test_linux_agy_settings_are_exact_disposable_mount_not_host_profile(self):
+    def test_agy_narrative_with_repeated_terminal_objects_is_accepted(self):
+        result = {"verdict": "pass", "findings": []}
+        final = {**result, "toolAction": "Submitting review", "toolSummary": "Review complete"}
+        payload = {
+            "status": "SUCCESS",
+            "structured_output": result,
+            "response": (
+                "Review complete. I found no issues.\n\n"
+                + "\n".join(map(json.dumps, (final, final)))
+            ),
+        }
+
+        parsed = GeminiAdapter().parse(json.dumps(payload))
+
+        self.assertEqual(parsed.status, "completed")
+        self.assertEqual(parsed.verdict, "pass")
+
+    def test_agy_narrative_rejects_conflicting_or_malformed_embedded_results(self):
+        result = {"verdict": "pass", "findings": []}
+        payload = {"status": "SUCCESS", "structured_output": result}
+        responses = (
+            "Review complete.\n" + json.dumps(result)
+            + "\n" + json.dumps({"verdict": "fail", "findings": []}),
+            'Review complete. {"verdict":"pass","findings":[],"extra": }',
+            "Review complete. " + json.dumps({"error": "review failed"})
+            + "\n" + json.dumps(result),
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                payload["response"] = response
+                self.assertEqual(GeminiAdapter().parse(json.dumps(payload)).status, "incomplete")
+
+    def test_linux_agy_uses_disposable_home_without_synthetic_auth_settings(self):
         sandbox = _sandboxed_command(("/bin/echo",), self.root, self.root, "gemini")
         with mock.patch("platform.system", return_value="Linux"), mock.patch("shutil.which", return_value="/usr/bin/bwrap"):
             with sandbox as argv:
-                target = "/tmp/.gemini/antigravity-cli/settings.json"
-                source = Path(argv[argv.index(target) - 1])
-                self.assertEqual(argv[argv.index(target) - 2], "--ro-bind")
-                self.assertEqual(json.loads(source.read_text()), {"modelProvider": "gemini"})
-                self.assertNotEqual(source.parent, Path.home())
-            self.assertFalse(source.exists())
+                self.assertEqual(sandbox.environment["HOME"], "/tmp")
+                self.assertEqual(sandbox.environment["TMPDIR"], "/tmp")
+                self.assertIn("--tmpfs", argv)
+                self.assertFalse(any(".gemini" in argument for argument in argv))
+                self.assertFalse(any("modelProvider" in argument for argument in argv))
+                self.assertNotIn(str(Path.home()), argv)
 
     @unittest.skipUnless(platform.system() == "Darwin", "macOS sandbox sentinel")
     def test_sandbox_allows_disposable_home_writes_but_not_package_writes(self):
@@ -205,17 +237,18 @@ class AntigravityTests(unittest.TestCase):
         self.assertEqual(victim.read_text(), "preserve")
 
     @unittest.skipUnless(platform.system() == "Darwin", "macOS sandbox paths")
-    def test_disposable_home_uses_canonical_path_and_only_minimal_agy_settings(self):
+    def test_disposable_home_does_not_force_agy_auth_mode(self):
         for credentials in (True, False):
             sandbox = _sandboxed_command(("/bin/echo",), self.root, self.root, "gemini", include_credentials=credentials)
-            with sandbox:
+            with sandbox as argv:
                 home = Path(sandbox.environment["HOME"])
                 self.assertEqual(home, home.resolve())
                 settings = home / ".gemini/antigravity-cli/settings.json"
-                if credentials:
-                    self.assertEqual(json.loads(settings.read_text()), {"modelProvider": "gemini"})
-                else:
-                    self.assertFalse(settings.exists())
+                self.assertFalse(settings.exists())
+                profile_path = Path(argv[argv.index("-f") + 1])
+                profile = profile_path.read_text(encoding="utf-8")
+                self.assertNotIn("modelProvider", profile)
+                self.assertNotIn(str(Path.home()), profile)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,11 @@ impl QueryEngine {
 
             Err(err) => {
                 self.stats.error();
+                // Strict mode owns error/ReadyForQuery ordering and must not
+                // receive the recovery response emitted by the normal path.
+                if self.policy.mode() == crate::frontend::read_policy::QueryPolicy::StrictRead {
+                    return Err(err.into());
+                }
                 let can_recover = self
                     .backend
                     .cluster()

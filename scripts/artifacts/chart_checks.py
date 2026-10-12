@@ -27,6 +27,49 @@ def validate_rendered_chart(documents: list[dict], values: dict) -> None:
     main, init = main[0], init[0]
     if main["image"] != init["image"]:
         raise ValueError("configcheck and PgDog must use the same image")
+    policy = values.get("queryPolicy", "unrestricted")
+    read_policy = values.get("readPolicy", {}).get("existingConfigMap", "")
+    if policy not in ("unrestricted", "strict-read"):
+        raise ValueError("queryPolicy must be unrestricted or strict-read")
+    if policy == "strict-read" and not read_policy:
+        raise ValueError("queryPolicy strict-read requires readPolicy.existingConfigMap")
+    if policy == "unrestricted" and read_policy:
+        raise ValueError("readPolicy.existingConfigMap requires queryPolicy strict-read")
+    policy_args = ["--query-policy", "strict-read", "--read-policy-file",
+                   "/etc/pgdog/read-policy/read-policy.toml"]
+    containers = (main, init)
+    raw_volumes = pod.get("volumes", [])
+    volumes = {volume.get("name"): volume for volume in raw_volumes}
+    if policy == "strict-read":
+        for container in containers:
+            args = container.get("args", [])
+            if (args.count("--query-policy") != 1 or args.count("strict-read") != 1
+                    or args.count("--read-policy-file") != 1
+                    or args.count("/etc/pgdog/read-policy/read-policy.toml") != 1
+                    or not all(arg in args for arg in policy_args)):
+                raise ValueError("Both containers must receive the strict-read query-policy arguments")
+            if args.index("--query-policy") + 1 != args.index("strict-read"):
+                raise ValueError("query-policy arguments must be paired")
+            if args.index("--read-policy-file") + 1 != args.index("/etc/pgdog/read-policy/read-policy.toml"):
+                raise ValueError("read-policy-file argument must name the mounted policy")
+            mounts = [mount for mount in container.get("volumeMounts", []) if mount.get("name") == "read-policy"]
+            if len(mounts) != 1 or mounts[0].get("mountPath") != "/etc/pgdog/read-policy/read-policy.toml" or mounts[0].get("subPath") != "read-policy.toml" or mounts[0].get("readOnly") is not True:
+                raise ValueError("Both containers require the read-only read-policy.toml mount")
+        volume = volumes.get("read-policy", {})
+        config_map = volume.get("configMap", {})
+        if (sum(volume.get("name") == "read-policy" for volume in raw_volumes) != 1
+                or config_map.get("name") != read_policy
+                or config_map.get("items") != [{"key": "read-policy.toml", "path": "read-policy.toml"}]):
+            raise ValueError("read-policy volume must mount read-policy.toml from readPolicy.existingConfigMap")
+    else:
+        if "read-policy" in volumes:
+            raise ValueError("Unrestricted policy must not mount read-policy")
+        for container in containers:
+            args = container.get("args", [])
+            if any(arg in args for arg in policy_args):
+                raise ValueError("Unrestricted policy must not receive strict-read arguments")
+            if any(mount.get("name") == "read-policy" for mount in container.get("volumeMounts", [])):
+                raise ValueError("Unrestricted policy must not mount read-policy")
     if init.get("args", [])[-1:] != ["configcheck"]:
         raise ValueError("initContainer must run configcheck")
     for container in (main, init):

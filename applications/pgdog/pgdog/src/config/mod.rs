@@ -70,6 +70,7 @@ pub(crate) fn load(config: &Path, users: &Path) -> Result<ConfigAndUsers, Error>
 }
 
 pub(crate) fn set(mut config: ConfigAndUsers) -> Result<ConfigAndUsers, Error> {
+    crate::frontend::read_policy::process::validate(&config)?;
     config.check()?;
     validate_lookup_queries(&config)?;
     for table in config.config.sharded_tables.iter_mut() {
@@ -172,6 +173,7 @@ pub(crate) fn from_urls(urls: &[String]) -> Result<ConfigAndUsers, Error> {
     let _lock = LOCK.lock();
     let config = (*config()).clone();
     let config = config.databases_from_urls(urls)?;
+    crate::frontend::read_policy::process::validate(&config)?;
     CONFIG.store(Arc::new(config.clone()));
     Ok(config)
 }
@@ -207,12 +209,13 @@ pub(crate) fn from_env() -> Result<ConfigAndUsers, Error> {
         config = config.mirroring_from_strings(&mirror_strs)?;
     }
 
+    crate::frontend::read_policy::process::validate(&config)?;
     CONFIG.store(Arc::new(config.clone()));
     Ok(config)
 }
 
 /// Override some settings.
-pub(crate) fn overrides(overrides: Overrides) {
+pub(crate) fn overrides(overrides: Overrides) -> Result<(), Error> {
     let mut config = (*config()).clone();
     let Overrides {
         default_pool_size,
@@ -236,7 +239,9 @@ pub(crate) fn overrides(overrides: Overrides) {
         };
     }
 
+    crate::frontend::read_policy::process::validate(&config)?;
     CONFIG.store(Arc::new(config));
+    Ok(())
 }
 
 // Test helper functions

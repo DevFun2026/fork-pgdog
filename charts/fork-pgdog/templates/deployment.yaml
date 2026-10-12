@@ -1,4 +1,8 @@
 {{- include "fork-pgdog.validate" . -}}
+{{- $policyArgs := list -}}
+{{- if eq .Values.queryPolicy "strict-read" -}}
+{{- $policyArgs = list "--query-policy" "strict-read" "--read-policy-file" "/etc/pgdog/read-policy/read-policy.toml" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,7 +63,7 @@ spec:
         - name: configcheck
           image: {{ include "fork-pgdog.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/pgdog/config/pgdog.toml", "--users", "/etc/pgdog/users/users.toml", "configcheck"]
+          args: {{ concat (list "--config" "/etc/pgdog/config/pgdog.toml" "--users" "/etc/pgdog/users/users.toml") $policyArgs (list "configcheck") | toJson }}
           securityContext:
             {{- include "fork-pgdog.securityContext" . | nindent 12 }}
           resources:
@@ -70,7 +74,7 @@ spec:
         - name: pgdog
           image: {{ include "fork-pgdog.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/pgdog/config/pgdog.toml", "--users", "/etc/pgdog/users/users.toml"]
+          args: {{ concat (list "--config" "/etc/pgdog/config/pgdog.toml" "--users" "/etc/pgdog/users/users.toml") $policyArgs | toJson }}
           securityContext:
             {{- include "fork-pgdog.securityContext" . | nindent 12 }}
           ports:
@@ -129,4 +133,13 @@ spec:
           secret:
             secretName: {{ .Values.tls.existingSecret | quote }}
             defaultMode: 0440
+        {{- end }}
+        {{- if eq .Values.queryPolicy "strict-read" }}
+        - name: read-policy
+          configMap:
+            name: {{ .Values.readPolicy.existingConfigMap | quote }}
+            defaultMode: 0444
+            items:
+              - key: read-policy.toml
+                path: read-policy.toml
         {{- end }}

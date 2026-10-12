@@ -17,6 +17,22 @@ docker buildx build --file applications/pgdog/Dockerfile --platform "linux/$arch
 python3 scripts/verify-artifacts import-image --archive "$artifact_dir/image-$arch.tar" --arch "$arch" --source-sha "$source_sha" --metadata "$artifact_dir/image-$arch.json"
 bash scripts/container-smoke.sh fork-pgdog:local "${source_sha:0:7}"
 bash scripts/helm-smoke.sh --image fork-pgdog:local
+baseline_source_sha=960942d4254a547d459d44545151f30380ae3173
+git cat-file -e "$baseline_source_sha^{commit}"
+baseline_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/fork-pgdog-baseline.XXXXXX")
+trap 'rm -rf -- "$baseline_dir"' EXIT
+mkdir "$baseline_dir/source"
+git archive "$baseline_source_sha" | tar -x -C "$baseline_dir/source"
+(
+  cd "$baseline_dir/source"
+  PGDOG_TEST_TOOLCHAIN="${PGDOG_TEST_TOOLCHAIN:-1.96.1}" \
+    ./scripts/pgdog cargo build --locked --release -p pgdog --bin pgdog \
+      --target-dir "$baseline_dir/target"
+)
+STRICT_READ_BASELINE_BIN="$baseline_dir/target/release/pgdog" \
+STRICT_READ_BASELINE_SOURCE_SHA="$baseline_source_sha" \
+STRICT_READ_SMOKE_REPORT="$artifact_dir/strict-read-helm-smoke.json" \
+  bash scripts/strict-read-helm-smoke.sh --image fork-pgdog:local
 python3 scripts/verify-artifacts prepare-scan --image fork-pgdog:local
 python3 scripts/verify-artifacts scan --scanner iac
 python3 scripts/verify-artifacts scan --scanner container

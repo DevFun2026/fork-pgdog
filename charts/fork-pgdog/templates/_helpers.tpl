@@ -29,6 +29,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 {{- if .Values.config.existingSecret -}}{{- $count = add $count 1 -}}{{- end -}}
 {{- if ne $count 1 -}}{{ fail "config: select exactly one non-empty pgdogToml, existingConfigMap or existingSecret" }}{{- end -}}
 {{- if eq .Values.containerPort .Values.healthcheckPort -}}{{ fail "proxy and health port must be different" }}{{- end -}}
+{{- if and (eq .Values.queryPolicy "strict-read") (not .Values.readPolicy.existingConfigMap) -}}{{ fail "queryPolicy strict-read requires readPolicy.existingConfigMap" }}{{- end -}}
+{{- if and (eq .Values.queryPolicy "unrestricted") .Values.readPolicy.existingConfigMap -}}{{ fail "readPolicy.existingConfigMap requires queryPolicy strict-read" }}{{- end -}}
 {{- end -}}
 
 {{- define "fork-pgdog.securityContext" -}}
@@ -55,6 +57,12 @@ seccompProfile:
 {{- if .Values.tls.existingSecret }}
 - name: tls
   mountPath: /etc/pgdog/tls
+  readOnly: true
+{{- end }}
+{{- if eq .Values.queryPolicy "strict-read" }}
+- name: read-policy
+  mountPath: /etc/pgdog/read-policy/read-policy.toml
+  subPath: read-policy.toml
   readOnly: true
 {{- end }}
 {{- end -}}

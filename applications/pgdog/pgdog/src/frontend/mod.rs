@@ -9,6 +9,7 @@ pub(crate) mod ee;
 pub(crate) mod error;
 pub(crate) mod listener;
 pub(crate) mod prepared_statements;
+pub(crate) mod read_policy;
 pub(crate) mod regex_parser;
 pub(crate) mod router;
 pub(crate) mod stats;

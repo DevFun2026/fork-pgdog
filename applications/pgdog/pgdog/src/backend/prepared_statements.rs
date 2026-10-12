@@ -108,6 +108,7 @@ pub(super) enum HandleResult {
 /// currently prepared on the server connection.
 #[derive(Debug)]
 pub(crate) struct PreparedStatements {
+    strict_protocol: bool,
     global_cache: Arc<RwLock<GlobalCache>>,
     local_cache: LruCache<String, LocalStatement>,
     state: ProtocolState,
@@ -133,9 +134,17 @@ impl Default for PreparedStatements {
 }
 
 impl PreparedStatements {
+    pub(crate) fn enable_strict_protocol(&mut self) {
+        self.strict_protocol = true;
+    }
+
+    pub(crate) fn strict_protocol(&self) -> bool {
+        self.strict_protocol
+    }
     /// New server prepared statements.
     pub(crate) fn new(oids: Arc<Oids>) -> Self {
         Self {
+            strict_protocol: false,
             global_cache: frontend::PreparedStatements::global(),
             local_cache: LruCache::unbounded(),
             state: ProtocolState::default(),
@@ -187,6 +196,25 @@ impl PreparedStatements {
 
     /// Handle extended protocol message.
     pub(super) fn handle(&mut self, request: &ProtocolMessage) -> Result<HandleResult, Error> {
+        if self.strict_protocol {
+            match request {
+                ProtocolMessage::Parse(_) => self.state.add('1'),
+                ProtocolMessage::Bind(_) => self.state.add('2'),
+                ProtocolMessage::Close(_) => self.state.add('3'),
+                ProtocolMessage::Execute(_) => self.state.add(ExecutionCode::ExecutionCompleted),
+                ProtocolMessage::Sync(_) => self.state.add(ExecutionCode::ReadyForQuerySync),
+                ProtocolMessage::Query(_) => self.state.add(ExecutionCode::ReadyForQuery),
+                ProtocolMessage::Describe(describe) => {
+                    if describe.is_statement() {
+                        self.state.add(ExecutionCode::DescriptionOrNothing);
+                    }
+                    self.state.add(ExecutionCode::DescriptionOrNothing);
+                }
+                ProtocolMessage::Other(message) if message.code() == 'H' => (),
+                _ => return Err(Error::ProtocolOutOfSync),
+            }
+            return Ok(HandleResult::Forward);
+        }
         match request {
             ProtocolMessage::Bind(bind) => {
                 if !bind.anonymous() {
@@ -434,6 +462,9 @@ impl PreparedStatements {
     pub(crate) fn forward(&mut self, message: &mut Message) -> Result<bool, Error> {
         let code = message.code();
         let action = self.state.action(code)?;
+        if self.strict_protocol {
+            return Ok(matches!(action, Action::Forward));
+        }
 
         // Cleanup prepared statements state.
         match code {
@@ -751,6 +782,33 @@ impl PreparedStatements {
         }
         message.replace_payload(parameter_description.to_bytes());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod strict_read_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn strict_read_protocol_never_simulates_client_preparation_or_close() {
+        let mut statements = PreparedStatements::default();
+        statements.prepared("already_cached");
+        statements.enable_strict_protocol();
+        assert_eq!(
+            statements
+                .handle(&ProtocolMessage::Parse(Parse::named(
+                    "already_cached",
+                    "SELECT 2"
+                )))
+                .unwrap(),
+            HandleResult::Forward
+        );
+        assert_eq!(
+            statements
+                .handle(&ProtocolMessage::Close(Close::named("already_cached")))
+                .unwrap(),
+            HandleResult::Forward
+        );
     }
 }
 

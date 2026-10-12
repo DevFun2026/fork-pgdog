@@ -66,6 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_jemalloc_background_thread();
 
     let args = cli::Cli::parse();
+    let policy = args.process_policy()?;
+    frontend::read_policy::process::install(policy.clone())?;
     let command = args.command.clone();
     let mut overrides = config::Overrides::default();
 
@@ -105,7 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    if matches!(command.as_ref(), Some(Commands::Configcheck)) {
+    if policy.mode() == frontend::read_policy::QueryPolicy::Unrestricted
+        && matches!(command.as_ref(), Some(Commands::Configcheck))
+    {
         info!("✅ config valid");
         exit(0);
     }
@@ -116,17 +120,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get databases from environment or from --database-url args.
     let config = if let Some(database_urls) = args.database_url {
         config::from_urls(&database_urls)?
-    } else if let Ok(config) = config::from_env() {
-        info!(
-            "loaded {} databases from environment",
-            config.config.databases.len()
-        );
-        config
     } else {
-        config
+        match config::from_env() {
+            Ok(config) => {
+                info!(
+                    "loaded {} databases from environment",
+                    config.config.databases.len()
+                );
+                config
+            }
+            Err(config::Error::NoDbsInEnv) => config,
+            Err(_) if policy.mode() == frontend::read_policy::QueryPolicy::Unrestricted => config,
+            Err(err) => return Err(Box::new(err)),
+        }
     };
 
-    config::overrides(overrides);
+    config::overrides(overrides)?;
+    policy.validate_config(&config::config())?;
+
+    if let Some(manifest) = policy.manifest() {
+        info!(policy = "strict-read", schema_revision = manifest.schema_revision(),
+            manifest_digest = ?policy.digest(), "immutable query policy loaded");
+    }
+
+    if matches!(command.as_ref(), Some(Commands::Configcheck)) {
+        info!("✅ config valid");
+        exit(0);
+    }
 
     plugin::load_from_config()?;
 

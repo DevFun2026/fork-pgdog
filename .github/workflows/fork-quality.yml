@@ -24,6 +24,8 @@ jobs:
         with:
           workspaces: applications/pgdog -> target
       - run: bash scripts/pgdog bash integration/ci/setup.sh --with-toxi
+      - name: Pull pinned PostgreSQL 18 strict fixture
+        run: docker pull postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
       - run: ./scripts/agent verify quick --timeout 3600 --json
       - name: Run merge commands without claiming independent review
         if: ${{ !cancelled() }}

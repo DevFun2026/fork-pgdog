@@ -81,3 +81,24 @@ source = "artifact-registry"
 target = "helm-release"
 data_categories = ["configuration", "project-source"]
 trust_boundary = "registry-to-operator-cluster"
+
+[[data_flows]]
+id = "strict-original-query"
+source = "pgdog-proxy"
+target = "strict-read-policy"
+data_categories = ["sql-query", "configuration"]
+trust_boundary = "client-data-to-read-authorization"
+
+[[data_flows]]
+id = "strict-manifest-load"
+source = "read-manifest"
+target = "strict-read-policy"
+data_categories = ["configuration"]
+trust_boundary = "operator-config-to-process-snapshot"
+
+[[data_flows]]
+id = "strict-catalog-proof"
+source = "postgresql"
+target = "strict-read-policy"
+data_categories = ["configuration", "evidence-metadata"]
+trust_boundary = "database-catalog-to-query-proof"

@@ -1,0 +1,8 @@
+# Store this file as key read-policy.toml in the protected pgdog-read-policy ConfigMap.
+# Relations are an exact reviewed upper bound; update schema_revision only with
+# a controlled migration and after validating the strict-read trust boundary.
+schema_revision = "example-schema-revision-2026-10-05"
+
+[[databases]]
+name = "app"
+relations = ["public.orders", "public.customers"]

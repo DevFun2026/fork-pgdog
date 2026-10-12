@@ -1,0 +1,16 @@
+[general]
+host = "127.0.0.1"
+port = __PGDOG_PORT__
+healthcheck_port = __HEALTH_PORT__
+passthrough_auth = "enabled_plain"
+auth_type = "plain"
+pooler_mode = "session"
+# Bound the owned lock/timeout fault case; production keeps its configured value.
+query_timeout = 4000
+
+[[databases]]
+name = "app"
+database_name = "app"
+host = "127.0.0.1"
+port = __POSTGRES_PORT__
+role = "primary"

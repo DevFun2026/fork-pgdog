@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import subprocess
 
+FATAL_PHASES = frozenset({"pgdog-build", "legacy-start", "legacy-ready"})
+
 
 def summarize(log: str, public_names: set[str]) -> dict[str, list[str]]:
     failed = set()
@@ -18,8 +20,19 @@ def summarize(log: str, public_names: set[str]) -> dict[str, list[str]]:
         match = re.match(r"^(?:FAIL|ERROR): (test_\w+) \(", line)
         if match and match[1] in public_names:
             failed.add(match[1])
+        match = re.fullmatch(r"\s*test\s+([\w:.-]+)\s+\.\.\.\s+FAILED\s*", line)
+        if match:
+            name = match[1].rsplit("::", 1)[-1]
+            if name in public_names:
+                failed.add(name)
+        match = re.fullmatch(r"FATAL_PHASE: ([a-z-]+)", line)
+        if match and match[1] in FATAL_PHASES:
+            phases.add(match[1])
         if line.startswith("FAILED ("):
-            if ": cargo nextest run " in line:
+            if re.match(r"FAILED \(\d+\): bash ../../scripts/strict-read-tests\.sh(?:\s|$)", line):
+                phase = re.search(r"(?:^|\s)--phase\s+(baseline|protocol|core|all)(?:\s|$)", line)
+                phases.add(f"strict-read-{phase[1]}" if phase else "strict-read")
+            elif ": cargo nextest run " in line:
                 phases.add("rust-integration" if "--profile integration" in line else "rust-unit")
             elif ": cargo test " in line:
                 phases.add("rust-doc")

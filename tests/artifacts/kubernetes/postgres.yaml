@@ -25,7 +25,7 @@ spec:
           env: [{name: POSTGRES_PASSWORD, value: fixture-password}]
           ports: [{containerPort: 5432}]
           readinessProbe:
-            exec: {command: [pg_isready, -U, postgres]}
+            exec: {command: [pg_isready, -h, 127.0.0.1, -p, "5432", -U, postgres]}
             periodSeconds: 2
           resources:
             requests: {cpu: 100m, memory: 128Mi}

@@ -49,6 +49,24 @@ The upstream CI matrix separately runs other language clients, TLS, COPY,
 resharding, schema sync, network faults and load balancing. Its results must be
 reported separately; local Rust tests do not establish that matrix passed.
 
+## Strict read endpoints
+
+`scripts/strict-read-tests.sh` owns a separate, disposable PostgreSQL 18 fixture
+with loopback ports and DML-capable application credentials. It never uses the
+legacy fixture's fixed database or an ambient connection string. Run `--phase
+all` against a freshly built binary, then repeat `--phase protocol --pooler-mode
+transaction --query-parser off --prepared-statements full`. Both are required by
+`scripts/verify-pgdog full`; neither requires destructive upstream fixture setup.
+The pinned PostgreSQL image must already be available locally.
+
+`scripts/strict-read-helm-smoke.sh --image IMAGE:TAG` checks separate read/write
+Services, shared passthrough credentials, no changes after denied writes,
+immutable manifest rollout and invalid-manifest init failure in its own Kind
+cluster. It also requires the real pre-feature executable for the old-CLI
+negative check. The artifact job builds that executable from the recorded base
+revision in a temporary directory. See the
+[operator contract](operations/strict-read-endpoints.md) for commands and limits.
+
 ## Security scanners
 
 Install `cargo-deny 0.20.2` and Semgrep (`1.178.0` used for the initial run) on PATH:

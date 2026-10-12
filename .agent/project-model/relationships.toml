@@ -87,3 +87,21 @@ id = "pod-proxy"
 source = "kubernetes-pod"
 target = "pgdog-proxy"
 label = "runs PgDog as PID 1 with SIGINT drain"
+
+[[relationships]]
+id = "proxy-strict-enforcement"
+source = "pgdog-proxy"
+target = "strict-read-policy"
+label = "strict process enters original-SQL gate before routing, rewrite or shared cache"
+
+[[relationships]]
+id = "manifest-strict-enforcement"
+source = "read-manifest"
+target = "strict-read-policy"
+label = "binds immutable database/table upper bound and schema revision"
+
+[[relationships]]
+id = "strict-database-proof"
+source = "strict-read-policy"
+target = "postgresql"
+label = "proves catalog on same acknowledged READ ONLY backend epoch before client preparation"

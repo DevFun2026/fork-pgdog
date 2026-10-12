@@ -13,6 +13,10 @@ use std::{marker::Unpin, ops::Deref};
 
 use super::{super::Parameter, FromBytes, Payload, Protocol, ToBytes};
 
+const MAX_STRICT_STARTUP_LENGTH: i32 = 64 * 1024;
+const MAX_STRICT_STARTUP_PARAMETERS: usize = 16;
+const MAX_STRICT_STARTUP_FIELD_LENGTH: usize = 4096;
+
 /// First message a client sends to the server
 /// and a server expects from a client.
 ///
@@ -35,17 +39,39 @@ pub(crate) enum Startup {
 
 impl Startup {
     /// Read Startup message from a stream.
+    #[cfg(test)]
     pub(crate) async fn from_stream(stream: &mut (impl AsyncRead + Unpin)) -> Result<Self, Error> {
+        Self::from_stream_policy(stream, false).await
+    }
+
+    pub(crate) async fn from_stream_policy(
+        stream: &mut (impl AsyncRead + Unpin),
+        strict: bool,
+    ) -> Result<Self, Error> {
         let len = stream.read_i32().await?;
         let code = stream.read_i32().await?;
+
+        if strict && !(8..=MAX_STRICT_STARTUP_LENGTH).contains(&len) {
+            return Err(Error::UnexpectedPayload);
+        }
 
         debug!("📡 => {}", code);
 
         match code {
             // SSLRequest (F)
-            80877103 => Ok(Startup::Ssl),
+            80877103 => {
+                if strict && len != 8 {
+                    return Err(Error::UnexpectedPayload);
+                }
+                Ok(Startup::Ssl)
+            }
             // GSSENCRequest (F)
-            80877104 => Ok(Startup::GssEnc),
+            80877104 => {
+                if strict && len != 8 {
+                    return Err(Error::UnexpectedPayload);
+                }
+                Ok(Startup::GssEnc)
+            }
             // CancelRequest (F)
             80877102 => {
                 let pid = stream.read_i32().await?;
@@ -74,6 +100,41 @@ impl Startup {
 
                 let mut params = Parameters::default();
                 let mut unrecognized_options = vec![];
+                if strict {
+                    let mut remaining =
+                        usize::try_from(len - 8).map_err(|_| Error::UnexpectedPayload)?;
+                    let mut count = 0;
+                    loop {
+                        let name = strict_startup_c_string(stream, &mut remaining).await?;
+                        if name.is_empty() {
+                            if remaining != 0 {
+                                return Err(Error::UnexpectedPayload);
+                            }
+                            break;
+                        }
+                        count += 1;
+                        if count > MAX_STRICT_STARTUP_PARAMETERS
+                            || !matches!(
+                                name.as_str(),
+                                "user" | "database" | "application_name" | "client_encoding"
+                            )
+                        {
+                            return Err(Error::UnexpectedPayload);
+                        }
+                        let value = strict_startup_c_string(stream, &mut remaining).await?;
+                        if name == "client_encoding"
+                            && !matches!(value.to_ascii_uppercase().as_str(), "UTF8" | "UTF-8")
+                        {
+                            return Err(Error::UnexpectedPayload);
+                        }
+                        params.insert(name, value);
+                    }
+                    return Ok(Startup::Startup {
+                        version,
+                        params,
+                        unrecognized_options,
+                    });
+                }
                 loop {
                     let name = c_string(stream).await?;
 
@@ -160,6 +221,31 @@ impl Startup {
     /// Create new startup TLS request.
     pub(crate) fn tls() -> Self {
         Self::Ssl
+    }
+}
+
+async fn strict_startup_c_string(
+    stream: &mut (impl AsyncRead + Unpin),
+    remaining: &mut usize,
+) -> Result<String, Error> {
+    let mut bytes = Vec::with_capacity((*remaining).min(MAX_STRICT_STARTUP_FIELD_LENGTH));
+    loop {
+        if *remaining == 0 {
+            return Err(Error::UnexpectedPayload);
+        }
+        let mut byte = [0_u8; 1];
+        stream
+            .read_exact(&mut byte)
+            .await
+            .map_err(|_| Error::UnexpectedPayload)?;
+        *remaining -= 1;
+        if byte[0] == 0 {
+            return String::from_utf8(bytes).map_err(|_| Error::UnexpectedPayload);
+        }
+        if bytes.len() >= MAX_STRICT_STARTUP_FIELD_LENGTH {
+            return Err(Error::UnexpectedPayload);
+        }
+        bytes.push(byte[0]);
     }
 }
 
@@ -468,5 +554,157 @@ mod test {
 
         let roundtrip = Startup::from_stream(&mut read).await.unwrap();
         assert_eq!(roundtrip, cancel);
+    }
+}
+
+#[cfg(test)]
+mod strict_read_startup_tests {
+    use super::*;
+
+    fn raw_startup(params: &[(&str, &str)], declared_len: Option<i32>) -> Vec<u8> {
+        let mut payload = BytesMut::new();
+        payload.put_i32(ProtocolVersion::V3_0.as_i32());
+        for (name, value) in params {
+            payload.extend_from_slice(name.as_bytes());
+            payload.put_u8(0);
+            payload.extend_from_slice(value.as_bytes());
+            payload.put_u8(0);
+        }
+        payload.put_u8(0);
+        let length = declared_len.unwrap_or((payload.len() + 4) as i32);
+        let mut message = BytesMut::new();
+        message.put_i32(length);
+        message.extend_from_slice(&payload);
+        message.to_vec()
+    }
+
+    #[tokio::test]
+    async fn strict_read_startup_rejects_options_before_expansion() {
+        for name in [
+            "options",
+            "replication",
+            "search_path",
+            "_pq_.unknown",
+            "role",
+        ] {
+            let startup = Startup::new(
+                "app",
+                "app",
+                vec![Parameter {
+                    name: name.into(),
+                    value: "-c application_name=innocent".into(),
+                }],
+            );
+            let bytes = startup.to_bytes();
+            assert!(
+                Startup::from_stream_policy(&mut &bytes[..], true)
+                    .await
+                    .is_err(),
+                "accepted {name}"
+            );
+            assert!(
+                Startup::from_stream_policy(&mut &bytes[..], false)
+                    .await
+                    .is_ok()
+            );
+        }
+        let startup = Startup::new(
+            "app",
+            "app",
+            vec![Parameter {
+                name: "application_name".into(),
+                value: "driver".into(),
+            }],
+        );
+        assert!(
+            Startup::from_stream_policy(&mut &startup.to_bytes()[..], true)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_read_startup_bounds_declared_frame_and_parameter_count() {
+        let valid = raw_startup(&[("user", "app"), ("database", "app")], None);
+        let oversized = raw_startup(&[("user", "app"), ("database", "app")], Some(65_537));
+        assert!(
+            Startup::from_stream_policy(&mut &oversized[..], true)
+                .await
+                .is_err()
+        );
+        // Unrestricted parsing retains its legacy behavior for the same bytes.
+        assert!(
+            Startup::from_stream_policy(&mut &oversized[..], false)
+                .await
+                .is_ok()
+        );
+
+        let repeated = (0..17)
+            .map(|_| ("application_name", "client"))
+            .collect::<Vec<_>>();
+        let too_many = raw_startup(&repeated, None);
+        assert!(
+            Startup::from_stream_policy(&mut &too_many[..], true)
+                .await
+                .is_err()
+        );
+        assert!(
+            Startup::from_stream_policy(&mut &too_many[..], false)
+                .await
+                .is_ok()
+        );
+        assert!(
+            Startup::from_stream_policy(&mut &valid[..], true)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_read_startup_rejects_truncated_fields_without_consuming_next_frame() {
+        let mut truncated = BytesMut::new();
+        truncated.put_i32(12);
+        truncated.put_i32(ProtocolVersion::V3_0.as_i32());
+        truncated.extend_from_slice(b"user\0"); // Missing value and final terminator.
+        let mut stream = BytesMut::from(&truncated[..]);
+        stream.extend_from_slice(&raw_startup(&[("user", "next")], None));
+
+        let mut reader = std::io::Cursor::new(stream);
+        assert!(
+            Startup::from_stream_policy(&mut reader, true)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            reader.position(),
+            12,
+            "strict parser must stop at the declared frame boundary"
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_read_startup_accepts_valid_fragmented_frame() {
+        use tokio::io::AsyncWriteExt;
+
+        let bytes = raw_startup(
+            &[
+                ("user", "app"),
+                ("database", "app"),
+                ("application_name", "driver"),
+            ],
+            None,
+        );
+        let (mut writer, mut reader) = tokio::io::duplex(8);
+        tokio::spawn(async move {
+            for byte in bytes {
+                writer.write_all(&[byte]).await.unwrap();
+            }
+        });
+        assert!(matches!(
+            Startup::from_stream_policy(&mut reader, true)
+                .await
+                .unwrap(),
+            Startup::Startup { .. }
+        ));
     }
 }
