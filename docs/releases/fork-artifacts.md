@@ -90,6 +90,10 @@ byte-preserving copies, signing/attestation and chart pull-back are unchanged.
 The pinned versions/source prevent this receipt from authorizing another
 release. Partial publication remains a failure, and existing tags prevent replay.
 
+Build jobs install native C/C++ dependencies, including clang and mold, on both
+runner architectures before compiling the archived baseline. A compile-and-run
+linker smoke uses the same absolute clang/mold invocation as Cargo, so a missing
+or incompatible host linker fails before building the publishable image.
 Build jobs test amd64 and arm64 natively. BuildKit records max provenance;
 the archive metadata binds actual image config/manifest, source label and checksum.
 Skopeo imports the image and verifies config identity before runtime/Kind/scans.
