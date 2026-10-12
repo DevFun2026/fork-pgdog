@@ -123,3 +123,71 @@ prevent an external registry administrator changing tags between checks/writes.
 Restrict external writers and enforce registry immutability through your process.
 Partial image/signature/chart failures fail the job; they are recorded and
 recovered under the [rollback runbook](../operations/fork-artifact-rollback.md).
+
+## Source-bound GitHub owner approval
+
+Schema 3 is an explicit owner-approved release mode for subsequent versions.
+It retains Standard security assessment, independent reviews, native builds,
+scanners, protected publishing, signing and pull-back verification. It reports
+SSH clearance as `waived-by-owner` and the canonical release gate as
+`not-claimed`; it does not manufacture signed clearance. Schema 1 and the
+historical schema-2 first-release exception keep their existing requirements.
+
+Both the artifact source and publishing workflow must come from merged PRs in
+this repository. Each merge must have exactly the original review base and head
+as its two parents, and its tree must equal the reviewed head's tree. Reviews,
+assessments and four successful CI witnesses retain the original reviewed heads.
+The fork quality and artifact workflows explicitly check out the PR head, and
+artifact source labels use that same SHA. Other PR workflows can still test the
+temporary merge ref; their evidence is not relabelled as reviewed-head evidence.
+The exporter checks committed Standard configuration at both bases, heads and
+merges. The workflow merge must be current main at dispatch and finalization;
+changes to main require new evidence rather than relabelling an old review.
+
+After both PRs have passed review and merged, check out the workflow merge and
+create an unapproved draft from the actual preserved evidence:
+
+```sh
+python3 scripts/verify-artifacts owner-release-draft \
+  --source-sha SOURCE_MERGE_SHA --workflow-sha WORKFLOW_MERGE_SHA \
+  --source-pr SOURCE_PR_NUMBER --workflow-pr WORKFLOW_PR_NUMBER \
+  --source-review .agent/.runs/review-SOURCE \
+  --workflow-review .agent/.runs/review-WORKFLOW \
+  --source-assessment .agent/.runs/source-assessment.json \
+  --workflow-assessment .agent/.runs/workflow-assessment.json \
+  --source-quality-run SOURCE_QUALITY_RUN_ID \
+  --source-artifact-run SOURCE_ARTIFACT_RUN_ID \
+  --workflow-quality-run WORKFLOW_QUALITY_RUN_ID \
+  --workflow-artifact-run WORKFLOW_ARTIFACT_RUN_ID \
+  --image-version 0.2.0 --chart-version 0.2.0 \
+  --output .agent/.runs/artifacts/owner-release-draft.json
+```
+
+All capitalized arguments are placeholders for verified completed evidence.
+The output includes the exact approval comment and its payload hash. Have the
+owner approve that concrete payload and explicitly authorize recording its
+comment on the workflow PR. The draft has comment ID zero and cannot publish.
+After the exact comment is present, finalize using its actual positive ID:
+
+```sh
+python3 scripts/verify-artifacts owner-release-finalize \
+  --draft .agent/.runs/artifacts/owner-release-draft.json \
+  --comment-id OWNER_APPROVAL_COMMENT_ID \
+  --output .agent/.runs/artifacts/owner-release-final.json
+```
+
+Finalization rechecks the live owner, repository admin access, approval comment,
+PRs, main, protected environment and exact CI attempts before writing a receipt.
+The approval payload excludes only the comment ID and comment-body hash to avoid
+a circular digest; the final dispatch checksum covers every receipt field.
+Pass the final JSON and printed receipt checksum to the package workflow on
+main, with the same source SHA and versions. The approved owner must dispatch
+and approve the protected packages deployment. Withdrawal, edited approval,
+changed CI attempts, changed main or existing registry tags block publication.
+
+Previous quality runs provide validation evidence, not reusable OCI image bytes.
+The package workflow builds and tests fresh amd64 and arm64 archives and publishes
+those exact bytes. Record verified image/chart digests only after signing,
+chart pull-back and isolated smoke tests complete. Kubernetes operator values
+must use that real image digest, the actual database name and supplied TLS
+material; receipt approval does not authorize deploying to a production cluster.

@@ -152,3 +152,40 @@ registry writers remain residual risks. No complete security certification is
 claimed. Tests cover owner, scope, CI and metadata failures; missing API evidence
 always blocks publication. Rollback removes the schema-2 route without deleting
 packages or modifying schema-1 signed clearance.
+
+## Source-bound GitHub owner release delta
+
+The owner approved an opt-in schema-3 route for the strict-read release. It retains
+original source/workflow review heads and bases, including completed partitioned
+review with integration. It does not reset remote refs or relabel historical
+review as a review of a merge commit. Canonical review/merge/SSH validators and the
+fixed first-release exception remain unchanged.
+
+The new receipt binds exact source/workflow merge commits, versions, Standard
+assessments, review/audit hashes and four CI run IDs/attempts. Its human-readable
+owner body binds a canonical payload excluding only the comment ID/body hash to
+avoid circular hashing; final receipt integrity covers those fields too. A draft
+with comment ID zero cannot authorize publication. Actual original base/head and
+merge configurations must all retain the approved Standard profile; other profiles
+are rejected rather than lowered.
+
+- Historical-base substitution: require real same-repository merged main PRs,
+  exact original two-parent order and identical reviewed/merged Git trees. Compare
+  live GitHub commit data with local Git; require source ancestry and live main
+  equal to the exact dispatch workflow. Squash/rebase or tree drift blocks.
+- Owner impersonation/replay: re-read exact workflow-PR comment, fixed numeric
+  identity/login, current admin permission and owner/main-only packages protection.
+  Modified/withdrawn comments and changed dispatch authority block before login.
+- Forged evidence or profile downgrade: exporter checks complete ordinary or
+  runtime-validated partition/integration evidence, actual Git diffs/contexts,
+  all eight assessment lenses and committed profile configuration. Unknown fields,
+  mismatched audit hashes, weaker assessments or incomplete CI fail closed.
+- Stale CI/rebuild substitution: preserve required full-suite/scanner/native job
+  names and immutable attempts. Existing native build/archive import, signature,
+  digest-preserving publication and chart pull-back checks remain mandatory.
+
+Owner: release maintainer. The new mode explicitly records SSH clearance waived
+by owner and no claim of a canonical signed release gate. Compromised owner/CI,
+host evidence tampering and external registry writers remain trust risks. It is
+not an SSH key enrollment or a production-cluster authorization. See the
+[approved contract](../superpowers/specs/2026-10-12-github-owner-release.md).

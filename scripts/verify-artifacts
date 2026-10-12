@@ -2,6 +2,7 @@
 """Explicit local artifact checks; never publishes as a side effect."""
 import argparse
 import hashlib
+import json
 import os
 import pathlib
 import subprocess
@@ -72,6 +73,39 @@ def main():
         from artifacts.owner_approval import create_initial_receipt
         print(create_initial_receipt(ROOT, args.output, args.source_review, args.workflow_review, args.quality_run, args.artifact_run))
     owner_receipt.set_defaults(run=owner_receipt_run)
+    owner_draft = commands.add_parser("owner-release-draft", help="Prepare an unapproved source-bound GitHub owner receipt")
+    owner_draft.add_argument("--output", type=pathlib.Path, required=True)
+    owner_draft.add_argument("--source-sha", required=True)
+    owner_draft.add_argument("--workflow-sha", required=True)
+    owner_draft.add_argument("--source-pr", type=int, required=True)
+    owner_draft.add_argument("--workflow-pr", type=int, required=True)
+    for name in ("source-review", "workflow-review", "source-assessment", "workflow-assessment"):
+        owner_draft.add_argument("--" + name, type=pathlib.Path, required=True)
+    owner_draft.add_argument("--image-version", required=True)
+    owner_draft.add_argument("--chart-version", required=True)
+    for name in ("source-quality-run", "source-artifact-run", "workflow-quality-run", "workflow-artifact-run"):
+        owner_draft.add_argument("--" + name, type=int, required=True)
+    def owner_draft_run(args):
+        from artifacts.owner_release_export import create_draft_receipt
+        result = create_draft_receipt(
+            ROOT, args.output, args.source_sha, args.workflow_sha, args.source_pr,
+            args.workflow_pr, args.source_review, args.workflow_review,
+            args.source_assessment, args.workflow_assessment,
+            {"source-quality": args.source_quality_run, "source-artifacts": args.source_artifact_run,
+             "workflow-quality": args.workflow_quality_run, "workflow-artifacts": args.workflow_artifact_run},
+            image_version=args.image_version, chart_version=args.chart_version)
+        print(json.dumps({"status": "owner_approval_pending", "draft_sha256": result.draft_sha256,
+                          "approval_body": result.approval_body, "output": str(result.path)}, sort_keys=True))
+    owner_draft.set_defaults(run=owner_draft_run)
+    owner_final = commands.add_parser("owner-release-finalize", help="Validate the real owner comment before finalizing a receipt")
+    owner_final.add_argument("--draft", type=pathlib.Path, required=True)
+    owner_final.add_argument("--output", type=pathlib.Path, required=True)
+    owner_final.add_argument("--comment-id", type=int, required=True)
+    def owner_final_run(args):
+        from artifacts.owner_release_finalize import finalize_receipt
+        print(json.dumps({"receipt_sha256": finalize_receipt(
+            ROOT, args.draft, args.output, args.comment_id)}, sort_keys=True))
+    owner_final.set_defaults(run=owner_final_run)
     preflight = commands.add_parser("publish-preflight")
     preflight.add_argument("--receipt", type=pathlib.Path, required=True)
     preflight.add_argument("--receipt-sha256", required=True)

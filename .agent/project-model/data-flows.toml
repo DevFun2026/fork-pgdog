@@ -20,6 +20,20 @@ data_categories = ["configuration"]
 trust_boundary = "local-repository"
 
 [[data_flows]]
+id = "source-bound-owner-release-approval"
+source = "release-owner"
+target = "owner-release-receipt"
+data_categories = ["evidence-metadata"]
+trust_boundary = "github-owner-to-protected-ci"
+
+[[data_flows]]
+id = "validated-owner-receipt-to-publish"
+source = "owner-release-receipt"
+target = "ci-wrappers"
+data_categories = ["evidence-metadata"]
+trust_boundary = "github-owner-to-protected-ci"
+
+[[data_flows]]
 id = "memory-checkpoint"
 source = "runtime"
 target = "project-memory"

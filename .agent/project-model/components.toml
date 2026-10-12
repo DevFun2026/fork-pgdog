@@ -21,7 +21,7 @@ trust_boundary = "hosted-ci"
 id = "release-owner"
 name = "GitHub Release Owner"
 kind = "human-reviewer"
-responsibility = "Owns the bounded first-release decision recorded in PR #7 comment 5948092075. Numeric GitHub identity, unchanged comment, current admin permission and required packages reviewer are validated before publication and after environment approval."
+responsibility = "Owns the historical first-release decision and explicitly source/version-bound GitHub release approvals. Numeric identity, unchanged canonical approval body, current admin permission and required packages reviewer are revalidated before publication and after environment approval. SSH clearance is never implied."
 trust_boundary = "authenticated-github-owner"
 
 [[components]]
@@ -105,7 +105,7 @@ trust_boundary = "hosted-ci"
 id = "artifact-registry"
 name = "Owned GHCR Artifacts"
 kind = "registry"
-responsibility = "Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores versioned images/chart paired by digest after authorized manual publication; first external publication remains unverified."
+responsibility = "Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores immutable versioned multi-platform images and digest-paired charts only after authorized manual publication and exact pull-back verification."
 trust_boundary = "external-registry"
 
 [[components]]
@@ -128,3 +128,10 @@ name = "Operator Configuration and Secrets"
 kind = "external-configuration"
 responsibility = "Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management."
 trust_boundary = "cluster-secret-store"
+
+[[components]]
+id = "owner-release-receipt"
+name = "Source-bound Owner Release Receipt"
+kind = "authorization-evidence"
+responsibility = "Opt-in schema-3 receipt retains original single/partitioned review identities and Standard assessments; validates source/workflow merged PR parent/tree identity, live main, owner approval and four immutable CI witnesses. Drafts cannot authorize writes; the old signed and first-release paths remain unchanged."
+trust_boundary = "github-owner-to-protected-ci"

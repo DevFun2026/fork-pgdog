@@ -1,10 +1,10 @@
 # PgDog fork: system architecture
 
-Generated: 2026-10-06T15:26:26+07:00 | Commit: e4c9345937fe
+Generated: 2026-10-12T13:42:47+07:00 | Commit: cd8d2a913e10
 
 ## Components
 
-- **artifact-registry** — Owned GHCR Artifacts (`registry`): Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores versioned images/chart paired by digest after authorized manual publication; first external publication remains unverified. [boundary: external-registry]
+- **artifact-registry** — Owned GHCR Artifacts (`registry`): Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores immutable versioned multi-platform images and digest-paired charts only after authorized manual publication and exact pull-back verification. [boundary: external-registry]
 - **canonical-core** — Canonical Agent Core (`policy-and-skills`): Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed. [boundary: local-repository]
 - **ci-wrappers** — CI Wrappers (`automation`): Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance. [boundary: hosted-ci]
 - **container-builder** — Fork Container Builder (`build-tooling`): Builds applications/pgdog/Dockerfile from pinned Ubuntu/Rust bases with Cargo.lock and plugin; excludes Git/private context. Produces native OCI archives verified before publication. [boundary: hosted-ci]
@@ -12,12 +12,13 @@ Generated: 2026-10-06T15:26:26+07:00 | Commit: e4c9345937fe
 - **helm-release** — Fork Helm Release (`deployment-tooling`): Standalone charts/fork-pgdog creates a stateless Linux Deployment, configcheck initContainer, PostgreSQL-only Service and token-disabled ServiceAccount. No database or durable 2PC WAL provisioned. [boundary: operator-to-cluster]
 - **kubernetes-pod** — Hardened PgDog Pod (`container-runtime`): Runs UID/GID 10001 with read-only root/mounts, bounded tmp, TCP liveness and backend-aware HTTP readiness, and image SIGINT with bounded drain. Verified locally in isolated Kind; production infrastructure remains operator-owned. [boundary: cluster-workload]
 - **operator-secrets** — Operator Configuration and Secrets (`external-configuration`): Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management. [boundary: cluster-secret-store]
+- **owner-release-receipt** — Source-bound Owner Release Receipt (`authorization-evidence`): Opt-in schema-3 receipt retains original single/partitioned review identities and Standard assessments; validates source/workflow merged PR parent/tree identity, live main, owner approval and four immutable CI witnesses. Drafts cannot authorize writes; the old signed and first-release paths remain unchanged. [boundary: github-owner-to-protected-ci]
 - **pgdog-proxy** — PgDog Proxy (`rust-service`): Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import. [boundary: proxy-process]
 - **postgresql** — PostgreSQL (`database`): Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup. [boundary: database-process]
 - **project-memory** — Project Memory (`local-storage`): Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context. [boundary: local-repository]
 - **provider-adapters** — Provider Adapters (`adapter`): Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles. [boundary: provider-cli-process]
 - **read-manifest** — Reviewed Read Manifest (`external-configuration`): Closed TOML database aliases, exact ordinary-table names and schema revision; loaded and hashed once at process startup from a protected read-only ConfigMap. An upper bound for catalog proof, not permission inferred from names. [boundary: operator-to-read-process]
-- **release-owner** — GitHub Release Owner (`human-reviewer`): Owns the bounded first-release decision recorded in PR #7 comment 5948092075. Numeric GitHub identity, unchanged comment, current admin permission and required packages reviewer are validated before publication and after environment approval. [boundary: authenticated-github-owner]
+- **release-owner** — GitHub Release Owner (`human-reviewer`): Owns the historical first-release decision and explicitly source/version-bound GitHub release approvals. Numeric identity, unchanged canonical approval body, current admin permission and required packages reviewer are revalidated before publication and after environment approval. SSH clearance is never implied. [boundary: authenticated-github-owner]
 - **review-engine** — Cross-Review Engine (`orchestrator`): Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory. [boundary: local-repository]
 - **runtime** — Agent Runtime (`python-cli`): Runs configuration, evidence, workflow, documentation, review, security, and release commands. [boundary: local-repository]
 - **sql-client** — PostgreSQL Client (`client`): Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data. [boundary: client-process]
@@ -34,7 +35,9 @@ Generated: 2026-10-06T15:26:26+07:00 | Commit: e4c9345937fe
 - `helm-release` → `kubernetes-pod` — installs stateless hardened Deployment and configcheck
 - `helm-release` → `artifact-registry` — retrieves exact chart version and image digest after publication
 - `read-manifest` → `strict-read-policy` — binds immutable database/table upper bound and schema revision
+- `release-owner` → `owner-release-receipt` — approves exact canonical payload with retained original review identities
 - `release-owner` → `ci-wrappers` — binds explicit one-release exception and protected environment approval
+- `owner-release-receipt` → `ci-wrappers` — revalidates live GitHub authority, merge trees, Standard profiles and CI before writes
 - `kubernetes-pod` → `pgdog-proxy` — runs PgDog as PID 1 with SIGINT drain
 - `pgdog-proxy` → `postgresql` — opens backend connections and forwards queries
 - `pgdog-proxy` → `strict-read-policy` — strict process enters original-SQL gate before routing, rewrite or shared cache
@@ -58,9 +61,11 @@ Generated: 2026-10-06T15:26:26+07:00 | Commit: e4c9345937fe
 - **native-artifact-egress**: `container-builder` → `artifact-registry`; data: evidence-metadata, project-source; boundary: protected-ci-to-registry
 - **operator-config-mount**: `operator-secrets` → `kubernetes-pod`; data: configuration, database-credentials; boundary: secret-store-to-workload
 - **review-egress**: `review-engine` → `provider-adapters`; data: project-source, review-package; boundary: local-to-provider-process
+- **source-bound-owner-release-approval**: `release-owner` → `owner-release-receipt`; data: evidence-metadata; boundary: github-owner-to-protected-ci
 - **strict-catalog-proof**: `postgresql` → `strict-read-policy`; data: configuration, evidence-metadata; boundary: database-catalog-to-query-proof
 - **strict-manifest-load**: `read-manifest` → `strict-read-policy`; data: configuration; boundary: operator-config-to-process-snapshot
 - **strict-original-query**: `pgdog-proxy` → `strict-read-policy`; data: configuration, sql-query; boundary: client-data-to-read-authorization
+- **validated-owner-receipt-to-publish**: `owner-release-receipt` → `ci-wrappers`; data: evidence-metadata; boundary: github-owner-to-protected-ci
 
 ## Environments
 
