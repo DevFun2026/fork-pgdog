@@ -54,6 +54,9 @@ def parse_receipt(raw, expected_hash, source_sha):
         raise ValueError("Unexpected receipt fields")
     if not isinstance(expected_hash, str) or not HASH.fullmatch(expected_hash) or hashlib.sha256(canonical(receipt)).hexdigest() != expected_hash:
         raise ValueError("Receipt differs from the owner-approved canonical SHA256")
+    if type(receipt.get("schema_version")) is int and receipt["schema_version"] == 3:
+        from artifacts.owner_release import parse_owner_receipt
+        return parse_owner_receipt(receipt, source_sha)
     if receipt.get("schema_version") == 2:
         from artifacts.owner_approval import parse_initial_receipt
         return parse_initial_receipt(receipt, source_sha)
@@ -128,6 +131,14 @@ def publish_preflight(root, raw, checksum, source, image_version, chart_version,
         raise ValueError("Publication dispatch must come from this repository's main branch")
     receipt = parse_receipt(raw, checksum, source)
     validate_version(image_version); validate_version(chart_version)
+    if receipt["schema_version"] == 3:
+        import os
+        from artifacts.owner_release import validate_live
+        if image_version != receipt["image_version"] or chart_version != receipt["chart_version"]:
+            raise ValueError("Selected versions differ from the owner-approved release")
+        validate_live(receipt, actor_id=os.environ.get("GITHUB_ACTOR_ID"),
+                      workflow_sha=os.environ.get("GITHUB_SHA"), root=root)
+        return receipt
     if receipt["schema_version"] == 2:
         import os
         from artifacts.owner_approval import validate_live

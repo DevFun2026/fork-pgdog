@@ -15,11 +15,11 @@ on:
         required: true
         type: string
       receipt_json:
-        description: Genuine signed-release receipt or explicitly approved first-release owner-exception receipt JSON
+        description: Signed-release receipt or explicitly approved source-bound GitHub owner receipt JSON
         required: true
         type: string
       receipt_sha256:
-        description: Owner-approved canonical receipt SHA256
+        description: Canonical receipt SHA256; exact owner approval is checked by its receipt schema
         required: true
         type: string
 permissions:

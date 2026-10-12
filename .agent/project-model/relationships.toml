@@ -17,6 +17,18 @@ target = "runtime"
 label = "defines policy and command contracts"
 
 [[relationships]]
+id = "owner-authorizes-bound-release"
+source = "release-owner"
+target = "owner-release-receipt"
+label = "approves exact canonical payload with retained original review identities"
+
+[[relationships]]
+id = "owner-receipt-guards-protected-publish"
+source = "owner-release-receipt"
+target = "ci-wrappers"
+label = "revalidates live GitHub authority, merge trees, Standard profiles and CI before writes"
+
+[[relationships]]
 id = "docs-read-model"
 source = "docs-generator"
 target = "canonical-core"

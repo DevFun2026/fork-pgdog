@@ -43,6 +43,8 @@ jobs:
       - run: rustup toolchain install 1.96.1 --profile minimal
       - name: Check workflows
         run: actionlint .github/workflows/artifact-quality.yml .github/workflows/fork-quality.yml .github/workflows/package.yml
+      - name: Artifact authorization and regression tests
+        run: python3 -m unittest discover -s tests/artifacts -p 'test_*.py' -v
       - name: Install native build dependencies
         run: |
           sudo apt-get update

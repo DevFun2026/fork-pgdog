@@ -49,6 +49,14 @@ trust boundaries, dependencies, infrastructure, or recovery design changes.
   no signed clearance/schema-1 release receipt can pass until separate approved enrollment
   and independent review. Receipt checksum provides integrity, not independent
   authenticity; the owner must compare exported metadata to actual local evidence.
+- Owner: release maintainer. The approved schema-3 GitHub-owner route supplies
+  source/version-bound authorization with exact retained historical review
+  identities, merge parent/tree proofs, Standard assessment and live CI. It
+  explicitly waives SSH clearance and does not claim a canonical signed gate.
+  GitHub owner/account/runner compromise, local evidence integrity and a withdrawal
+  between the final live check and registry write remain risks. Changes to main,
+  approval, permissions, protected environment or required CI block publication;
+  unsupported committed profiles fail rather than being silently lowered.
 - Owner: registry administrator. Workflow serialization cannot prevent external
   writers racing or mutating tags. Ambiguous first-package/auth failures block;
   initialization, writer restrictions and visibility are explicit owner setup.
