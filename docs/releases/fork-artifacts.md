@@ -137,6 +137,9 @@ Both the artifact source and publishing workflow must come from merged PRs in
 this repository. Each merge must have exactly the original review base and head
 as its two parents, and its tree must equal the reviewed head's tree. Reviews,
 assessments and four successful CI witnesses retain the original reviewed heads.
+The fork quality and artifact workflows explicitly check out the PR head, and
+artifact source labels use that same SHA. Other PR workflows can still test the
+temporary merge ref; their evidence is not relabelled as reviewed-head evidence.
 The exporter checks committed Standard configuration at both bases, heads and
 merges. The workflow merge must be current main at dispatch and finalization;
 changes to main require new evidence rather than relabelling an old review.
