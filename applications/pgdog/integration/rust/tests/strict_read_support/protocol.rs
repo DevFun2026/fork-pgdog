@@ -258,7 +258,7 @@ pub async fn strict_wire_denies_fastpath_and_orphan_copy_data() {
     }
 }
 
-pub async fn strict_wire_cancel_request_does_not_escape_strict_session() {
+pub async fn strict_wire_wrong_secret_cancel_request_stays_within_strict_session() {
     let fixture = fixture();
     let password = std::fs::read_to_string(&fixture.application_password_file)
         .expect("application credential file")
@@ -274,11 +274,17 @@ pub async fn strict_wire_cancel_request_does_not_escape_strict_session() {
     .expect("strict PostgreSQL wire startup");
     let first = wire.query("SELECT 1").await.unwrap();
     assert!(!first.iter().any(|message| message.code == b'E'));
+    assert!(first.iter().any(|message| message.code == b'D'));
+    assert_eq!(ready_status(first.last().unwrap()), b'I');
     let (backend_pid, backend_secret) = wire.backend_key().expect("BackendKeyData from startup");
+    // CancelRequest has no PostgreSQL response acknowledging backend processing.
+    // The helper's EOF only confirms PgDog finished dispatching it, so a valid
+    // idle-session cancel could race with the following statement. An incorrect
+    // secret makes this isolation check deterministic.
     WireClient::cancel_request(
         (&fixture.host, fixture.read_port),
         backend_pid,
-        backend_secret,
+        backend_secret.wrapping_add(1),
     )
     .await
     .unwrap();
@@ -289,6 +295,33 @@ pub async fn strict_wire_cancel_request_does_not_escape_strict_session() {
     assert!(!second.iter().any(|message| message.code == b'E'));
     assert!(second.iter().any(|message| message.code == b'D'));
     assert_eq!(ready_status(second.last().unwrap()), b'I');
+
+    let denied = wire
+        .query("DELETE FROM public.strict_items WHERE false")
+        .await
+        .expect("strict write denial should complete the query");
+    assert_eq!(
+        denied.iter().filter(|message| message.code == b'E').count(),
+        1
+    );
+    assert_eq!(
+        denied
+            .iter()
+            .find(|message| message.code == b'E')
+            .unwrap()
+            .error_message()
+            .as_deref(),
+        Some("strict-read: write_statement")
+    );
+    assert_eq!(ready_status(denied.last().unwrap()), b'I');
+
+    let recovered = wire
+        .query("SELECT 1")
+        .await
+        .expect("safe query after strict write denial");
+    assert!(!recovered.iter().any(|message| message.code == b'E'));
+    assert!(recovered.iter().any(|message| message.code == b'D'));
+    assert_eq!(ready_status(recovered.last().unwrap()), b'I');
 }
 
 pub async fn strict_wire_unknown_close_is_idempotent() {

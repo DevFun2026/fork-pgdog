@@ -106,7 +106,7 @@ async fn strict_read_wire_lost_backend_before_sync_fails_closed() {
 }
 
 #[tokio::test]
-async fn strict_read_wire_cancel_request_stays_within_strict_session() {
-    strict_read_support::protocol::strict_wire_cancel_request_does_not_escape_strict_session()
+async fn strict_read_wire_wrong_secret_cancel_request_stays_within_strict_session() {
+    strict_read_support::protocol::strict_wire_wrong_secret_cancel_request_stays_within_strict_session()
         .await;
 }

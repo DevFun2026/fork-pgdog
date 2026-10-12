@@ -19,6 +19,7 @@ are in [the operations guide](strict-read-endpoints.md) and `docs/VERIFICATION.m
 | Startup and buffer framing/logging | 23 tests passed serially, including real TCP framing; `startup-buffer-full.log` |
 | Typed parameter bounds | Real `$1025` acceptance reproduced RED, now denied; both typed resolver tests GREEN; declared Parse OID budget tested separately |
 | Timeout cancellation | Locked backend remained after socket close (RED); bounded CancelRequest + discard fixed it; 18 protocol tests GREEN while the conflicting lock remained held |
+| CancelRequest semantics | [PostgreSQL CancelRequest](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-CANCELING-REQUESTS) has no backend-processing acknowledgement. The wire helper's socket EOF only marks PgDog dispatch completion; an idle valid cancel can race with the next statement. The idle-session protocol check therefore uses a wrong secret and verifies query/write-denial/recovery behavior. Valid cancellation remains covered by the lock-synchronized active-cancel regression. |
 | Chart and harness | 64 artifact tests passed; both strict read/write examples linted, rendered and packaged; shell syntax and ShellCheck passed |
 | Rust quick gate | Passed format, warnings-denied workspace Clippy and configured library tests; `quick-final.json` |
 | Docs/model/adapters/skills | Generated docs build/check, adapter check and 25-skill check passed |
