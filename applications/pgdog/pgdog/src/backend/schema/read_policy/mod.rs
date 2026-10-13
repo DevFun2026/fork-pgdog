@@ -1,8 +1,28 @@
+mod catalog_capture;
+mod constraint_proof;
+mod dependency_profile;
+mod expression_proof;
+mod full_catalog;
+mod index_proof;
+mod inheritance;
+mod namespace_authority;
+mod node_tree;
+#[cfg(test)]
+mod owned_expression;
+#[cfg(test)]
+mod owned_expression_acceptance;
+#[cfg(test)]
+mod owned_shape_export;
+mod regconfig_name;
 mod registry;
+mod relation_capture;
 mod resolve;
+mod reviewed_profiles;
 mod rows;
+mod type_catalog;
+mod type_proof;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     backend::{Server, server::ServerRequest},
@@ -41,7 +61,7 @@ impl CatalogIdentity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct CatalogRelation {
     relation: RelationRow,
     columns: Vec<ColumnRow>,
@@ -58,6 +78,9 @@ pub(crate) struct CatalogSnapshot {
     search_path: Vec<String>,
     role: RoleRow,
     relations: BTreeMap<String, CatalogRelation>,
+    proven_types: BTreeMap<u32, type_proof::TypeCapabilities>,
+    dependency_metadata: serde_json::Value,
+    full_relations: BTreeMap<u32, full_catalog::RelationProof>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +88,7 @@ pub(crate) struct CatalogProof {
     fingerprint: [u8; 32],
     parameter_oids: Vec<u32>,
     identity: CatalogIdentity,
+    metadata_digest: [u8; 32],
 }
 
 impl CatalogProof {
@@ -86,15 +110,110 @@ impl CatalogProof {
             fingerprint: admitted.fingerprint,
             parameter_oids: parameter_oids.to_vec(),
             identity,
+            metadata_digest: [0; 32],
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_metadata(mut self, digest: [u8; 32]) -> Self {
+        self.metadata_digest = digest;
+        self
     }
 }
 
 impl CatalogSnapshot {
+    pub(crate) async fn load_for_policy(
+        server: &mut Server,
+        requirements: &CatalogRequirements,
+        transaction_generation: u64,
+        policy: &ProcessPolicy,
+        database_alias: &str,
+    ) -> Result<Self, PolicyError> {
+        let database = policy
+            .manifest()
+            .and_then(|manifest| {
+                manifest
+                    .databases()
+                    .iter()
+                    .find(|database| database.name() == database_alias)
+            })
+            .ok_or_else(PolicyError::unsupported)?;
+        let allowed = database
+            .relations()
+            .iter()
+            .map(|name| (name.schema().to_owned(), name.name().to_owned()))
+            .collect();
+        Self::load_inner(server, requirements, transaction_generation, Some(&allowed)).await
+    }
+    fn metadata_digest(&self) -> Result<[u8; 32], PolicyError> {
+        let capabilities = self
+            .proven_types
+            .iter()
+            .map(|(oid, capability)| {
+                (
+                    *oid,
+                    [
+                        capability.text_output,
+                        capability.binary_output,
+                        capability.text_input,
+                        capability.binary_input,
+                        capability.comparison,
+                        capability.ordering,
+                        capability.grouping,
+                    ],
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let metadata = serde_json::json!({
+            "database_oid": self.database_oid, "role_oid": self.role_oid,
+            "major": self.registry.major(), "reference": self.registry.source_image(),
+            "search_path": self.search_path, "role": self.role,
+            "relations": self.relations, "capabilities": capabilities,
+            "dependencies": self.dependency_metadata,
+            "full_relations":self.full_relations,
+        });
+        let canonical = serde_json::to_vec(&metadata).map_err(|_| PolicyError::unsupported())?;
+        if canonical.len() > 16 * 1024 * 1024 {
+            return Err(PolicyError::unsupported());
+        }
+        let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &canonical);
+        let mut output = [0; 32];
+        output.copy_from_slice(digest.as_ref());
+        Ok(output)
+    }
+    fn output_type(&self, oid: u32) -> bool {
+        self.registry.scalar_type(oid)
+            || self
+                .proven_types
+                .get(&oid)
+                .is_some_and(|capability| capability.text_output && capability.binary_output)
+    }
+
+    fn set_operation_type(&self, oid: u32, ordering: bool) -> bool {
+        self.registry.scalar_type(oid)
+            || self.proven_types.get(&oid).is_some_and(|capability| {
+                if ordering {
+                    capability.ordering
+                } else {
+                    capability.grouping
+                }
+            })
+    }
+
+    #[cfg(test)]
     pub(crate) async fn load(
         server: &mut Server,
         requirements: &CatalogRequirements,
         transaction_generation: u64,
+    ) -> Result<Self, PolicyError> {
+        Self::load_inner(server, requirements, transaction_generation, None).await
+    }
+
+    async fn load_inner(
+        server: &mut Server,
+        requirements: &CatalogRequirements,
+        transaction_generation: u64,
+        allowed: Option<&BTreeSet<(String, String)>>,
     ) -> Result<Self, PolicyError> {
         // This must be checked on the exact Server before catalog lookup. An
         // unknown or idle transaction state is never treated as protected.
@@ -271,6 +390,7 @@ impl CatalogSnapshot {
             .await
             .map_err(|_| PolicyError::unsupported())?;
         let mut actual_counts = BTreeMap::<String, usize>::new();
+        let mut dependency_metadata = BTreeMap::<String, BTreeMap<u32, serde_json::Value>>::new();
         #[cfg(test)]
         let capture_live_rows = std::env::var_os("STRICT_READ_CAPTURE_REGISTRY").is_some();
         #[cfg(test)]
@@ -299,6 +419,14 @@ impl CatalogSnapshot {
                     registry.catalog_record_mismatch_fields(&row.table, row.oid, &actual),
                 );
                 registry_matches = false;
+            }
+            if dependency_metadata
+                .entry(row.table.clone())
+                .or_default()
+                .insert(row.oid, actual)
+                .is_some()
+            {
+                return Err(PolicyError::unsupported());
             }
             *actual_counts.entry(row.table).or_default() += 1;
         }
@@ -343,6 +471,7 @@ impl CatalogSnapshot {
         }
 
         let mut relations = BTreeMap::new();
+        let mut needs_full = false;
         for requested in &requirements.relations {
             if relations.contains_key(requested) {
                 continue;
@@ -358,7 +487,11 @@ impl CatalogSnapshot {
             let relation = relation_rows
                 .into_iter()
                 .next()
-                .filter(RelationRow::is_supported_base_table)
+                .filter(|row| {
+                    let mut shape = row.clone();
+                    shape.has_inheritance = false;
+                    shape.is_supported_base_table()
+                })
                 .ok_or_else(PolicyError::unsupported)?;
             if relation.owner_oid == role.oid {
                 return Err(PolicyError::unsupported());
@@ -371,9 +504,11 @@ impl CatalogSnapshot {
                 ))
                 .await
                 .map_err(|_| PolicyError::unsupported())?;
-            if columns.is_empty() || columns.iter().any(|column| !column.is_supported(&registry)) {
+            if columns.is_empty() {
                 return Err(PolicyError::unsupported());
             }
+            needs_full |= relation.has_inheritance
+                || columns.iter().any(|column| !column.is_supported(&registry));
             let opclass_ids = registry
                 .expected_opclass_oids_csv()
                 .ok_or_else(PolicyError::unsupported)?;
@@ -389,9 +524,7 @@ impl CatalogSnapshot {
                 .await
                 .map_err(|_| PolicyError::unsupported())?;
             let indexes_safe = indexes.first().is_some_and(|row| row.valid && row.value);
-            if !indexes_safe {
-                return Err(PolicyError::unsupported());
-            }
+            needs_full |= !indexes_safe;
             relations.insert(
                 requested.clone(),
                 CatalogRelation {
@@ -402,6 +535,37 @@ impl CatalogSnapshot {
             );
         }
 
+        let mut full_relations = BTreeMap::new();
+        let mut proven_types = BTreeMap::new();
+        let legacy_metadata =
+            serde_json::to_value(dependency_metadata).map_err(|_| PolicyError::unsupported())?;
+        let dependency_metadata = if needs_full {
+            let allowed = allowed.ok_or_else(PolicyError::unsupported)?;
+            let roots = relations
+                .values()
+                .map(|entry| entry.relation.oid)
+                .collect::<Vec<_>>();
+            let full = full_catalog::load(server, &roots, &role, registry.major(), allowed).await?;
+            full_relations = full.proofs();
+            for entry in relations.values_mut() {
+                let (relation, columns) = full
+                    .relations
+                    .get(&entry.relation.oid)
+                    .ok_or_else(PolicyError::unsupported)?;
+                if relation.schema != entry.relation.schema || relation.name != entry.relation.name
+                {
+                    return Err(PolicyError::unsupported());
+                }
+                entry.relation = relation.clone();
+                entry.columns = columns.clone();
+                entry.indexes_safe = true;
+            }
+            proven_types = full.capabilities;
+            serde_json::json!({"legacy":legacy_metadata,"full":full.metadata})
+        } else {
+            legacy_metadata
+        };
+
         Ok(Self {
             database_oid: identity.database_oid,
             role_oid: identity.role_oid,
@@ -411,6 +575,9 @@ impl CatalogSnapshot {
             search_path,
             role,
             relations,
+            proven_types,
+            dependency_metadata,
+            full_relations,
         })
     }
 
@@ -484,7 +651,17 @@ pub(crate) fn verify_parse(
             .relations
             .get(name)
             .ok_or_else(PolicyError::unsupported)?;
-        if !relation.relation.is_supported_base_table()
+        let fully_proved = catalog
+            .full_relations
+            .get(&relation.relation.oid)
+            .is_some_and(|proof| {
+                proof.matches(&relation.relation, &relation.columns)
+                    && catalog
+                        .dependency_metadata
+                        .get("full")
+                        .is_some_and(|metadata| proof.matches_metadata(metadata))
+            });
+        if (!fully_proved && !relation.relation.is_supported_base_table())
             || !relation.indexes_safe
             || !database.relations().iter().any(|expected| {
                 expected.schema() == relation.relation.schema
@@ -498,7 +675,7 @@ pub(crate) fn verify_parse(
         if relation
             .columns
             .iter()
-            .any(|column| !column.is_supported(&catalog.registry))
+            .any(|column| !fully_proved && !column.is_supported(&catalog.registry))
         {
             return Err(PolicyError::unsupported());
         }
@@ -508,6 +685,7 @@ pub(crate) fn verify_parse(
         fingerprint: admitted.fingerprint,
         parameter_oids: parameter_oids.to_vec(),
         identity,
+        metadata_digest: catalog.metadata_digest()?,
     })
 }
 

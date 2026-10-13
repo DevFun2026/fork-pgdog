@@ -155,8 +155,15 @@ impl ReadRegistry {
     }
 
     pub(crate) fn exact_catalog_record(&self, table_name: &str, oid: u32, actual: &Value) -> bool {
-        self.row_by_oid(table_name, oid)
-            .is_some_and(|expected| normalize(expected) == normalize(actual))
+        self.row_by_oid(table_name, oid).is_some_and(|expected| {
+            let Some(expected) = normalize_catalog_record(table_name, expected, true) else {
+                return false;
+            };
+            let Some(actual) = normalize_catalog_record(table_name, actual, false) else {
+                return false;
+            };
+            expected == actual
+        })
     }
 
     #[cfg(test)]
@@ -168,6 +175,12 @@ impl ReadRegistry {
     ) -> Vec<String> {
         let Some(expected) = self.row_by_oid(table_name, oid) else {
             return vec!["<missing-expected-row>".into()];
+        };
+        let (Some(expected), Some(actual)) = (
+            normalize_catalog_record(table_name, expected, true),
+            normalize_catalog_record(table_name, actual, false),
+        ) else {
+            return vec!["<non-object-row>".into()];
         };
         let (Some(expected), Some(actual)) = (expected.as_object(), actual.as_object()) else {
             return vec!["<non-object-row>".into()];
@@ -184,7 +197,6 @@ impl ReadRegistry {
             .collect()
     }
 
-    #[cfg(test)]
     pub(crate) fn source_image(&self) -> Option<&'static str> {
         self.data.get("source_image")?.as_str()
     }
@@ -342,6 +354,57 @@ fn normalize(value: &Value) -> Value {
     }
 }
 
+/// Normalize only the embedded reference's function-source strings. Live rows
+/// must already carry the exact opaque hash marker returned by the catalog SQL.
+fn normalize_catalog_record(table_name: &str, row: &Value, reference: bool) -> Option<Value> {
+    let mut normalized = row.clone();
+    if table_name == "pg_proc" {
+        let fields = normalized.as_object_mut()?;
+        for field in ["prosrc", "prosqlbody"] {
+            let Some(value) = fields.get(field) else {
+                continue;
+            };
+            let marker = normalize_source_field(value, reference)?;
+            fields.insert(field.to_owned(), marker);
+        }
+    }
+    Some(normalize(&normalized))
+}
+
+fn normalize_source_field(value: &Value, reference: bool) -> Option<Value> {
+    match value {
+        Value::Null => Some(Value::Null),
+        Value::String(source) if reference => Some(serde_json::json!({
+            "sha256_utf8": sha256_hex(source.as_bytes())
+        })),
+        Value::Object(marker) if valid_source_marker(marker) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn valid_source_marker(marker: &serde_json::Map<String, Value>) -> bool {
+    if marker.len() != 1 {
+        return false;
+    }
+    marker
+        .get("sha256_utf8")
+        .and_then(Value::as_str)
+        .is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +429,100 @@ mod tests {
         assert!(ReadRegistry::for_major(13).is_none());
         assert!(ReadRegistry::for_major(17).is_none());
         assert!(ReadRegistry::for_major(19).is_none());
+    }
+
+    #[test]
+    fn proc_record_matches_only_exact_source_fingerprints_and_other_fields() {
+        for major in [12, 18] {
+            let registry = ReadRegistry::for_major(major).unwrap();
+            let proc_oids: &[u32] = if major == 18 { &[31, 1296] } else { &[31] };
+            for oid in proc_oids {
+                let expected = registry.row_by_oid("pg_proc", *oid).unwrap();
+                let mut redacted = expected.clone();
+                for field in ["prosrc", "prosqlbody"] {
+                    match redacted.get(field) {
+                        Some(Value::String(source)) => {
+                            let hash = aws_lc_rs::digest::digest(
+                                &aws_lc_rs::digest::SHA256,
+                                source.as_bytes(),
+                            );
+                            let marker = hash
+                                .as_ref()
+                                .iter()
+                                .map(|byte| format!("{byte:02x}"))
+                                .collect::<String>();
+                            redacted[field] = serde_json::json!({"sha256_utf8": marker});
+                        }
+                        Some(Value::Null) | None => {}
+                        _ => panic!("registry source field has an unexpected shape"),
+                    }
+                }
+                assert!(registry.exact_catalog_record("pg_proc", *oid, &redacted));
+
+                let mut plaintext = redacted.clone();
+                plaintext["prosrc"] = expected["prosrc"].clone();
+                assert!(!registry.exact_catalog_record("pg_proc", *oid, &plaintext));
+
+                let mut wrong_fingerprint = redacted.clone();
+                wrong_fingerprint["prosrc"] = serde_json::json!({
+                    "sha256_utf8": "0000000000000000000000000000000000000000000000000000000000000000"
+                });
+                assert!(!registry.exact_catalog_record("pg_proc", *oid, &wrong_fingerprint));
+                if expected.get("prosqlbody").is_some_and(Value::is_string) {
+                    let mut changed_body = redacted.clone();
+                    changed_body["prosqlbody"] = serde_json::json!({
+                        "sha256_utf8": "0000000000000000000000000000000000000000000000000000000000000000"
+                    });
+                    assert!(!registry.exact_catalog_record("pg_proc", *oid, &changed_body));
+                }
+
+                let mut extra_marker_field = redacted.clone();
+                extra_marker_field["prosrc"] = serde_json::json!({
+                    "sha256_utf8": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "unreviewed": true
+                });
+                assert!(!registry.exact_catalog_record("pg_proc", *oid, &extra_marker_field));
+
+                let mut uppercase_marker = redacted.clone();
+                uppercase_marker["prosrc"] = serde_json::json!({
+                    "sha256_utf8": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                });
+                assert!(!registry.exact_catalog_record("pg_proc", *oid, &uppercase_marker));
+
+                let mut changed_metadata = redacted.clone();
+                changed_metadata["proname"] = serde_json::json!("different_name");
+                assert!(!registry.exact_catalog_record("pg_proc", *oid, &changed_metadata));
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_sql_hashes_source_fields_and_keeps_major_specific_shape() {
+        let pg18 = include_str!("catalog.sql");
+        let pg12 = include_str!("catalog-pg12.sql");
+        let proc18 = pg18
+            .split("SELECT 'pg_proc'")
+            .nth(1)
+            .unwrap()
+            .split("UNION ALL")
+            .next()
+            .unwrap();
+        let proc12 = pg12
+            .split("SELECT 'pg_proc'")
+            .nth(1)
+            .unwrap()
+            .split("UNION ALL")
+            .next()
+            .unwrap();
+        for query in [proc12, proc18] {
+            assert!(query.contains("pg_catalog.to_jsonb(p) - 'prosrc'"));
+            assert!(query.contains("'sha256_utf8'"));
+            assert!(query.contains("pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8'))"));
+            assert!(!query.contains("pg_catalog.to_jsonb(p)::pg_catalog.text"));
+        }
+        assert!(proc18.contains("- 'prosqlbody'"));
+        assert!(proc18.contains("p.prosqlbody::pg_catalog.text"));
+        assert!(!proc12.contains("prosqlbody"));
     }
 
     #[test]

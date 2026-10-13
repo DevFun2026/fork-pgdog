@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,10 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+from read_policy_profiles import write_profile_variants
+
 APPLICATION = ROOT / "applications/pgdog"
 FIXTURES = APPLICATION / "integration/strict_read"
 BASELINE_BINARY = ROOT / ".agent/.runs/strict-read/pgdog-baseline"
@@ -139,7 +144,8 @@ def pinned_postgres_image(postgres_major: int = 18) -> str:
 def run_checked(command: list[str], *, env=None, **kwargs) -> subprocess.CompletedProcess:
     result = subprocess.run(command, env=env, text=True, capture_output=True, check=False, **kwargs)
     if result.returncode != 0:
-        detail = (result.stdout.strip() + "\n" + result.stderr.strip())[-5000:]
+        # Compiler warnings must not erase the test assertions on stdout.
+        detail = "stdout:\n" + result.stdout.strip()[-3500:] + "\nstderr:\n" + result.stderr.strip()[-1500:]
         raise RuntimeError(f"command failed ({result.returncode}): {command[0]} {command[1:]}\n{detail}")
     return result
 
@@ -181,6 +187,129 @@ def write_private(path: Path, contents: str) -> None:
     path.chmod(0o600)
 
 
+def prepare_profile_fixtures(temp: Path, env: dict[str, str]) -> Path:
+    """Capture owned pinned references and build private profile variants for core tests."""
+    profile_dir = temp / "profile-fixtures"
+    profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    profile_dir.chmod(0o700)
+    producer = ROOT / "scripts/capture_read_dependency_reference.py"
+    producer_env = child_environment(env, "{}")
+    result = run_checked([
+        sys.executable, str(producer), "--output-dir", str(profile_dir),
+    ], env=producer_env, cwd=ROOT, timeout=900)
+    try:
+        captures = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise RuntimeError("owned profile producer returned malformed provenance") from error
+    if not isinstance(captures, list) or len(captures) != len(SUPPORTED_MAJORS):
+        raise RuntimeError("owned profile producer did not capture both supported majors")
+    by_major = {}
+    for capture in captures:
+        if not isinstance(capture, dict) or capture.get("major") not in SUPPORTED_MAJORS:
+            raise RuntimeError("owned profile producer returned an unsupported major")
+        major = capture["major"]
+        if major in by_major:
+            raise RuntimeError("owned profile producer returned a duplicate major")
+        source = Path(capture.get("path", "")).resolve()
+        expected_path = (profile_dir / f"reference-extended-pg{major}.json").resolve()
+        if source != expected_path or not source.is_file():
+            raise RuntimeError("owned profile producer returned a path outside its temporary fixture")
+        raw = source.read_bytes()
+        digest = capture.get("sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) \
+                or hashlib.sha256(raw).hexdigest() != digest:
+            raise RuntimeError(f"owned PG{major} reference digest did not verify")
+        try:
+            reference = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"owned PG{major} reference is malformed") from error
+        if reference.get("postgres_major") != major \
+                or reference.get("source_image") != pinned_postgres_image(major) \
+                or not isinstance(reference.get("capture_id"), str) \
+                or not reference["capture_id"] \
+                or not str(reference.get("server_version", "")).startswith(f"{major}.") \
+                or reference.get("platform") not in ("linux/amd64", "linux/arm64"):
+            raise RuntimeError(f"owned PG{major} reference provenance does not match its immutable pin")
+        if not isinstance(capture.get("catalog_rows"), int) or capture["catalog_rows"] <= 0 \
+                or not isinstance(capture.get("extension_members"), int) or capture["extension_members"] <= 0:
+            raise RuntimeError(f"owned PG{major} reference has empty catalog or extension inventory")
+        by_major[major] = (capture, reference)
+    if set(by_major) != set(SUPPORTED_MAJORS):
+        raise RuntimeError("owned profile producer omitted a supported major")
+
+    variants_dir = profile_dir / "variants"
+    variants_dir.mkdir(mode=0o700, exist_ok=True)
+    expected = {
+        "core": [],
+        "pg-trgm": ["pg_trgm"],
+        "btree-gist": ["btree_gist"],
+        "both": ["btree_gist", "pg_trgm"],
+    }
+    for major in SUPPORTED_MAJORS:
+        capture, reference = by_major[major]
+        variants = write_profile_variants(reference, variants_dir)
+        if not isinstance(variants, list) or len(variants) != len(expected):
+            raise RuntimeError(f"owned PG{major} profile generation did not produce four variants")
+        seen = set()
+        for variant in variants:
+            if not isinstance(variant, dict):
+                raise RuntimeError(f"owned PG{major} profile generator returned malformed metadata")
+            path = Path(variant.get("path", "")).resolve()
+            prefix = f"read-dependency-profile-pg{major}-"
+            if path.parent != variants_dir.resolve() or not path.name.startswith(prefix) \
+                    or path.suffix != ".json" or not path.is_file():
+                raise RuntimeError(f"owned PG{major} variant path escaped the temporary fixture")
+            suffix = path.stem[len(prefix):]
+            if suffix not in expected or suffix in seen:
+                raise RuntimeError(f"owned PG{major} profile variant set is ambiguous")
+            data = path.read_bytes()
+            digest = variant.get("sha256")
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) \
+                    or hashlib.sha256(data).hexdigest() != digest:
+                raise RuntimeError(f"owned PG{major} profile variant digest did not verify")
+            artifact = json.loads(data)
+            if artifact.get("format") != "pgdog-read-dependency-profile/v2" \
+                    or artifact.get("enabled_extensions") != expected[suffix] \
+                    or artifact.get("provenance", {}).get("postgres_major") != major \
+                    or artifact.get("provenance", {}).get("source_image") != pinned_postgres_image(major):
+                raise RuntimeError(f"owned PG{major} profile variant provenance or selector mismatch")
+            counts = variant.get("catalog_row_counts")
+            if not isinstance(counts, dict) or not counts or any(
+                    not isinstance(count, int) or count < 0 for count in counts.values()):
+                raise RuntimeError(f"owned PG{major} profile variant row counts are malformed")
+            print(
+                f"  {suffix}: sha256={digest} "
+                f"catalog_rows={sum(counts.values())} enabled={','.join(expected[suffix]) or 'core'}"
+            )
+            seen.add(suffix)
+        if seen != set(expected):
+            raise RuntimeError(f"owned PG{major} profile variants are incomplete")
+        print(
+            f"Owned PG{major} profiles: image={pinned_postgres_image(major)} "
+            f"platform={reference['platform']} capture_id={reference['capture_id']} "
+            f"capture_sha256={capture['sha256']}"
+        )
+    return profile_dir
+
+
+def core_test_environment(env: dict[str, str], profile_dir: Path) -> dict[str, str]:
+    """Require the generated owned fixtures and explicitly pass them to Cargo."""
+    profile_dir = profile_dir.resolve()
+    if not profile_dir.is_dir() or any(
+            not (profile_dir / f"reference-extended-pg{major}.json").is_file()
+            for major in SUPPORTED_MAJORS):
+        raise RuntimeError("owned profile fixtures are required for core Cargo tests")
+    variants = profile_dir / "variants"
+    expected = [f"read-dependency-profile-pg{major}-{suffix}.json"
+                for major in SUPPORTED_MAJORS
+                for suffix in ("core", "pg-trgm", "btree-gist", "both")]
+    if any(not (variants / name).is_file() for name in expected):
+        raise RuntimeError("owned profile fixture variants are incomplete for core Cargo tests")
+    result = dict(env)
+    result["PGDOG_PROFILE_TEST_FIXTURE_DIR"] = str(profile_dir)
+    return result
+
+
 def render_file(source: Path, target: Path, substitutions: dict[str, str]) -> None:
     content = source.read_text()
     for name, value in substitutions.items():
@@ -190,9 +319,20 @@ def render_file(source: Path, target: Path, substitutions: dict[str, str]) -> No
     write_private(target, content)
 
 
+def strict_read_bootstrap(app_password: str) -> str:
+    """Add one safe cross-table FK used by the single-root capture regression."""
+    bootstrap = (FIXTURES / "bootstrap.sql").read_text().replace(
+        "__APP_PASSWORD__", app_password
+    )
+    return bootstrap + (
+        "\nALTER TABLE public.strict_extended "
+        "ADD COLUMN strict_item_id BIGINT REFERENCES public.strict_items(id);\n"
+    )
+
+
 def start_fixture(resources: OwnedResources, temp: Path, env: dict[str, str], app_password: str,
                   owner_password: str, postgres_major: int = 18) -> int:
-    bootstrap = (FIXTURES / "bootstrap.sql").read_text().replace("__APP_PASSWORD__", app_password)
+    bootstrap = strict_read_bootstrap(app_password)
     cidfile = temp / "postgres.cid"
     command = [
         "docker", "run", "--pull=never", "--detach", "--name", new_resource_name(), "--cidfile", str(cidfile),
@@ -279,7 +419,7 @@ def start_native_fixture(resources: OwnedResources, temp: Path, env: dict[str, s
 
     run_checked([tools["psql"], "--no-psqlrc", "--no-password", "--set=ON_ERROR_STOP=1",
                  "-c", "CREATE DATABASE app"], env=database_env)
-    bootstrap = (FIXTURES / "bootstrap.sql").read_text().replace("__APP_PASSWORD__", app_password)
+    bootstrap = strict_read_bootstrap(app_password)
     bootstrap_path = temp / "bootstrap.sql"
     write_private(bootstrap_path, bootstrap)
     app_env = dict(database_env, PGDATABASE="app")
@@ -342,6 +482,8 @@ def list_tests(root: Path, package: str, target_args: list[str], selection: str,
 
 def run_tests(root: Path, package: str, target_args: list[str], selection: str,
               env: dict[str, str]) -> None:
+    if selection == "core" and not env.get("PGDOG_PROFILE_TEST_FIXTURE_DIR"):
+        raise RuntimeError("owned profile fixtures are mandatory for core Cargo tests")
     selected = list_tests(root, package, target_args, selection, env)
     command = ["cargo", "test", "--offline", "--locked", "--manifest-path",
                str(root / "applications/pgdog/Cargo.toml"), "--package", package, *target_args]
@@ -352,7 +494,10 @@ def run_tests(root: Path, package: str, target_args: list[str], selection: str,
         command.extend(["--", "--test-threads=1", "--skip", "strict_read_baseline_"])
     elif selection == "core":
         command.extend(["--", "--test-threads=1", "strict_read", "::read_policy::"])
-    run_checked(command, env=env, cwd=APPLICATION)
+    result = run_checked(command, env=env, cwd=APPLICATION)
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("test result:"):
+            print(line)
 
 
 def execute(pgdog_bin: Path, phase: str, pooler_mode: str = "session",
@@ -372,6 +517,9 @@ def execute(pgdog_bin: Path, phase: str, pooler_mode: str = "session",
     temp.chmod(0o700)
     status = 0
     try:
+        profile_fixture_dir = None
+        if phase in ("core", "all"):
+            profile_fixture_dir = prepare_profile_fixtures(temp, base_env)
         app_password = secrets.token_hex(24)
         owner_password = secrets.token_hex(24)
         app_password_path, owner_password_path = temp / "strict-app.password", temp / "fixture-owner.password"
@@ -438,7 +586,10 @@ def execute(pgdog_bin: Path, phase: str, pooler_mode: str = "session",
             run_tests(ROOT, "integration_tests_rust", ["--test", "strict_read"],
                       "protocol", test_env)
         if phase in ("core", "all"):
-            run_tests(ROOT, "pgdog", ["--bin", "pgdog"], "core", test_env)
+            if profile_fixture_dir is None:
+                raise RuntimeError("owned profile fixtures were not prepared for core tests")
+            core_env = core_test_environment(test_env, profile_fixture_dir)
+            run_tests(ROOT, "pgdog", ["--bin", "pgdog"], "core", core_env)
     except Exception as error:
         print(f"FAIL: {error}", file=sys.stderr)
         for endpoint in ("read", "write"):

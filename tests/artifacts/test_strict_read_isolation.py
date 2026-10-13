@@ -1,11 +1,14 @@
 """Safety contracts for the isolated strict-read integration fixture."""
 import importlib.util
+import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
 from contextlib import redirect_stderr
 from unittest.mock import patch
 
@@ -23,6 +26,14 @@ def load_helper():
 
 
 class StrictReadFixtureIsolationTests(unittest.TestCase):
+    def test_failure_diagnostic_preserves_stdout_assertions_beside_long_warnings(self):
+        fixture = load_helper()
+        failed = subprocess.CompletedProcess(["cargo"], 101, "INTENDED_TEST_FAILURE", "warning " * 1000)
+        with patch.object(fixture.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "INTENDED_TEST_FAILURE") as caught:
+                fixture.run_checked(["cargo"])
+        self.assertLess(len(str(caught.exception)), 5100)
+
     def test_docker_bootstrap_uses_private_stdin_and_cleans_owned_container_on_failure(self):
         fixture = load_helper()
         commands = []
@@ -239,6 +250,99 @@ class StrictReadFixtureIsolationTests(unittest.TestCase):
         self.assertEqual(env["PGDOG_STRICT_TEST_CONFIG"], "/private/config.json")
         self.assertNotIn("DATABASE_URL", env)
         self.assertNotIn("PGDOG_TEST_CONFIG_DIR", env)
+
+    def test_core_profile_fixtures_are_generated_owned_and_explicitly_passed_to_cargo(self):
+        fixture = load_helper()
+        calls = []
+
+        def fake_capture(command, *, env, **kwargs):
+            calls.append((command, env, kwargs))
+            self.assertEqual(command[:2], [sys.executable, str(ROOT / "scripts/capture_read_dependency_reference.py")])
+            output_dir = Path(command[command.index("--output-dir") + 1])
+            output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            captures = []
+            for major in (12, 18):
+                capture = {
+                    "postgres_major": major,
+                    "source_image": fixture.pinned_postgres_image(major),
+                    "server_version": f"{major}.22",
+                    "server_version_num": major * 10000 + 22,
+                    "platform": "linux/arm64",
+                    "capture_id": f"owned-{major}",
+                    "tables": {},
+                }
+                path = output_dir / f"reference-extended-pg{major}.json"
+                encoded = json.dumps(capture).encode()
+                path.write_bytes(encoded)
+                captures.append({"major": major, "path": str(path),
+                                 "sha256": hashlib.sha256(encoded).hexdigest(),
+                                 "catalog_rows": 1, "extension_members": 1})
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(captures), stderr="")
+
+        def fake_writer(reference, output_dir):
+            self.assertIn(reference["postgres_major"], (12, 18))
+            self.assertTrue(output_dir.is_dir())
+            variants = []
+            for suffix, enabled in (("core", []), ("pg-trgm", ["pg_trgm"]),
+                                    ("btree-gist", ["btree_gist"]),
+                                    ("both", ["btree_gist", "pg_trgm"])):
+                path = output_dir / f"read-dependency-profile-pg{reference['postgres_major']}-{suffix}.json"
+                artifact = {
+                    "format": "pgdog-read-dependency-profile/v2",
+                    "enabled_extensions": enabled,
+                    "provenance": {
+                        "postgres_major": reference["postgres_major"],
+                        "source_image": reference["source_image"],
+                    },
+                }
+                encoded = json.dumps(artifact).encode()
+                path.write_bytes(encoded)
+                variants.append({"path": str(path), "sha256": hashlib.sha256(encoded).hexdigest(),
+                                 "enabled_extensions": enabled, "catalog_row_counts": {"pg_type": 1}})
+            return variants
+
+        with tempfile.TemporaryDirectory(prefix="strict-profile-test-") as directory:
+            temporary = Path(directory)
+            with patch.object(fixture, "run_checked", side_effect=fake_capture), \
+                    patch.object(fixture, "write_profile_variants", side_effect=fake_writer):
+                fixture_dir = fixture.prepare_profile_fixtures(
+                    temporary,
+                    {"PATH": "/bin", "PGDOG_PROFILE_TEST_FIXTURE_DIR": "/ambient/profile", "DATABASE_URL": "wrong"},
+                )
+                self.assertEqual(fixture_dir, temporary / "profile-fixtures")
+                self.assertEqual(len(calls), 1)
+                self.assertNotIn("PGDOG_PROFILE_TEST_FIXTURE_DIR", calls[0][1])
+                self.assertNotIn("DATABASE_URL", calls[0][1])
+                core_env = fixture.core_test_environment(
+                    {"PGDOG_STRICT_TEST_CONFIG": "generated", "PGDOG_PROFILE_TEST_FIXTURE_DIR": "/ambient/profile"},
+                    fixture_dir,
+                )
+                self.assertEqual(len(list((fixture_dir / "variants").glob("*.json"))), 8)
+        self.assertEqual(core_env["PGDOG_PROFILE_TEST_FIXTURE_DIR"], str(fixture_dir.resolve()))
+        self.assertEqual(core_env["PGDOG_STRICT_TEST_CONFIG"], "generated")
+
+    def test_core_test_environment_rejects_missing_owned_profile_directory(self):
+        fixture = load_helper()
+        with tempfile.TemporaryDirectory(prefix="strict-profile-missing-") as directory:
+            with self.assertRaisesRegex(RuntimeError, "owned profile fixtures"):
+                fixture.core_test_environment({}, Path(directory) / "missing")
+
+    def test_core_cargo_test_requires_and_receives_owned_profile_environment(self):
+        fixture = load_helper()
+        with self.assertRaisesRegex(RuntimeError, "mandatory for core Cargo tests"):
+            fixture.run_tests(ROOT, "pgdog", ["--bin", "pgdog"], "core", {})
+
+        calls = []
+        env = {"PGDOG_PROFILE_TEST_FIXTURE_DIR": "/private/owned/profiles"}
+        def checked(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0, stdout="test result: ok. 1 passed; 0 failed\n")
+
+        with patch.object(fixture, "list_tests", return_value=["read_policy::test"]), \
+                patch.object(fixture, "run_checked", side_effect=checked):
+            fixture.run_tests(ROOT, "pgdog", ["--bin", "pgdog"], "core", env)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["env"], env)
 
     def test_cleanup_targets_only_recorded_processes_and_container_ids(self):
         fixture = load_helper()

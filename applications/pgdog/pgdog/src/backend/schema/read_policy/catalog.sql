@@ -38,7 +38,7 @@ SELECT a.attrelid, a.attname, a.atttypid, tn.nspname, t.typname,
        t.typinput::pg_catalog.oid, t.typoutput::pg_catalog.oid,
        t.typreceive::pg_catalog.oid, t.typsend::pg_catalog.oid,
        a.attnotnull, a.attgenerated::pg_catalog.text,
-       a.attidentity::pg_catalog.text, a.attcollation
+       a.attidentity::pg_catalog.text, a.attcollation, a.attnum, a.atttypmod, a.attndims
 FROM pg_catalog.pg_attribute AS a
 JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid
 JOIN pg_catalog.pg_namespace AS tn ON tn.oid = t.typnamespace
@@ -129,8 +129,16 @@ SELECT 'pg_type'::pg_catalog.text, t.oid::pg_catalog.text,
 FROM pg_catalog.pg_type AS t WHERE t.oid = ANY(pg_catalog.string_to_array($1, ',')::pg_catalog.oid[])
 UNION ALL
 SELECT 'pg_proc', p.oid::pg_catalog.text,
-       (pg_catalog.jsonb_set(pg_catalog.to_jsonb(p), '{oid}', pg_catalog.to_jsonb(p.oid), true)
+       (pg_catalog.jsonb_set(
+            pg_catalog.to_jsonb(p) - 'prosrc' - 'prosqlbody',
+            '{oid}', pg_catalog.to_jsonb(p.oid), true)
         || pg_catalog.jsonb_build_object(
+            'prosrc', CASE WHEN p.prosrc IS NULL THEN 'null'::pg_catalog.jsonb
+                ELSE pg_catalog.jsonb_build_object('sha256_utf8',
+                    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex')) END,
+            'prosqlbody', CASE WHEN p.prosqlbody IS NULL THEN 'null'::pg_catalog.jsonb
+                ELSE pg_catalog.jsonb_build_object('sha256_utf8',
+                    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosqlbody::pg_catalog.text, 'UTF8')), 'hex')) END,
             'prosupport', pg_catalog.to_jsonb(p.prosupport::pg_catalog.oid),
             'proargtypes', pg_catalog.to_jsonb(p.proargtypes::pg_catalog.text),
             'proallargtypes', pg_catalog.to_jsonb(p.proallargtypes::pg_catalog.text),
