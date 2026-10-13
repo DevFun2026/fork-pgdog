@@ -39,16 +39,16 @@ exact excerpt bytes, so any source change requires refreshing this context.
         "end": 73
       },
       {
-        "start": 193,
-        "end": 204
+        "start": 192,
+        "end": 203
       },
       {
-        "start": 206,
-        "end": 216
+        "start": 205,
+        "end": 215
       },
       {
-        "start": 218,
-        "end": 227
+        "start": 217,
+        "end": 226
       }
     ]
   },
@@ -164,7 +164,7 @@ pub(crate) struct TypeIo {
     }
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:193-204
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:192-203
 
 ```rust
     pub(crate) fn scalar_type(&self, oid: u32) -> bool {
@@ -181,7 +181,7 @@ pub(crate) struct TypeIo {
     }
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:206-216
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:205-215
 
 ```rust
     pub(crate) fn trusted_type_io(&self, oid: u32, name: &str, io: TypeIo, collation: u32) -> bool {
@@ -197,7 +197,7 @@ pub(crate) struct TypeIo {
     }
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:218-227
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:217-226
 
 ```rust
     pub(crate) fn type_oid(&self, name: &str) -> Option<u32> {

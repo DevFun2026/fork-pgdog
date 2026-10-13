@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>acedb323a9f6</b></span><span>2026-10-13T10:57:22+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>54f44d413e1a</b></span><span>2026-10-13T10:58:46+07:00</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV acedb323a9f6</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 54f44d413e1a</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">12</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">20</span><span class="k">relationships</span></div><div class="fact"><span class="v">17</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -909,16 +909,16 @@ superseded-by: null</pre></details>
         &quot;end&quot;: 73
       },
       {
-        &quot;start&quot;: 193,
-        &quot;end&quot;: 204
+        &quot;start&quot;: 192,
+        &quot;end&quot;: 203
       },
       {
-        &quot;start&quot;: 206,
-        &quot;end&quot;: 216
+        &quot;start&quot;: 205,
+        &quot;end&quot;: 215
       },
       {
-        &quot;start&quot;: 218,
-        &quot;end&quot;: 227
+        &quot;start&quot;: 217,
+        &quot;end&quot;: 226
       }
     ]
   },
@@ -1020,7 +1020,7 @@ superseded-by: null</pre></details>
                     .is_some_and(|rows| !rows.is_empty())
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:193-204</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:192-203</h4>
 <pre><code>    pub(crate) fn scalar_type(&amp;self, oid: u32) -&gt; bool {
         const PUBLIC_SCALARS: &amp;[u32] = &amp;[
             16, 17, 20, 21, 23, 25, 700, 701, 1042, 1043, 1082, 1083, 1114, 1184, 1186, 1266, 1700,
@@ -1033,7 +1033,7 @@ superseded-by: null</pre></details>
                     &amp;&amp; field_number(row, &quot;typbasetype&quot;) == Some(0)
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:206-216</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:205-215</h4>
 <pre><code>    pub(crate) fn trusted_type_io(&amp;self, oid: u32, name: &amp;str, io: TypeIo, collation: u32) -&gt; bool {
         self.scalar_type(oid)
             &amp;&amp; self.row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
@@ -1045,7 +1045,7 @@ superseded-by: null</pre></details>
                     &amp;&amp; field_number(row, &quot;typcollation&quot;) == Some(collation)
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:218-227</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:217-226</h4>
 <pre><code>    pub(crate) fn type_oid(&amp;self, name: &amp;str) -&gt; Option&lt;u32&gt; {
         self.table(&quot;pg_type&quot;)?
             .iter()
@@ -1436,7 +1436,7 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-13T10:57:22+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-13T10:58:46+07:00</span></footer>
 </main>
 </div>
 <script>(() => {
