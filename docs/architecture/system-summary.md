@@ -1,12 +1,12 @@
 # PgDog fork: system architecture
 
-Generated: 2026-10-13T10:58:46+07:00 | Commit: 54f44d413e1a
+Generated: 2026-10-13T13:56:33+07:00 | Commit: 3ae8a3553664
 
 ## Components
 
 - **artifact-registry** — Owned GHCR Artifacts (`registry`): Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores immutable versioned multi-platform images and digest-paired charts only after authorized manual publication and exact pull-back verification. [boundary: external-registry]
 - **canonical-core** — Canonical Agent Core (`policy-and-skills`): Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed. [boundary: local-repository]
-- **ci-wrappers** — CI Wrappers (`automation`): Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance. [boundary: hosted-ci]
+- **ci-wrappers** — CI Wrappers (`automation`): Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Publication builds retain paired PG12/PG18 smoke JSON separately from the exact native OCI input archives. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance. [boundary: hosted-ci]
 - **container-builder** — Fork Container Builder (`build-tooling`): Builds applications/pgdog/Dockerfile from pinned Ubuntu/Rust bases with Cargo.lock and plugin; excludes Git/private context. Produces native OCI archives verified before publication. [boundary: hosted-ci]
 - **docs-generator** — Documentation Generator (`generator`): Validates the canonical project model and generates deterministic architecture views. [boundary: local-repository]
 - **helm-release** — Fork Helm Release (`deployment-tooling`): Standalone charts/fork-pgdog creates a stateless Linux Deployment, configcheck initContainer, PostgreSQL-only Service and token-disabled ServiceAccount. No database or durable 2PC WAL provisioned. [boundary: operator-to-cluster]

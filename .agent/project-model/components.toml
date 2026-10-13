@@ -14,7 +14,7 @@ trust_boundary = "local-repository"
 id = "ci-wrappers"
 name = "CI Wrappers"
 kind = "automation"
-responsibility = "Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance."
+responsibility = "Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Publication builds retain paired PG12/PG18 smoke JSON separately from the exact native OCI input archives. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance."
 trust_boundary = "hosted-ci"
 
 [[components]]

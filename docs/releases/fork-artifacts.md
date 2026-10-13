@@ -189,6 +189,13 @@ main, with the same source SHA and versions. The approved owner must dispatch
 and approve the protected packages deployment. Withdrawal, edited approval,
 changed CI attempts, changed main or existing registry tags block publication.
 
+Publication builds retain the bounded PG18 and PG12 strict-read Helm smoke JSON
+reports in a separate per-architecture artifact. The native publication artifact
+continues to contain only its OCI tar archive and image metadata; smoke reports
+are not admitted as extra publisher inputs. The build still requires both smoke
+profiles to pass before producing eligible bytes. Report retention does not
+authorize publication or replace review, scanners, receipts or environment approval.
+
 Previous quality runs provide validation evidence, not reusable OCI image bytes.
 The package workflow builds and tests fresh amd64 and arm64 archives and publishes
 those exact bytes. Record verified image/chart digests only after signing,
