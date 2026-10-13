@@ -4,6 +4,11 @@
 
 - Rust follows `applications/pgdog/rust-toolchain.toml` (1.96, rustfmt, clippy); Cargo uses `--locked`.
 - Python 3.11+, PostgreSQL 18 client/server, Toxiproxy 2.12.0 and nextest 0.9.78.
+- Strict-read compatibility requires both pinned PostgreSQL 12 and 18 fixtures.
+  The full gate runs all/default and transaction/parser-off/full-prepared profiles
+  for each major. Native local legacy/PG18 testing still uses PostgreSQL 18; its
+  PG12 strict profiles use the owned Docker fixture. Each native artifact also
+  requires separate paired Kind smoke on PG12 and PG18.
 - PostgreSQL and Toxiproxy must be dedicated test instances. Upstream
   `applications/pgdog/integration/setup.sh` drops test databases and roles. Never point it at a
   shared or production database. Tests use synthetic credentials `pgdog`.

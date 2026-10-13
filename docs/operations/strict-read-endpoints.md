@@ -6,15 +6,19 @@ the write release uses the default `unrestricted` policy. Each has its own Servi
 process and pools. Two DNS aliases pointing to one unrestricted listener do not
 provide this boundary: PostgreSQL startup does not convey the destination DNS name.
 
-This change has no published image/chart version yet. Image/chart `0.1.0` cannot
-run strict mode. Validate the exact new build and complete the repository's review
-and release gates before using it with application traffic.
+Published image/chart `0.2.0` supports strict mode on PostgreSQL 18. PostgreSQL 12
+support is the `0.2.1` candidate and requires its own completed review and release
+evidence; this source document alone does not establish publication. Image/chart
+`0.1.0` cannot run strict mode.
 
 ## Database and SQL contract
 
-Strict mode targets PostgreSQL 18 and compares its supported catalog objects to
-the pinned registry in `backend/schema/read_policy/registry-pg18.json`. A different
-major version or a catalog mismatch is a denial, including queries without FROM.
+Strict mode supports PostgreSQL 12 and 18 through separate pinned registries in
+`backend/schema/read_policy/registry-pg12.json` and `registry-pg18.json`. The actual
+backend version selects an immutable registry for that snapshot and its resolver;
+there is no process-global active major. Other majors or a catalog mismatch deny,
+including queries without FROM. A provider-specific or minor-version catalog
+difference does not authorize an automatic registry refresh.
 The PostgreSQL server binary, built-in implementations, DBAs and controlled schema
 epoch are trusted. This is not a sandbox for arbitrary native extensions or a
 malicious DBA.
@@ -75,6 +79,12 @@ aggregation. An added overload or support member is a denial until reviewed.
 The offline `scripts/read_policy_registry.py` tool reproduces reviewed metadata
 from a pinned fixture capture; never refresh the registry from an application
 database merely to make a denial disappear.
+
+The PG12 reference uses official PostgreSQL 12.22/bookworm, pinned to
+`postgres:12.22-bookworm@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c`.
+PG12 has no `pg_type.typsubscript` or expression statistics `stxexprs` column; its
+fixed catalog query uses the PG12 representation while retaining full-row and
+dependency closure checks. The accepted SQL/function/object surface is unchanged.
 
 All simple-query batch statements are admitted before any is forwarded. A trailing
 write rejects the whole batch. The process also opens and acknowledges a backend
@@ -155,15 +165,18 @@ schema for you.
 
 The disposable fixture runner uses loopback ports, UUID Docker resources and
 synthetic roles; it never uses an ambient DATABASE_URL/KUBECONFIG. It requires the
-pinned PostgreSQL 18 fixture image locally. Build the current binary, then run:
+pinned PostgreSQL fixture images locally. Build the current binary, then run both
+profiles for each supported major:
 
 ```sh
 ./scripts/pgdog cargo build --locked -p pgdog --bin pgdog
-bash scripts/strict-read-tests.sh \
-  --pgdog-bin "$PWD/applications/pgdog/target/debug/pgdog" --phase all
-bash scripts/strict-read-tests.sh \
-  --pgdog-bin "$PWD/applications/pgdog/target/debug/pgdog" --phase protocol \
-  --pooler-mode transaction --query-parser off --prepared-statements full
+for major in 12 18; do
+  bash scripts/strict-read-tests.sh --postgres-major "$major" \
+    --pgdog-bin "$PWD/applications/pgdog/target/debug/pgdog" --phase all
+  bash scripts/strict-read-tests.sh --postgres-major "$major" \
+    --pgdog-bin "$PWD/applications/pgdog/target/debug/pgdog" --phase protocol \
+    --pooler-mode transaction --query-parser off --prepared-statements full
+done
 ```
 
 `all` runs current unrestricted DML regressions, strict raw-wire/driver tests and

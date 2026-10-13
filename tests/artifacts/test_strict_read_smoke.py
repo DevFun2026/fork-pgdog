@@ -23,7 +23,7 @@ class StrictReadSmokeIsolationTests(unittest.TestCase):
         self.assertEqual(command[command.index("-h") + 1], "127.0.0.1")
         self.assertEqual(command[command.index("-p") + 1], "5432")
 
-    def _run_isolated_harness(self, temp, *, kind_create_fails=False):
+    def _run_isolated_harness(self, temp, *, kind_create_fails=False, postgres_major=None):
         fake_bin = temp / "bin"
         fake_bin.mkdir()
         calls = temp / "calls.jsonl"
@@ -63,17 +63,46 @@ class StrictReadSmokeIsolationTests(unittest.TestCase):
         fixtures.mkdir(parents=True)
         for filename in ("postgres.yaml", "kind.yaml"):
             shutil.copy2(ROOT / "tests/artifacts/kubernetes" / filename, fixtures / filename)
+        pg12_fixture = ROOT / "tests/artifacts/kubernetes/postgres-pg12.yaml"
+        if pg12_fixture.is_file():
+            shutil.copy2(pg12_fixture, fixtures / pg12_fixture.name)
+        command = ["bash", str(isolated_script), "--image", "fork-pgdog:strict-read-dev",
+                   "--chart", str(ROOT / "charts/fork-pgdog")]
+        if postgres_major is not None:
+            command += ["--postgres-major", str(postgres_major)]
         result = subprocess.run(
-            ["bash", str(isolated_script), "--image", "fork-pgdog:strict-read-dev",
-             "--chart", str(ROOT / "charts/fork-pgdog")],
+            command,
             env=env,
             text=True,
             capture_output=True,
             timeout=30,
             cwd=temp,
         )
-        recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+        recorded = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
         return result, existing, recorded
+
+    def test_pg12_smoke_selects_its_pinned_image_and_local_tag(self):
+        with tempfile.TemporaryDirectory(prefix="strict-read-pg12-smoke-") as directory:
+            result, existing, recorded = self._run_isolated_harness(
+                Path(directory), postgres_major=12
+            )
+            self.assertNotEqual(result.returncode, 0, "fake kubectl apply must fail")
+            self.assertEqual(existing.read_text(), "CURRENT USER CONFIG\n")
+            pulls = [call[2] for call in recorded if call[:2] == ["docker", "pull"]]
+            self.assertEqual(len(pulls), 1, "PG12 CLI must reach exactly its pinned pull")
+            self.assertTrue(pulls[0].startswith("postgres:12.22-bookworm@sha256:"))
+            load = next(call for call in recorded if call[:3] == ["kind", "load", "docker-image"])
+            self.assertIn("postgres:12-strict-read-smoke", load)
+            self.assertNotIn("postgres:18-strict-read-smoke", load)
+
+    def test_unknown_pg_major_denies_before_docker_or_cluster_access(self):
+        with tempfile.TemporaryDirectory(prefix="strict-read-unknown-pg-") as directory:
+            result, existing, recorded = self._run_isolated_harness(
+                Path(directory), postgres_major=17
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(recorded, [])
+            self.assertEqual(existing.read_text(), "CURRENT USER CONFIG\n")
 
     def test_owned_kind_failure_cleans_only_its_private_cluster(self):
         self.assertTrue(SCRIPT.is_file(), "paired strict-read smoke harness is missing")
@@ -137,7 +166,8 @@ class StrictReadSmokeIsolationTests(unittest.TestCase):
                          {("ubuntu-24.04", "amd64"), ("ubuntu-24.04-arm", "arm64")})
         uploads = [step["with"]["path"] for job in artifact["jobs"].values()
                    for step in job.get("steps", []) if "upload-artifact@" in step.get("uses", "")]
-        self.assertTrue(any("strict-read-helm-smoke.json" in path for path in uploads))
+        self.assertTrue(any("strict-read-helm-smoke*.json" in path for path in uploads),
+                        "native smoke evidence must retain both PG12 and PG18 reports")
         self.assertTrue(all(".agent" not in path for path in uploads))
 
         quality = yaml.load((ROOT / ".github/workflows/fork-quality.yml").read_text(),

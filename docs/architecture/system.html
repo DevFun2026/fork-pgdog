@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>7777863464e5</b></span><span>2026-10-12T16:35:55+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>54f44d413e1a</b></span><span>2026-10-13T10:58:46+07:00</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 7777863464e5</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 54f44d413e1a</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">12</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">20</span><span class="k">relationships</span></div><div class="fact"><span class="v">17</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -546,7 +546,7 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <text x="36" y="440" class="node-kind">adapter</text>
 <text x="36" y="459" class="node-boundary">provider-cli-process</text></g>
 </svg></div><figcaption>Repository development and verification. Arrows show relationships declared in the canonical model; details follow below.</figcaption></figure><ul class="relationships"><li><code>container-builder</code> → <code>artifact-registry</code><span>protected publish copies exact verified archives and pairs chart by digest</span></li><li><code>ci-wrappers</code> → <code>container-builder</code><span>builds/tests each native archive without write credentials</span></li><li><code>ci-wrappers</code> → <code>runtime</code><span>invokes repository-owned gates</span></li><li><code>sql-client</code> → <code>pgdog-proxy</code><span>authenticates and sends PostgreSQL protocol messages</span></li><li><code>canonical-core</code> → <code>runtime</code><span>defines policy and command contracts</span></li><li><code>docs-generator</code> → <code>canonical-core</code><span>reads canonical model and focused documentation</span></li><li><code>helm-release</code> → <code>kubernetes-pod</code><span>installs stateless hardened Deployment and configcheck</span></li><li><code>helm-release</code> → <code>artifact-registry</code><span>retrieves exact chart version and image digest after publication</span></li><li><code>read-manifest</code> → <code>strict-read-policy</code><span>binds immutable database/table upper bound and schema revision</span></li><li><code>release-owner</code> → <code>owner-release-receipt</code><span>approves exact canonical payload with retained original review identities</span></li><li><code>release-owner</code> → <code>ci-wrappers</code><span>binds explicit one-release exception and protected environment approval</span></li><li><code>owner-release-receipt</code> → <code>ci-wrappers</code><span>revalidates live GitHub authority, merge trees, Standard profiles and CI before writes</span></li><li><code>kubernetes-pod</code> → <code>pgdog-proxy</code><span>runs PgDog as PID 1 with SIGINT drain</span></li><li><code>pgdog-proxy</code> → <code>postgresql</code><span>opens backend connections and forwards queries</span></li><li><code>pgdog-proxy</code> → <code>strict-read-policy</code><span>strict process enters original-SQL gate before routing, rewrite or shared cache</span></li><li><code>review-engine</code> → <code>provider-adapters</code><span>runs approved packages inside an OS read sandbox</span></li><li><code>runtime</code> → <code>project-memory</code><span>validates lifecycle and privacy rules</span></li><li><code>runtime</code> → <code>review-engine</code><span>starts fail-closed review operations</span></li><li><code>operator-secrets</code> → <code>kubernetes-pod</code><span>mounts protected configuration/users/TLS read-only</span></li><li><code>strict-read-policy</code> → <code>postgresql</code><span>proves catalog on same acknowledged READ ONLY backend epoch before client preparation</span></li></ul></section>
-<section class="sheet" id="components"><div class="sheet-head"><h2><span class="section-number">03</span> Component responsibilities</h2><span class="sheet-num">components.toml</span></div><div class="layers"><article class="layer"><div><h3>Owned GHCR Artifacts</h3><code class="lpath">artifact-registry</code><span class="tag neutral">registry</span></div><div><p>Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores immutable versioned multi-platform images and digest-paired charts only after authorized manual publication and exact pull-back verification.</p><p class="boundary">Boundary: <code>external-registry</code></p></div></article><article class="layer"><div><h3>Fork Container Builder</h3><code class="lpath">container-builder</code><span class="tag neutral">build-tooling</span></div><div><p>Builds applications/pgdog/Dockerfile from pinned Ubuntu/Rust bases with Cargo.lock and plugin; excludes Git/private context. Produces native OCI archives verified before publication.</p><p class="boundary">Boundary: <code>hosted-ci</code></p></div></article><article class="layer"><div><h3>Fork Helm Release</h3><code class="lpath">helm-release</code><span class="tag neutral">deployment-tooling</span></div><div><p>Standalone charts/fork-pgdog creates a stateless Linux Deployment, configcheck initContainer, PostgreSQL-only Service and token-disabled ServiceAccount. No database or durable 2PC WAL provisioned.</p><p class="boundary">Boundary: <code>operator-to-cluster</code></p></div></article><article class="layer"><div><h3>Hardened PgDog Pod</h3><code class="lpath">kubernetes-pod</code><span class="tag neutral">container-runtime</span></div><div><p>Runs UID/GID 10001 with read-only root/mounts, bounded tmp, TCP liveness and backend-aware HTTP readiness, and image SIGINT with bounded drain. Verified locally in isolated Kind; production infrastructure remains operator-owned.</p><p class="boundary">Boundary: <code>cluster-workload</code></p></div></article><article class="layer"><div><h3>Operator Configuration and Secrets</h3><code class="lpath">operator-secrets</code><span class="tag neutral">external-configuration</span></div><div><p>Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management.</p><p class="boundary">Boundary: <code>cluster-secret-store</code></p></div></article><article class="layer"><div><h3>Source-bound Owner Release Receipt</h3><code class="lpath">owner-release-receipt</code><span class="tag neutral">authorization-evidence</span></div><div><p>Opt-in schema-3 receipt retains original single/partitioned review identities and Standard assessments; validates source/workflow merged PR parent/tree identity, live main, owner approval and four immutable CI witnesses. Drafts cannot authorize writes; the old signed and first-release paths remain unchanged.</p><p class="boundary">Boundary: <code>github-owner-to-protected-ci</code></p></div></article><article class="layer"><div><h3>PgDog Proxy</h3><code class="lpath">pgdog-proxy</code><span class="tag neutral">rust-service</span></div><div><p>Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import.</p><p class="boundary">Boundary: <code>proxy-process</code></p></div></article><article class="layer"><div><h3>PostgreSQL</h3><code class="lpath">postgresql</code><span class="tag neutral">database</span></div><div><p>Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup.</p><p class="boundary">Boundary: <code>database-process</code></p></div></article><article class="layer"><div><h3>Reviewed Read Manifest</h3><code class="lpath">read-manifest</code><span class="tag neutral">external-configuration</span></div><div><p>Closed TOML database aliases, exact ordinary-table names and schema revision; loaded and hashed once at process startup from a protected read-only ConfigMap. An upper bound for catalog proof, not permission inferred from names.</p><p class="boundary">Boundary: <code>operator-to-read-process</code></p></div></article><article class="layer"><div><h3>GitHub Release Owner</h3><code class="lpath">release-owner</code><span class="tag neutral">human-reviewer</span></div><div><p>Owns the historical first-release decision and explicitly source/version-bound GitHub release approvals. Numeric identity, unchanged canonical approval body, current admin permission and required packages reviewer are revalidated before publication and after environment approval. SSH clearance is never implied.</p><p class="boundary">Boundary: <code>authenticated-github-owner</code></p></div></article><article class="layer"><div><h3>PostgreSQL Client</h3><code class="lpath">sql-client</code><span class="tag neutral">client</span></div><div><p>Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data.</p><p class="boundary">Boundary: <code>client-process</code></p></div></article><article class="layer"><div><h3>Strict Read Enforcement</h3><code class="lpath">strict-read-policy</code><span class="tag neutral">authorization-boundary</span></div><div><p>Opt-in immutable process policy: bounds and admits original SQL, proves the selected PostgreSQL 18 catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/objects deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers.</p><p class="boundary">Boundary: <code>untrusted-client-to-protected-backend</code></p></div></article><article class="layer"><div><h3>Canonical Agent Core</h3><code class="lpath">canonical-core</code><span class="tag neutral">policy-and-skills</span></div><div><p>Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>CI Wrappers</h3><code class="lpath">ci-wrappers</code><span class="tag neutral">automation</span></div><div><p>Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance.</p><p class="boundary">Boundary: <code>hosted-ci</code></p></div></article><article class="layer"><div><h3>Documentation Generator</h3><code class="lpath">docs-generator</code><span class="tag neutral">generator</span></div><div><p>Validates the canonical project model and generates deterministic architecture views.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Project Memory</h3><code class="lpath">project-memory</code><span class="tag neutral">local-storage</span></div><div><p>Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Provider Adapters</h3><code class="lpath">provider-adapters</code><span class="tag neutral">adapter</span></div><div><p>Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles.</p><p class="boundary">Boundary: <code>provider-cli-process</code></p></div></article><article class="layer"><div><h3>Cross-Review Engine</h3><code class="lpath">review-engine</code><span class="tag neutral">orchestrator</span></div><div><p>Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Agent Runtime</h3><code class="lpath">runtime</code><span class="tag neutral">python-cli</span></div><div><p>Runs configuration, evidence, workflow, documentation, review, security, and release commands.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article></div></section>
+<section class="sheet" id="components"><div class="sheet-head"><h2><span class="section-number">03</span> Component responsibilities</h2><span class="sheet-num">components.toml</span></div><div class="layers"><article class="layer"><div><h3>Owned GHCR Artifacts</h3><code class="lpath">artifact-registry</code><span class="tag neutral">registry</span></div><div><p>Destination ghcr.io/devfun2026/fork-pgdog and charts/fork-pgdog. Stores immutable versioned multi-platform images and digest-paired charts only after authorized manual publication and exact pull-back verification.</p><p class="boundary">Boundary: <code>external-registry</code></p></div></article><article class="layer"><div><h3>Fork Container Builder</h3><code class="lpath">container-builder</code><span class="tag neutral">build-tooling</span></div><div><p>Builds applications/pgdog/Dockerfile from pinned Ubuntu/Rust bases with Cargo.lock and plugin; excludes Git/private context. Produces native OCI archives verified before publication.</p><p class="boundary">Boundary: <code>hosted-ci</code></p></div></article><article class="layer"><div><h3>Fork Helm Release</h3><code class="lpath">helm-release</code><span class="tag neutral">deployment-tooling</span></div><div><p>Standalone charts/fork-pgdog creates a stateless Linux Deployment, configcheck initContainer, PostgreSQL-only Service and token-disabled ServiceAccount. No database or durable 2PC WAL provisioned.</p><p class="boundary">Boundary: <code>operator-to-cluster</code></p></div></article><article class="layer"><div><h3>Hardened PgDog Pod</h3><code class="lpath">kubernetes-pod</code><span class="tag neutral">container-runtime</span></div><div><p>Runs UID/GID 10001 with read-only root/mounts, bounded tmp, TCP liveness and backend-aware HTTP readiness, and image SIGINT with bounded drain. Verified locally in isolated Kind; production infrastructure remains operator-owned.</p><p class="boundary">Boundary: <code>cluster-workload</code></p></div></article><article class="layer"><div><h3>Operator Configuration and Secrets</h3><code class="lpath">operator-secrets</code><span class="tag neutral">external-configuration</span></div><div><p>Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management.</p><p class="boundary">Boundary: <code>cluster-secret-store</code></p></div></article><article class="layer"><div><h3>Source-bound Owner Release Receipt</h3><code class="lpath">owner-release-receipt</code><span class="tag neutral">authorization-evidence</span></div><div><p>Opt-in schema-3 receipt retains original single/partitioned review identities and Standard assessments; validates source/workflow merged PR parent/tree identity, live main, owner approval and four immutable CI witnesses. Drafts cannot authorize writes; the old signed and first-release paths remain unchanged.</p><p class="boundary">Boundary: <code>github-owner-to-protected-ci</code></p></div></article><article class="layer"><div><h3>PgDog Proxy</h3><code class="lpath">pgdog-proxy</code><span class="tag neutral">rust-service</span></div><div><p>Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import.</p><p class="boundary">Boundary: <code>proxy-process</code></p></div></article><article class="layer"><div><h3>PostgreSQL</h3><code class="lpath">postgresql</code><span class="tag neutral">database</span></div><div><p>Executes forwarded queries. Strict-read verification requires isolated pinned PostgreSQL 12 and 18 fixtures; production infrastructure and actual icondo catalog compatibility remain operator validation.</p><p class="boundary">Boundary: <code>database-process</code></p></div></article><article class="layer"><div><h3>Reviewed Read Manifest</h3><code class="lpath">read-manifest</code><span class="tag neutral">external-configuration</span></div><div><p>Closed TOML database aliases, exact ordinary-table names and schema revision; loaded and hashed once at process startup from a protected read-only ConfigMap. An upper bound for catalog proof, not permission inferred from names.</p><p class="boundary">Boundary: <code>operator-to-read-process</code></p></div></article><article class="layer"><div><h3>GitHub Release Owner</h3><code class="lpath">release-owner</code><span class="tag neutral">human-reviewer</span></div><div><p>Owns the historical first-release decision and explicitly source/version-bound GitHub release approvals. Numeric identity, unchanged canonical approval body, current admin permission and required packages reviewer are revalidated before publication and after environment approval. SSH clearance is never implied.</p><p class="boundary">Boundary: <code>authenticated-github-owner</code></p></div></article><article class="layer"><div><h3>PostgreSQL Client</h3><code class="lpath">sql-client</code><span class="tag neutral">client</span></div><div><p>Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data.</p><p class="boundary">Boundary: <code>client-process</code></p></div></article><article class="layer"><div><h3>Strict Read Enforcement</h3><code class="lpath">strict-read-policy</code><span class="tag neutral">authorization-boundary</span></div><div><p>Opt-in immutable process policy: bounds and admits original SQL, selects a pinned PostgreSQL 12 or 18 registry per backend snapshot, proves the complete catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/functions/objects or catalog mismatches deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers.</p><p class="boundary">Boundary: <code>untrusted-client-to-protected-backend</code></p></div></article><article class="layer"><div><h3>Canonical Agent Core</h3><code class="lpath">canonical-core</code><span class="tag neutral">policy-and-skills</span></div><div><p>Defines provider-neutral policy, 21 core skills and four task-routed UX/UI skills, schemas, artifact templates, and lifecycle contracts. UX/UI references are read per phase and retain source notices; no external skill runtime is installed.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>CI Wrappers</h3><code class="lpath">ci-wrappers</code><span class="tag neutral">automation</span></div><div><p>Invokes repository-owned PR/manual quality gates, native image/chart validation and isolated Kubernetes smoke. Artifact writes require reviewed receipt and protected packages approval. An explicit first 0.1.0 release exception binds the approved owner comment, historical source review, current workflow review and successful GitHub CI; it never claims SSH clearance.</p><p class="boundary">Boundary: <code>hosted-ci</code></p></div></article><article class="layer"><div><h3>Documentation Generator</h3><code class="lpath">docs-generator</code><span class="tag neutral">generator</span></div><div><p>Validates the canonical project model and generates deterministic architecture views.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Project Memory</h3><code class="lpath">project-memory</code><span class="tag neutral">local-storage</span></div><div><p>Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Provider Adapters</h3><code class="lpath">provider-adapters</code><span class="tag neutral">adapter</span></div><div><p>Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles.</p><p class="boundary">Boundary: <code>provider-cli-process</code></p></div></article><article class="layer"><div><h3>Cross-Review Engine</h3><code class="lpath">review-engine</code><span class="tag neutral">orchestrator</span></div><div><p>Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article><article class="layer"><div><h3>Agent Runtime</h3><code class="lpath">runtime</code><span class="tag neutral">python-cli</span></div><div><p>Runs configuration, evidence, workflow, documentation, review, security, and release commands.</p><p class="boundary">Boundary: <code>local-repository</code></p></div></article></div></section>
 <section class="sheet" id="data-flows"><div class="sheet-head"><h2><span class="section-number">04</span> Data &amp; trust boundaries</h2><span class="sheet-num">data-flows.toml</span></div><p class="lede">Sensitive categories: database-credentials, project-source, query-results, review-package, sql-query. Declared categories: configuration, database-credentials, evidence-metadata, memory-record, project-source, query-results, review-package, sql-query.</p><div class="flow-grid"><article class="flow"><h3>backend-query</h3><p class="route"><code>pgdog-proxy</code> → <code>postgresql</code></p><p>database-credentials, sql-query</p><span class="tag neutral">proxy-to-database</span></article><article class="flow"><h3>backend-results</h3><p class="route"><code>postgresql</code> → <code>pgdog-proxy</code></p><p>query-results</p><span class="tag neutral">database-to-proxy</span></article><article class="flow"><h3>chart-image-deployment</h3><p class="route"><code>artifact-registry</code> → <code>helm-release</code></p><p>configuration, project-source</p><span class="tag neutral">registry-to-operator-cluster</span></article><article class="flow"><h3>ci-evidence</h3><p class="route"><code>ci-wrappers</code> → <code>runtime</code></p><p>configuration, evidence-metadata</p><span class="tag neutral">hosted-ci-to-repository</span></article><article class="flow"><h3>client-query</h3><p class="route"><code>sql-client</code> → <code>pgdog-proxy</code></p><p>database-credentials, sql-query</p><span class="tag neutral">client-to-proxy</span></article><article class="flow"><h3>client-results</h3><p class="route"><code>pgdog-proxy</code> → <code>sql-client</code></p><p>query-results</p><span class="tag neutral">proxy-to-client</span></article><article class="flow"><h3>documentation-model</h3><p class="route"><code>canonical-core</code> → <code>docs-generator</code></p><p>configuration</p><span class="tag neutral">local-repository</span></article><article class="flow"><h3>first-release-owner-approval</h3><p class="route"><code>release-owner</code> → <code>ci-wrappers</code></p><p>evidence-metadata</p><span class="tag neutral">github-owner-to-protected-ci</span></article><article class="flow"><h3>memory-checkpoint</h3><p class="route"><code>runtime</code> → <code>project-memory</code></p><p>memory-record</p><span class="tag neutral">local-private-storage</span></article><article class="flow"><h3>native-artifact-egress</h3><p class="route"><code>container-builder</code> → <code>artifact-registry</code></p><p>evidence-metadata, project-source</p><span class="tag neutral">protected-ci-to-registry</span></article><article class="flow"><h3>operator-config-mount</h3><p class="route"><code>operator-secrets</code> → <code>kubernetes-pod</code></p><p>configuration, database-credentials</p><span class="tag neutral">secret-store-to-workload</span></article><article class="flow"><h3>review-egress</h3><p class="route"><code>review-engine</code> → <code>provider-adapters</code></p><p>project-source, review-package</p><span class="tag neutral">local-to-provider-process</span></article><article class="flow"><h3>source-bound-owner-release-approval</h3><p class="route"><code>release-owner</code> → <code>owner-release-receipt</code></p><p>evidence-metadata</p><span class="tag neutral">github-owner-to-protected-ci</span></article><article class="flow"><h3>strict-catalog-proof</h3><p class="route"><code>postgresql</code> → <code>strict-read-policy</code></p><p>configuration, evidence-metadata</p><span class="tag neutral">database-catalog-to-query-proof</span></article><article class="flow"><h3>strict-manifest-load</h3><p class="route"><code>read-manifest</code> → <code>strict-read-policy</code></p><p>configuration</p><span class="tag neutral">operator-config-to-process-snapshot</span></article><article class="flow"><h3>strict-original-query</h3><p class="route"><code>pgdog-proxy</code> → <code>strict-read-policy</code></p><p>configuration, sql-query</p><span class="tag neutral">client-data-to-read-authorization</span></article><article class="flow"><h3>validated-owner-receipt-to-publish</h3><p class="route"><code>owner-release-receipt</code> → <code>ci-wrappers</code></p><p>evidence-metadata</p><span class="tag neutral">github-owner-to-protected-ci</span></article></div></section>
 <section class="sheet" id="environments"><div class="sheet-head"><h2><span class="section-number">05</span> Deployment environments</h2><span class="sheet-num">environments.toml</span></div><div class="environment-grid"><article class="environment"><h3>GHCR packages environment</h3><code>ghcr</code><p>Manual main-only package workflow consumes an owner-reviewed receipt. Schema 1 retains genuine signed clearance; schema 2 is the explicit PR #7 owner exception for source 09026eec and image/chart 0.1.0, with separate current workflow review and live CI validation. Protected packages approval gates writes/OIDC. The exception is recorded as waived SSH clearance, never as passed canonical security/release gates.</p></article><article class="environment"><h3>GitHub Actions</h3><code>github-actions</code><p>Pull-request or manual validation only; publishing is manual. GitHub-hosted Ubuntu 24.04 Rust/unit/integration CI and template runtime tests. Independent review needs approved local evidence; upstream-only Codecov and Bencher credentials are not required.</p></article><article class="environment"><h3>GitHub Pages</h3><code>github-pages</code><p>Public static architecture reference at https://devfun2026.github.io/fork-pgdog/. The architecture-pages workflow validates on PRs and publishes only after manual dispatch from main. It uploads only index.html and .nojekyll, not repository files or local evidence. First publication requires Actions-based Pages setup and a protected github-pages environment. This host has no database access or LLM runtime.</p></article><article class="environment"><h3>GitLab CI</h3><code>gitlab-ci</code><p>Merge-request or manual web pipelines only. Python 3.11 jobs invoke the same runtime commands and retain redacted failure evidence.</p></article><article class="environment"><h3>Operator Kubernetes</h3><code>kubernetes</code><p>Helm 3.8+/Kubernetes 1.28+ stable API target. Local Kind 0.33.0/Kubernetes 1.36.4 smoke with Helm 4.1.3 is verified; pinned Helm 3.19.0/native amd64+arm64 CI is authored and requires an actual run. Production network/TLS/Secret policy and durable 2PC storage remain external.</p></article><article class="environment"><h3>Local developer environment</h3><code>local</code><p>macOS with sandbox-exec or Linux/WSL with Bubblewrap, Python 3.11+, and optional authenticated provider CLIs.</p></article></div></section>
 <section class="sheet" id="architecture-docs"><div class="sheet-head"><h2><span class="section-number">06</span> Focused architecture documents</h2><span class="sheet-num">docs/architecture</span></div><details class="document"><summary>Components</summary><div class="document-body"><h3>Component responsibilities</h3>
@@ -814,6 +814,36 @@ superseded-by: null</pre></details>
 <tr><td>Lost cross-shard architecture reasoning</td><td>Explicit immutable integration contracts, complete scope and all outputs; reviewer must reject insufficient context.</td></tr>
 </tbody></table></div>
 <p>Residual risk: model reviews remain fallible; safe byte coverage does not itself prove SQL correctness. Integration context selection requires manager judgment, and provider findings still need reproduction/adjudication. Unknown or oversized record formats deliberately block rather than degrade review completeness.</p></div></details>
+<details class="document"><summary>Pg12 Registry Provenance</summary><div class="document-body"><h3>PostgreSQL 12 strict-read reference</h3>
+<p>The candidate registry was seeded offline from a complete catalog capture of an owned official PostgreSQL 12.22/bookworm container. No icondo or shared database was queried. The reference container had no published ports and <code>--network none</code>; its private initialization credential was not included in the capture. The owned container was removed after capture.</p>
+<div class="table-wrap"><table><thead><tr><th>Identity</th><th>Captured value</th></tr></thead><tbody>
+<tr><td>Official image index</td><td><code>postgres:12.22-bookworm@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c</code></td></tr>
+<tr><td>Actual server</td><td><code>12.22 (Debian 12.22-1.pgdg120+1)</code></td></tr>
+<tr><td>Actual version number</td><td><code>120022</code></td></tr>
+<tr><td>Capture platform</td><td><code>linux/arm64</code></td></tr>
+<tr><td>Full reference capture SHA-256</td><td><code>fa5c43772da7ed9368046d2a845f6f61612aa1a3b8030390674c76252b4d6a3c</code></td></tr>
+<tr><td>Selected registry SHA-256</td><td><code>4e6474a721a9e4302c41439b06a6cad5f0f26ab38129edc72f189db1d84eef31</code></td></tr>
+<tr><td>Retained PG18 registry SHA-256</td><td><code>acf8a44a1dc1da47607cb4ca7ddff2959e1fab0917b95c1d31bfce87df1e837b</code></td></tr>
+</tbody></table></div>
+<p>Capture UUID and actual server/platform are embedded in the candidate registry. Local reference JSON, image index and capture helper are retained under ignored <code>.agent/.runs/pg12/</code>; those private operational files are not CI prerequisites.</p>
+<p>All eleven complete tables were captured with <code>to_jsonb</code> and the same explicit OID/regproc/text representations used by the fixed runtime catalog query. PG12&#x27;s absent <code>typsubscript</code> field was not fabricated. Candidate generation selects the existing scalar gate, scalar casts, candidate aggregate/operator overloads, btree/hash classes/families/support members and transitive I/O/support dependencies. Missing dependency rows deny generation. Selected rows are not permission for arbitrary functions/types; the local resolver still enforces the narrow SQL gate.</p>
+<div class="table-wrap"><table><thead><tr><th>Catalog</th><th>Full capture rows</th><th>Selected closure rows</th></tr></thead><tbody>
+<tr><td>pg_type</td><td>406</td><td>24</td></tr>
+<tr><td>pg_proc</td><td>2960</td><td>939</td></tr>
+<tr><td>pg_operator</td><td>770</td><td>530</td></tr>
+<tr><td>pg_aggregate</td><td>136</td><td>44</td></tr>
+<tr><td>pg_cast</td><td>216</td><td>62</td></tr>
+<tr><td>pg_am</td><td>7</td><td>2</td></tr>
+<tr><td>pg_collation</td><td>813</td><td>3</td></tr>
+<tr><td>pg_opclass</td><td>128</td><td>42</td></tr>
+<tr><td>pg_opfamily</td><td>107</td><td>30</td></tr>
+<tr><td>pg_amop</td><td>715</td><td>210</td></tr>
+<tr><td>pg_amproc</td><td>447</td><td>108</td></tr>
+</tbody></table></div>
+<p>Offline regeneration from this full reference is:</p>
+<pre><code>python3 scripts/read_policy_registry.py --postgres-major 12 \
+  --seed-reference .agent/.runs/pg12/reference-pg12.json --output /tmp/registry-pg12.json</code></pre>
+<p>The capture establishes provenance of the reference data. It does not establish passing runtime, protocol, managed-provider, minor-version or deployment tests. Those require their own fresh evidence. Never refresh a registry from application catalog rows merely to make a policy denial disappear.</p></div></details>
 <details class="document"><summary>Residual Risks</summary><div class="document-body"><h3>Residual Risks</h3>
 <h4>Strict read endpoint delta</h4>
 <ul>
@@ -858,59 +888,79 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>References: <a href="https://owasp.org/projects/asvs" rel="noreferrer">https://owasp.org/projects/asvs</a>, <a href="https://owaspsamm.org/model/" rel="noreferrer">https://owaspsamm.org/model/</a>, and <a href="https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html" rel="noreferrer">https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html</a>.</p></div></details>
 <details class="document"><summary>Strict Read Registry Review Context</summary><div class="document-body"><h3>Source-bound registry review context</h3>
-<p>This supplemental context links the pinned PostgreSQL catalog snapshot to the strict endpoint&#x27;s type gates. Catalog rows are not an allowlist for every function or operator they describe. The <code>PUBLIC_SCALARS</code> list excludes <code>inet</code> (OID 869) and <code>tid</code> (OID 27); parameter, cast, result and relation-column checks use the same type gate. The snapshot also retains unsupported geometric and internal catalog rows; those rows are not authorized operations.</p>
+<p>This supplemental context links the separately pinned PostgreSQL 12/18 catalog snapshots to the strict endpoint&#x27;s type gates. Catalog rows are not an allowlist for every function or operator they describe. The <code>PUBLIC_SCALARS</code> list excludes <code>inet</code> (OID 869) and <code>tid</code> (OID 27); parameter, cast, result and relation-column checks use the same type gate. The snapshot also retains unsupported geometric and internal catalog rows; those rows are not authorized operations.</p>
 <p>SQL admission checks structured TypeName components against exact built-in names before catalog resolution. A quoted single identifier containing a dot is rejected; two separately qualified pg_catalog/type components remain valid. The resolver helper receives an exact base identifier and does not reparse it. Parameter references are held in a BTreeSet, so last() is the maximum index regardless of AST traversal order.</p>
 <p>The complete implementation remains in the review&#x27;s full diff and child ranges; these excerpts supplement that review rather than replace its source coverage. Each entry below binds a full source file SHA-256 and inclusive line ranges. <code>test_registry_review_context.py</code> checks both the complete source hashes and the exact excerpt bytes, so any source change requires refreshing this context.</p>
 <pre><code>[
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs&quot;,
-    &quot;sha256&quot;: &quot;ce91c6212b0db6c06c6bd5594341fc8ec28d54062211e3b688c60bc1521be31a&quot;,
+    &quot;sha256&quot;: &quot;4132a80e4a4edf26456ea4d327c1c9b832ec27440052b2ff5b714a3212dffe02&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 190,
-        &quot;end&quot;: 232
+        &quot;start&quot;: 31,
+        &quot;end&quot;: 36
+      },
+      {
+        &quot;start&quot;: 41,
+        &quot;end&quot;: 53
+      },
+      {
+        &quot;start&quot;: 59,
+        &quot;end&quot;: 73
+      },
+      {
+        &quot;start&quot;: 192,
+        &quot;end&quot;: 203
+      },
+      {
+        &quot;start&quot;: 205,
+        &quot;end&quot;: 215
+      },
+      {
+        &quot;start&quot;: 217,
+        &quot;end&quot;: 226
       }
     ]
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs&quot;,
-    &quot;sha256&quot;: &quot;6c59b7895e998ee9d0717f7250791b2fb0d871846ab49ed8671be469917729ed&quot;,
+    &quot;sha256&quot;: &quot;fec51b7c5708f16c0cece3223d0da0b62fba0ed6c6f17986f7db39078cac8819&quot;,
     &quot;ranges&quot;: [
       {
         &quot;start&quot;: 31,
         &quot;end&quot;: 89
       },
       {
-        &quot;start&quot;: 119,
-        &quot;end&quot;: 126
+        &quot;start&quot;: 99,
+        &quot;end&quot;: 125
       },
       {
-        &quot;start&quot;: 230,
-        &quot;end&quot;: 253
+        &quot;start&quot;: 245,
+        &quot;end&quot;: 259
       }
     ]
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs&quot;,
-    &quot;sha256&quot;: &quot;34e8f55f0047a7f0832ce52bf0e137f094229273bcc4200ec2f8f5b510f8b3ab&quot;,
+    &quot;sha256&quot;: &quot;0f874f4e9be0ae8dfbf5a5f9860c90f7164f3aad67f4a040593a3af3494a71c1&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 114,
-        &quot;end&quot;: 134
+        &quot;start&quot;: 115,
+        &quot;end&quot;: 135
       }
     ]
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs&quot;,
-    &quot;sha256&quot;: &quot;d49c48e41df5d42fbac3b0303d0ff6a077c5d53f46ad04c5265e27e5d4f89506&quot;,
+    &quot;sha256&quot;: &quot;bdb4f958b8b7c20f8e41fabcf00d846b64f5f0962a9dccb1468612328fc04165&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 339,
-        &quot;end&quot;: 349
+        &quot;start&quot;: 417,
+        &quot;end&quot;: 443
       },
       {
-        &quot;start&quot;: 466,
-        &quot;end&quot;: 472
+        &quot;start&quot;: 447,
+        &quot;end&quot;: 467
       }
     ]
   },
@@ -933,50 +983,79 @@ superseded-by: null</pre></details>
     ]
   }
 ]</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:190-232</h4>
-<pre><code>pub(crate) fn scalar_type(oid: u32) -&gt; bool {
-    const PUBLIC_SCALARS: &amp;[u32] = &amp;[
-        16, 17, 20, 21, 23, 25, 700, 701, 1042, 1043, 1082, 1083, 1114, 1184, 1186, 1266, 1700,
-        2950,
-    ];
-    PUBLIC_SCALARS.contains(&amp;oid)
-        &amp;&amp; row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
-            field_number(row, &quot;typnamespace&quot;) == Some(11)
-                &amp;&amp; row.get(&quot;typtype&quot;).and_then(Value::as_str) == Some(&quot;b&quot;)
-                &amp;&amp; field_number(row, &quot;typbasetype&quot;) == Some(0)
-        })
-}
-
-pub(crate) fn trusted_type_io(
-    oid: u32,
-    name: &amp;str,
-    input: u32,
-    output: u32,
-    receive: u32,
-    send: u32,
-    collation: u32,
-) -&gt; bool {
-    scalar_type(oid)
-        &amp;&amp; row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
-            row.get(&quot;typname&quot;).and_then(Value::as_str) == Some(name)
-                &amp;&amp; field_number(row, &quot;typinput&quot;) == Some(input)
-                &amp;&amp; field_number(row, &quot;typoutput&quot;) == Some(output)
-                &amp;&amp; field_number(row, &quot;typreceive&quot;) == Some(receive)
-                &amp;&amp; field_number(row, &quot;typsend&quot;) == Some(send)
-                &amp;&amp; field_number(row, &quot;typcollation&quot;) == Some(collation)
-        })
-}
-
-pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
-    table(&quot;pg_type&quot;)?
-        .iter()
-        .find(|row| {
-            row.get(&quot;typname&quot;).and_then(Value::as_str) == Some(name)
-                &amp;&amp; field_number(row, &quot;typnamespace&quot;) == Some(11)
-                &amp;&amp; field_number(row, &quot;oid&quot;).is_some_and(scalar_type)
-        })
-        .and_then(|row| field_number(row, &quot;oid&quot;))
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:31-36</h4>
+<pre><code>pub(crate) struct TypeIo {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) receive: u32,
+    pub(crate) send: u32,
 }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:41-53</h4>
+<pre><code>    pub(crate) fn for_major(major: u32) -&gt; Option&lt;Self&gt; {
+        let data = match major {
+            12 =&gt; REGISTRY_PG12
+                .get_or_init(|| serde_json::from_str(REGISTRY_PG12_JSON).ok())
+                .as_ref()?,
+            18 =&gt; REGISTRY_PG18
+                .get_or_init(|| serde_json::from_str(REGISTRY_PG18_JSON).ok())
+                .as_ref()?,
+            _ =&gt; return None,
+        };
+        let registry = Self { major, data };
+        registry.is_complete().then_some(registry)
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:59-73</h4>
+<pre><code>    fn is_complete(&amp;self) -&gt; bool {
+        self.data.get(&quot;postgres_major&quot;).and_then(Value::as_u64) == Some(self.major.into())
+            &amp;&amp; self
+                .data
+                .get(&quot;source_image&quot;)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+            &amp;&amp; CATALOG_TABLES.iter().all(|name| {
+                self.data
+                    .get(&quot;tables&quot;)
+                    .and_then(|t| t.get(name))
+                    .and_then(Value::as_array)
+                    .is_some_and(|rows| !rows.is_empty())
+            })
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:192-203</h4>
+<pre><code>    pub(crate) fn scalar_type(&amp;self, oid: u32) -&gt; bool {
+        const PUBLIC_SCALARS: &amp;[u32] = &amp;[
+            16, 17, 20, 21, 23, 25, 700, 701, 1042, 1043, 1082, 1083, 1114, 1184, 1186, 1266, 1700,
+            2950,
+        ];
+        PUBLIC_SCALARS.contains(&amp;oid)
+            &amp;&amp; self.row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
+                field_number(row, &quot;typnamespace&quot;) == Some(11)
+                    &amp;&amp; row.get(&quot;typtype&quot;).and_then(Value::as_str) == Some(&quot;b&quot;)
+                    &amp;&amp; field_number(row, &quot;typbasetype&quot;) == Some(0)
+            })
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:205-215</h4>
+<pre><code>    pub(crate) fn trusted_type_io(&amp;self, oid: u32, name: &amp;str, io: TypeIo, collation: u32) -&gt; bool {
+        self.scalar_type(oid)
+            &amp;&amp; self.row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
+                row.get(&quot;typname&quot;).and_then(Value::as_str) == Some(name)
+                    &amp;&amp; field_number(row, &quot;typinput&quot;) == Some(io.input)
+                    &amp;&amp; field_number(row, &quot;typoutput&quot;) == Some(io.output)
+                    &amp;&amp; field_number(row, &quot;typreceive&quot;) == Some(io.receive)
+                    &amp;&amp; field_number(row, &quot;typsend&quot;) == Some(io.send)
+                    &amp;&amp; field_number(row, &quot;typcollation&quot;) == Some(collation)
+            })
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:217-226</h4>
+<pre><code>    pub(crate) fn type_oid(&amp;self, name: &amp;str) -&gt; Option&lt;u32&gt; {
+        self.table(&quot;pg_type&quot;)?
+            .iter()
+            .find(|row| {
+                row.get(&quot;typname&quot;).and_then(Value::as_str) == Some(name)
+                    &amp;&amp; field_number(row, &quot;typnamespace&quot;) == Some(11)
+                    &amp;&amp; field_number(row, &quot;oid&quot;).is_some_and(|oid| self.scalar_type(oid))
+            })
+            .and_then(|row| field_number(row, &quot;oid&quot;))
+    }</code></pre>
 <h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:31-89</h4>
 <pre><code>pub(super) fn prove(
     admitted: &amp;AdmittedSql,
@@ -988,7 +1067,7 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
     if declared.len() &gt; MAX_DECLARED_PARAMETERS
         || declared
             .iter()
-            .any(|oid| *oid != 0 &amp;&amp; !registry::scalar_type(*oid))
+            .any(|oid| *oid != 0 &amp;&amp; !catalog.registry.scalar_type(*oid))
     {
         return Err(PolicyError::unsupported());
     }
@@ -1010,7 +1089,7 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
     let mut parameters = vec![None; highest.max(declared.len())];
     for (index, oid) in declared.iter().enumerate() {
         if *oid != 0 {
-            if !registry::scalar_type(*oid) {
+            if !catalog.registry.scalar_type(*oid) {
                 return Err(PolicyError::unsupported());
             }
             parameters[index] = Some(*oid);
@@ -1037,28 +1116,36 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
     }
     Ok(())
 }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:119-126</h4>
-<pre><code>    fn output(&amp;mut self, ty: Ty) -&gt; Result&lt;u32&gt; {
-        match self.known(ty) {
-            Some(oid) if registry::scalar_type(oid) =&gt; Ok(oid),
-            None if ty == Ty::Unknown =&gt; Ok(25),
-            _ =&gt; Err(PolicyError::unsupported()),
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:99-125</h4>
+<pre><code>    fn constrain(&amp;mut self, ty: Ty, target: u32, implicit: bool) -&gt; Result&lt;u32&gt; {
+        if !self.catalog.registry.scalar_type(target) {
+            return Err(PolicyError::unsupported());
+        }
+        match ty {
+            Ty::Parameter(index) if self.parameters[index].is_none() =&gt; {
+                self.parameters[index] = Some(target);
+                Ok(target)
+            }
+            _ =&gt; match self.known(ty) {
+                None if ty == Ty::Unknown =&gt; Ok(target),
+                Some(source)
+                    if source == target
+                        || self.catalog.registry.cast_allowed(source, target, implicit) =&gt;
+                {
+                    Ok(target)
+                }
+                _ =&gt; Err(PolicyError::unsupported()),
+            },
         }
     }
-    fn comparison(&amp;mut self, name: &amp;str, left: Ty, right: Ty) -&gt; Result&lt;u32&gt; {</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:230-253</h4>
-<pre><code>            Node::TypeCast(cast) =&gt; {
-                let target = cast.type_name().ok_or_else(PolicyError::unsupported)?;
-                if !target.array_bounds().is_empty() || target.pct_type {
-                    return Err(PolicyError::unsupported());
-                }
-                for modifier in target.typmods().iter() {
-                    if !matches!(modifier, Node::A_Const(c) if c.val().and_then(|v| v.numeric_value::&lt;i32&gt;()).is_some())
-                    {
-                        return Err(PolicyError::unsupported());
-                    }
-                }
-                let parts: Vec&lt;_&gt; = target
+    fn output(&amp;mut self, ty: Ty) -&gt; Result&lt;u32&gt; {
+        match self.known(ty) {
+            Some(oid) if self.catalog.registry.scalar_type(oid) =&gt; Ok(oid),
+            None if ty == Ty::Unknown =&gt; Ok(25),
+            _ =&gt; Err(PolicyError::unsupported()),
+        }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:245-259</h4>
+<pre><code>                let parts: Vec&lt;_&gt; = target
                     .names()
                     .iter()
                     .filter_map(|name| name.sval())
@@ -1067,13 +1154,14 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
                     [name] | [&quot;pg_catalog&quot;, name] =&gt; *name,
                     _ =&gt; return Err(PolicyError::unsupported()),
                 };
-                let target = registry::type_oid(name).ok_or_else(PolicyError::unsupported)?;
-                let source = self.expression(cast.arg(), scope)?;
-                self.constrain(source, target, false)?
-            }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:114-134</h4>
-<pre><code>impl ColumnRow {
-    pub(crate) fn is_supported(&amp;self) -&gt; bool {
+                let target = self
+                    .catalog
+                    .registry
+                    .type_oid(name)
+                    .ok_or_else(PolicyError::unsupported)?;
+                let source = self.expression(cast.arg(), scope)?;</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-135</h4>
+<pre><code>    pub(crate) fn is_supported(&amp;self, registry: &amp;super::registry::ReadRegistry) -&gt; bool {
         self.valid
             &amp;&amp; !self.name.is_empty()
             &amp;&amp; self.type_schema == &quot;pg_catalog&quot;
@@ -1081,38 +1169,69 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
             &amp;&amp; self.base_type_oid == 0
             &amp;&amp; self.generated.is_empty()
             &amp;&amp; self.identity.is_empty()
-            &amp;&amp; crate::backend::schema::read_policy::registry::trusted_type_io(
+            &amp;&amp; registry.trusted_type_io(
                 self.type_oid,
                 &amp;self.type_name,
-                self.type_input_oid,
-                self.type_output_oid,
-                self.type_receive_oid,
-                self.type_send_oid,
+                super::registry::TypeIo {
+                    input: self.type_input_oid,
+                    output: self.type_output_oid,
+                    receive: self.type_receive_oid,
+                    send: self.type_send_oid,
+                },
                 self.collation_oid,
             )
             &amp;&amp; (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))
-    }
-}</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:339-349</h4>
-<pre><code>            let relation_id = BindParameter::new(relation.oid.to_string().as_bytes());
-            let columns = server
-                .fetch_all::&lt;ColumnRow&gt;(ServerRequest::strict_internal(
-                    catalog_query(3),
-                    std::slice::from_ref(&amp;relation_id),
-                ))
-                .await
-                .map_err(|_| PolicyError::unsupported())?;
-            if columns.is_empty() || columns.iter().any(|column| !column.is_supported()) {
-                return Err(PolicyError::unsupported());
-            }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:466-472</h4>
-<pre><code>        // Every column is checked, not just referenced columns: row/tuple
-        // expansion and planner dependency paths cannot hide custom types.
-        if relation.columns.iter().any(|column| !column.is_supported()) {
-            return Err(PolicyError::unsupported());
-        }
-    }
-    resolve::prove(admitted, catalog, parameter_oids)?;</code></pre>
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:417-443</h4>
+<pre><code>    pub(crate) fn identity(
+        &amp;self,
+        policy: &amp;ProcessPolicy,
+        database_alias: &amp;str,
+        transaction_generation: u64,
+    ) -&gt; Result&lt;CatalogIdentity, PolicyError&gt; {
+        let manifest = policy.manifest().ok_or_else(PolicyError::unsupported)?;
+        let database = manifest
+            .databases()
+            .iter()
+            .find(|db| db.name() == database_alias)
+            .ok_or_else(PolicyError::unsupported)?;
+        Ok(CatalogIdentity {
+            backend_database_oid: self.database_oid,
+            backend_role_oid: self.role_oid,
+            backend_server_major: self.registry.major(),
+            connection: self.connection,
+            transaction_generation: {
+                if transaction_generation != self.transaction_generation {
+                    return Err(PolicyError::unsupported());
+                }
+                self.transaction_generation
+            },
+            manifest_digest: policy.digest().0,
+            schema_revision: manifest.schema_revision().to_owned(),
+            database_alias: database.name().to_owned(),
+        })</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:447-467</h4>
+<pre><code>pub(crate) fn verify_parse(
+    policy: &amp;ProcessPolicy,
+    admitted: &amp;AdmittedSql,
+    catalog: &amp;CatalogSnapshot,
+    identity: CatalogIdentity,
+    parameter_oids: &amp;[u32],
+) -&gt; Result&lt;CatalogProof, PolicyError&gt; {
+    if identity.backend_database_oid != catalog.database_oid
+        || identity.backend_role_oid != catalog.role_oid
+        || identity.backend_server_major != catalog.registry.major()
+        || identity.connection != catalog.connection
+        || identity.transaction_generation != catalog.transaction_generation
+        || identity.manifest_digest != policy.digest().0
+        || identity.schema_revision
+            != policy
+                .manifest()
+                .ok_or_else(PolicyError::unsupported)?
+                .schema_revision()
+    {
+        return Err(PolicyError::unsupported());
+    }</code></pre>
 <h4>applications/pgdog/pgdog/src/frontend/read_policy/admission.rs:38-55</h4>
 <pre><code>pub(crate) struct CatalogRequirements {
     pub(crate) relations: BTreeSet&lt;String&gt;,
@@ -1189,7 +1308,17 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
 }</code></pre></div></details>
 <details class="document"><summary>Threat Model</summary><div class="document-body"><h3>Threat Model</h3>
 <h4>Strict read endpoint delta</h4>
-<p>Assets are database rows/schema/sequences, application credentials, query results, the immutable read manifest and protected backend transactions. The attacker is an authenticated DML-capable application using the read endpoint, including arbitrary SQL and PostgreSQL wire messages. The read and unrestricted write processes are separate trust boundaries. DBAs, the PostgreSQL 18 binary/built-ins and the drained, reviewed schema epoch are trusted; native extension effects and malicious DBA changes are outside this boundary.</p>
+<h5>PostgreSQL 12 compatibility delta</h5>
+<p>This change adds a separately captured, digest-pinned PG12 reference catalog and fixed PG12 catalog SQL. It keeps the existing narrow SQL/function surface and PgDog-owned READ ONLY transaction boundary. The registry is immutable and selected from the actual protected backend identity for each snapshot; it is carried into column checks, dependency checks and typed resolution. Unsupported versions, malformed registry data and exact catalog mismatches deny.</p>
+<div class="table-wrap"><table><thead><tr><th>Threat</th><th>Required control and verification</th><th>Owner</th></tr></thead><tbody>
+<tr><td>PG18 proof or resolver metadata reused on PG12</td><td>Per-snapshot registry context and backend/transaction-bound proof; mixed-major isolation and stale identity negatives</td><td>Proxy maintainer</td></tr>
+<tr><td>Missing PG12 catalog field silently treated as safe</td><td>Fixed version-specific SQL and complete real-row comparisons; live least-privilege PG12 query/closure tests</td><td>Proxy maintainer</td></tr>
+<tr><td>Registry learned from compromised application schema</td><td>Offline pinned official reference, major/digest/provenance validation and complete dependency closure; generator negatives</td><td>Build maintainer</td></tr>
+<tr><td>Supporting PG12 widens functions or hidden execution paths</td><td>Existing SQL admission/type/function/role/object denials retained; side-effect canaries and data/schema/sequence snapshots on both majors</td><td>Proxy maintainer</td></tr>
+<tr><td>Release tested only on PG18</td><td>Both strict profiles on PG12 and PG18 plus native paired Kind smoke before artifact publication</td><td>Release maintainer</td></tr>
+</tbody></table></div>
+<p>Actual managed PG12 catalog and application SQL are unverified until operator staging checks pass. This proxy compatibility change does not extend upstream PostgreSQL 12 maintenance or remove trust in the server binary/DBAs. Read traffic must remain stopped or denied on a catalog mismatch; never bypass a proof or route the read Service to the unrestricted writer. Controls authored here are requirements, not assertions that tests or publication have passed.</p>
+<p>Assets are database rows/schema/sequences, application credentials, query results, the immutable read manifest and protected backend transactions. The attacker is an authenticated DML-capable application using the read endpoint, including arbitrary SQL and PostgreSQL wire messages. The read and unrestricted write processes are separate trust boundaries. DBAs, the selected PostgreSQL 12/18 binary/built-ins and the drained, reviewed schema epoch are trusted; native extension effects and malicious DBA changes are outside this boundary.</p>
 <div class="table-wrap"><table><thead><tr><th>Threat</th><th>Control and verification scope</th><th>Owner</th></tr></thead><tbody>
 <tr><td>Write hidden behind SELECT, CTE, batch or function</td><td>Closed recursive AST admission before any client forwarding; deny unknown nodes/functions and reject whole mixed batch; SQL denial/snapshot tests</td><td>Proxy maintainer</td></tr>
 <tr><td>Planner, type input or index invokes unreviewed code</td><td>Same-backend catalog identity and exact pinned dependency metadata; ordinary-table/role checks and local typed proof before Parse/Bind; catalog negative fixtures</td><td>Proxy maintainer</td></tr>
@@ -1307,7 +1436,7 @@ pub(crate) fn type_oid(name: &amp;str) -&gt; Option&lt;u32&gt; {
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-12T16:35:55+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-13T10:58:46+07:00</span></footer>
 </main>
 </div>
 <script>(() => {

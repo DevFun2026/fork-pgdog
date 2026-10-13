@@ -43,8 +43,14 @@ fatal_phase="pgdog-build"
 cargo build --locked --bin pgdog
 fatal_phase=""
 export PGDOG_BIN="$PWD/target/debug/pgdog"
-run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase all
-run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-mode "$postgres_mode" --phase protocol --pooler-mode transaction --query-parser off --prepared-statements full
+for postgres_major in 18 12; do
+    fixture_mode=docker
+    if [[ "$postgres_mode" == native && "$postgres_major" == 18 ]]; then
+        fixture_mode=native
+    fi
+    run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-major "$postgres_major" --postgres-mode "$fixture_mode" --phase all
+    run_check bash ../../scripts/strict-read-tests.sh --pgdog-bin "$PGDOG_BIN" --postgres-major "$postgres_major" --postgres-mode "$fixture_mode" --phase protocol --pooler-mode transaction --query-parser off --prepared-statements full
+done
 fatal_phase="legacy-start"
 source integration/common.sh
 run_pgdog "${PGDOG_TEST_CONFIG_DIR:-integration}"

@@ -112,7 +112,7 @@ pub(crate) struct ColumnRow {
 }
 
 impl ColumnRow {
-    pub(crate) fn is_supported(&self) -> bool {
+    pub(crate) fn is_supported(&self, registry: &super::registry::ReadRegistry) -> bool {
         self.valid
             && !self.name.is_empty()
             && self.type_schema == "pg_catalog"
@@ -120,13 +120,15 @@ impl ColumnRow {
             && self.base_type_oid == 0
             && self.generated.is_empty()
             && self.identity.is_empty()
-            && crate::backend::schema::read_policy::registry::trusted_type_io(
+            && registry.trusted_type_io(
                 self.type_oid,
                 &self.type_name,
-                self.type_input_oid,
-                self.type_output_oid,
-                self.type_receive_oid,
-                self.type_send_oid,
+                super::registry::TypeIo {
+                    input: self.type_input_oid,
+                    output: self.type_output_oid,
+                    receive: self.type_receive_oid,
+                    send: self.type_send_oid,
+                },
                 self.collation_oid,
             )
             && (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))

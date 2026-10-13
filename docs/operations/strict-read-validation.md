@@ -1,5 +1,43 @@
 # Strict read endpoint validation record
 
+## PG12 candidate, 2026-10-13
+
+The 0.2.1 working candidate extends reviewed main `66832bfa7bf8` with separately
+pinned PostgreSQL 12 catalog metadata. This section records local compatibility
+evidence; independent AGY review, full canonical gates and native publication
+remain separate requirements. The historical October 5 record below is retained
+with its original scope and limits.
+
+| Current local check | Observed result |
+| --- | --- |
+| Owned official PG12 reference | PostgreSQL 12.22/bookworm linux/arm64, full eleven-table capture, pinned image digest and selected-row provenance retained |
+| Before-change endpoint on PG12 | RED: supported SELECT 1 denied with policy 0A000 |
+| Fixed catalog SQL | RED: PG12 complete-row query had a trailing comma; corrected query passes parsing of all nine fixed queries for both majors |
+| PG12 default/all | PASS: 2 unrestricted DML/privilege regressions, 19 protocol tests and 54 core tests discovered and executed |
+| PG12 transaction/parser off/full prepared | PASS: 19 protocol tests discovered and executed |
+| PG18 default/all | PASS: 2 unrestricted DML/privilege regressions, 19 protocol tests and 54 core tests discovered and executed |
+| PG18 transaction/parser off/full prepared | PASS: 19 protocol tests discovered and executed |
+| Artifact/chart/tool contracts | PASS: 114 Python tests, including paired real chart validation with synthetic operator inputs |
+| PG18 registry | Byte-for-byte unchanged; provenance record retains its SHA-256 |
+
+Logs and exact executable checksum are retained under ignored `.agent/.runs/pg12/`.
+The actual protocol matrix uses owned loopback-only Docker fixtures and synthetic
+roles/data. It never connects to icondo or the operator Kubernetes context. A unit
+test executable is not the deployable PgDog executable: after the SQL correction,
+the actual `cargo build --locked --bin pgdog` binary was rebuilt before this
+successful matrix. Intermediate failed/stale-binary runs are retained rather than
+presented as passing evidence.
+
+Data/schema/sequence denials, candidate-set side-effect canaries, protected
+transactions, named/unnamed preparation, Flush/Sync, portal/cancellation/backend
+loss and immutable policy behavior are exercised by the existing suites on each
+major. The same DML-capable identity can write only through the unrestricted
+endpoint within the tested topology. Accepted SQL/function/object scope remains
+the conservative original surface. Actual icondo inventory/provider catalog,
+driver SQL, TLS/CA, cluster context and migration epoch remain unverified.
+
+## Historical initial implementation record
+
 Date: 2026-10-05. Scope: the uncommitted strict-read/write feature above baseline
 `960942d4254a547d459d44545151f30380ae3173`. No commit, push, registry publication,
 or deployment to an existing cluster has been performed. This record describes
