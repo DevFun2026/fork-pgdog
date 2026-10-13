@@ -27,6 +27,14 @@ pub(crate) struct ReadRegistry {
     data: &'static Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeIo {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) receive: u32,
+    pub(crate) send: u32,
+}
+
 impl ReadRegistry {
     /// Select after the actual backend identity query. Each immutable context
     /// belongs to one backend catalog snapshot; there is no active global major.
@@ -169,11 +177,11 @@ impl ReadRegistry {
             .chain(actual.keys())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
-            .filter_map(|key| {
-                (expected.get(key.as_str()).map(normalize)
-                    != actual.get(key.as_str()).map(normalize))
-                .then(|| key.to_string())
+            .filter(|key| {
+                expected.get(key.as_str()).map(normalize)
+                    != actual.get(key.as_str()).map(normalize)
             })
+            .map(|key| key.to_string())
             .collect()
     }
 
@@ -195,23 +203,14 @@ impl ReadRegistry {
             })
     }
 
-    pub(crate) fn trusted_type_io(
-        &self,
-        oid: u32,
-        name: &str,
-        input: u32,
-        output: u32,
-        receive: u32,
-        send: u32,
-        collation: u32,
-    ) -> bool {
+    pub(crate) fn trusted_type_io(&self, oid: u32, name: &str, io: TypeIo, collation: u32) -> bool {
         self.scalar_type(oid)
             && self.row_by_oid("pg_type", oid).is_some_and(|row| {
                 row.get("typname").and_then(Value::as_str) == Some(name)
-                    && field_number(row, "typinput") == Some(input)
-                    && field_number(row, "typoutput") == Some(output)
-                    && field_number(row, "typreceive") == Some(receive)
-                    && field_number(row, "typsend") == Some(send)
+                    && field_number(row, "typinput") == Some(io.input)
+                    && field_number(row, "typoutput") == Some(io.output)
+                    && field_number(row, "typreceive") == Some(io.receive)
+                    && field_number(row, "typsend") == Some(io.send)
                     && field_number(row, "typcollation") == Some(collation)
             })
     }
@@ -381,6 +380,37 @@ mod tests {
         assert_eq!(registry.type_oid("\"pg_catalog\".\"int4\""), None);
         assert_eq!(registry.type_oid("\"int4\""), None);
         assert_eq!(registry.type_oid("public.int4"), None);
+    }
+
+    #[test]
+    fn every_type_io_slot_must_match_for_each_supported_major() {
+        for major in [12, 18] {
+            let registry = ReadRegistry::for_major(major).unwrap();
+            let row = registry.row_by_oid("pg_type", 23).unwrap();
+            let io = TypeIo {
+                input: field_number(row, "typinput").unwrap(),
+                output: field_number(row, "typoutput").unwrap(),
+                receive: field_number(row, "typreceive").unwrap(),
+                send: field_number(row, "typsend").unwrap(),
+            };
+            let collation = field_number(row, "typcollation").unwrap();
+            assert!(registry.trusted_type_io(23, "int4", io, collation));
+
+            for mutate_io in [
+                |io: &mut TypeIo| io.input += 1,
+                |io: &mut TypeIo| io.output += 1,
+                |io: &mut TypeIo| io.receive += 1,
+                |io: &mut TypeIo| io.send += 1,
+            ] as [fn(&mut TypeIo); 4]
+            {
+                let mut changed = io;
+                mutate_io(&mut changed);
+                assert!(
+                    !registry.trusted_type_io(23, "int4", changed, collation),
+                    "PG{major} accepted a changed type I/O OID: {changed:?}"
+                );
+            }
+        }
     }
 
     #[test]

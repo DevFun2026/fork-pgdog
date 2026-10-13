@@ -24,15 +24,31 @@ exact excerpt bytes, so any source change requires refreshing this context.
 [
   {
     "path": "applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs",
-    "sha256": "ae11d01c544fa50a4b1fb72c8931b45ff1a71f34281dec55ad4dab6ec25e2ae4",
+    "sha256": "29dc7909ca705f8da10d985473b9e14bad3f606f3a3ac6eb6d22240ecd435190",
     "ranges": [
       {
-        "start": 33,
-        "end": 65
+        "start": 31,
+        "end": 36
       },
       {
-        "start": 185,
-        "end": 228
+        "start": 41,
+        "end": 53
+      },
+      {
+        "start": 59,
+        "end": 73
+      },
+      {
+        "start": 193,
+        "end": 204
+      },
+      {
+        "start": 206,
+        "end": 216
+      },
+      {
+        "start": 218,
+        "end": 227
       }
     ]
   },
@@ -56,11 +72,11 @@ exact excerpt bytes, so any source change requires refreshing this context.
   },
   {
     "path": "applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs",
-    "sha256": "2003ff60ab68e4cf7ea29e322105a92a33821e478dac2f4b025b6959f01b94e4",
+    "sha256": "0f874f4e9be0ae8dfbf5a5f9860c90f7164f3aad67f4a040593a3af3494a71c1",
     "ranges": [
       {
         "start": 115,
-        "end": 132
+        "end": 135
       }
     ]
   },
@@ -99,7 +115,18 @@ exact excerpt bytes, so any source change requires refreshing this context.
 ]
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:33-65
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:31-36
+
+```rust
+pub(crate) struct TypeIo {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) receive: u32,
+    pub(crate) send: u32,
+}
+```
+
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:41-53
 
 ```rust
     pub(crate) fn for_major(major: u32) -> Option<Self> {
@@ -115,11 +142,11 @@ exact excerpt bytes, so any source change requires refreshing this context.
         let registry = Self { major, data };
         registry.is_complete().then_some(registry)
     }
+```
 
-    pub(crate) fn major(&self) -> u32 {
-        self.major
-    }
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:59-73
 
+```rust
     fn is_complete(&self) -> bool {
         self.data.get("postgres_major").and_then(Value::as_u64) == Some(self.major.into())
             && self
@@ -137,7 +164,7 @@ exact excerpt bytes, so any source change requires refreshing this context.
     }
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:185-228
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:193-204
 
 ```rust
     pub(crate) fn scalar_type(&self, oid: u32) -> bool {
@@ -152,28 +179,27 @@ exact excerpt bytes, so any source change requires refreshing this context.
                     && field_number(row, "typbasetype") == Some(0)
             })
     }
+```
 
-    pub(crate) fn trusted_type_io(
-        &self,
-        oid: u32,
-        name: &str,
-        input: u32,
-        output: u32,
-        receive: u32,
-        send: u32,
-        collation: u32,
-    ) -> bool {
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:206-216
+
+```rust
+    pub(crate) fn trusted_type_io(&self, oid: u32, name: &str, io: TypeIo, collation: u32) -> bool {
         self.scalar_type(oid)
             && self.row_by_oid("pg_type", oid).is_some_and(|row| {
                 row.get("typname").and_then(Value::as_str) == Some(name)
-                    && field_number(row, "typinput") == Some(input)
-                    && field_number(row, "typoutput") == Some(output)
-                    && field_number(row, "typreceive") == Some(receive)
-                    && field_number(row, "typsend") == Some(send)
+                    && field_number(row, "typinput") == Some(io.input)
+                    && field_number(row, "typoutput") == Some(io.output)
+                    && field_number(row, "typreceive") == Some(io.receive)
+                    && field_number(row, "typsend") == Some(io.send)
                     && field_number(row, "typcollation") == Some(collation)
             })
     }
+```
 
+## applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:218-227
+
+```rust
     pub(crate) fn type_oid(&self, name: &str) -> Option<u32> {
         self.table("pg_type")?
             .iter()
@@ -302,7 +328,7 @@ pub(super) fn prove(
                 let source = self.expression(cast.arg(), scope)?;
 ```
 
-## applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-132
+## applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-135
 
 ```rust
     pub(crate) fn is_supported(&self, registry: &super::registry::ReadRegistry) -> bool {
@@ -316,13 +342,16 @@ pub(super) fn prove(
             && registry.trusted_type_io(
                 self.type_oid,
                 &self.type_name,
-                self.type_input_oid,
-                self.type_output_oid,
-                self.type_receive_oid,
-                self.type_send_oid,
+                super::registry::TypeIo {
+                    input: self.type_input_oid,
+                    output: self.type_output_oid,
+                    receive: self.type_receive_oid,
+                    send: self.type_send_oid,
+                },
                 self.collation_oid,
             )
             && (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))
+    }
 ```
 
 ## applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:417-443

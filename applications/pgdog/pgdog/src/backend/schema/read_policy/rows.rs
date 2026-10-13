@@ -123,10 +123,12 @@ impl ColumnRow {
             && registry.trusted_type_io(
                 self.type_oid,
                 &self.type_name,
-                self.type_input_oid,
-                self.type_output_oid,
-                self.type_receive_oid,
-                self.type_send_oid,
+                super::registry::TypeIo {
+                    input: self.type_input_oid,
+                    output: self.type_output_oid,
+                    receive: self.type_receive_oid,
+                    send: self.type_send_oid,
+                },
                 self.collation_oid,
             )
             && (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))

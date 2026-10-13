@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>66832bfa7bf8</b></span><span>2026-10-13T08:39:56+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>71a1c605ee67</b></span><span>2026-10-13T10:52:40+07:00</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 66832bfa7bf8</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 71a1c605ee67</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">12</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">20</span><span class="k">relationships</span></div><div class="fact"><span class="v">17</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -894,15 +894,31 @@ superseded-by: null</pre></details>
 <pre><code>[
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs&quot;,
-    &quot;sha256&quot;: &quot;ae11d01c544fa50a4b1fb72c8931b45ff1a71f34281dec55ad4dab6ec25e2ae4&quot;,
+    &quot;sha256&quot;: &quot;29dc7909ca705f8da10d985473b9e14bad3f606f3a3ac6eb6d22240ecd435190&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 33,
-        &quot;end&quot;: 65
+        &quot;start&quot;: 31,
+        &quot;end&quot;: 36
       },
       {
-        &quot;start&quot;: 185,
-        &quot;end&quot;: 228
+        &quot;start&quot;: 41,
+        &quot;end&quot;: 53
+      },
+      {
+        &quot;start&quot;: 59,
+        &quot;end&quot;: 73
+      },
+      {
+        &quot;start&quot;: 193,
+        &quot;end&quot;: 204
+      },
+      {
+        &quot;start&quot;: 206,
+        &quot;end&quot;: 216
+      },
+      {
+        &quot;start&quot;: 218,
+        &quot;end&quot;: 227
       }
     ]
   },
@@ -926,11 +942,11 @@ superseded-by: null</pre></details>
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs&quot;,
-    &quot;sha256&quot;: &quot;2003ff60ab68e4cf7ea29e322105a92a33821e478dac2f4b025b6959f01b94e4&quot;,
+    &quot;sha256&quot;: &quot;0f874f4e9be0ae8dfbf5a5f9860c90f7164f3aad67f4a040593a3af3494a71c1&quot;,
     &quot;ranges&quot;: [
       {
         &quot;start&quot;: 115,
-        &quot;end&quot;: 132
+        &quot;end&quot;: 135
       }
     ]
   },
@@ -967,7 +983,14 @@ superseded-by: null</pre></details>
     ]
   }
 ]</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:33-65</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:31-36</h4>
+<pre><code>pub(crate) struct TypeIo {
+    pub(crate) input: u32,
+    pub(crate) output: u32,
+    pub(crate) receive: u32,
+    pub(crate) send: u32,
+}</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:41-53</h4>
 <pre><code>    pub(crate) fn for_major(major: u32) -&gt; Option&lt;Self&gt; {
         let data = match major {
             12 =&gt; REGISTRY_PG12
@@ -980,13 +1003,9 @@ superseded-by: null</pre></details>
         };
         let registry = Self { major, data };
         registry.is_complete().then_some(registry)
-    }
-
-    pub(crate) fn major(&amp;self) -&gt; u32 {
-        self.major
-    }
-
-    fn is_complete(&amp;self) -&gt; bool {
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:59-73</h4>
+<pre><code>    fn is_complete(&amp;self) -&gt; bool {
         self.data.get(&quot;postgres_major&quot;).and_then(Value::as_u64) == Some(self.major.into())
             &amp;&amp; self
                 .data
@@ -1001,7 +1020,7 @@ superseded-by: null</pre></details>
                     .is_some_and(|rows| !rows.is_empty())
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:185-228</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:193-204</h4>
 <pre><code>    pub(crate) fn scalar_type(&amp;self, oid: u32) -&gt; bool {
         const PUBLIC_SCALARS: &amp;[u32] = &amp;[
             16, 17, 20, 21, 23, 25, 700, 701, 1042, 1043, 1082, 1083, 1114, 1184, 1186, 1266, 1700,
@@ -1013,30 +1032,21 @@ superseded-by: null</pre></details>
                     &amp;&amp; row.get(&quot;typtype&quot;).and_then(Value::as_str) == Some(&quot;b&quot;)
                     &amp;&amp; field_number(row, &quot;typbasetype&quot;) == Some(0)
             })
-    }
-
-    pub(crate) fn trusted_type_io(
-        &amp;self,
-        oid: u32,
-        name: &amp;str,
-        input: u32,
-        output: u32,
-        receive: u32,
-        send: u32,
-        collation: u32,
-    ) -&gt; bool {
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:206-216</h4>
+<pre><code>    pub(crate) fn trusted_type_io(&amp;self, oid: u32, name: &amp;str, io: TypeIo, collation: u32) -&gt; bool {
         self.scalar_type(oid)
             &amp;&amp; self.row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
                 row.get(&quot;typname&quot;).and_then(Value::as_str) == Some(name)
-                    &amp;&amp; field_number(row, &quot;typinput&quot;) == Some(input)
-                    &amp;&amp; field_number(row, &quot;typoutput&quot;) == Some(output)
-                    &amp;&amp; field_number(row, &quot;typreceive&quot;) == Some(receive)
-                    &amp;&amp; field_number(row, &quot;typsend&quot;) == Some(send)
+                    &amp;&amp; field_number(row, &quot;typinput&quot;) == Some(io.input)
+                    &amp;&amp; field_number(row, &quot;typoutput&quot;) == Some(io.output)
+                    &amp;&amp; field_number(row, &quot;typreceive&quot;) == Some(io.receive)
+                    &amp;&amp; field_number(row, &quot;typsend&quot;) == Some(io.send)
                     &amp;&amp; field_number(row, &quot;typcollation&quot;) == Some(collation)
             })
-    }
-
-    pub(crate) fn type_oid(&amp;self, name: &amp;str) -&gt; Option&lt;u32&gt; {
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:218-227</h4>
+<pre><code>    pub(crate) fn type_oid(&amp;self, name: &amp;str) -&gt; Option&lt;u32&gt; {
         self.table(&quot;pg_type&quot;)?
             .iter()
             .find(|row| {
@@ -1150,7 +1160,7 @@ superseded-by: null</pre></details>
                     .type_oid(name)
                     .ok_or_else(PolicyError::unsupported)?;
                 let source = self.expression(cast.arg(), scope)?;</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-132</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-135</h4>
 <pre><code>    pub(crate) fn is_supported(&amp;self, registry: &amp;super::registry::ReadRegistry) -&gt; bool {
         self.valid
             &amp;&amp; !self.name.is_empty()
@@ -1162,13 +1172,16 @@ superseded-by: null</pre></details>
             &amp;&amp; registry.trusted_type_io(
                 self.type_oid,
                 &amp;self.type_name,
-                self.type_input_oid,
-                self.type_output_oid,
-                self.type_receive_oid,
-                self.type_send_oid,
+                super::registry::TypeIo {
+                    input: self.type_input_oid,
+                    output: self.type_output_oid,
+                    receive: self.type_receive_oid,
+                    send: self.type_send_oid,
+                },
                 self.collation_oid,
             )
-            &amp;&amp; (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))</code></pre>
+            &amp;&amp; (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))
+    }</code></pre>
 <h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:417-443</h4>
 <pre><code>    pub(crate) fn identity(
         &amp;self,
@@ -1423,7 +1436,7 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-13T08:39:56+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-13T10:52:40+07:00</span></footer>
 </main>
 </div>
 <script>(() => {
