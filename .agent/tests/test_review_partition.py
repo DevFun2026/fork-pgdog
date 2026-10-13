@@ -133,6 +133,23 @@ class PartitionedReviewTests(unittest.TestCase):
             ["docs/integration-contract.md"],
         )
         self.assertEqual(partition.manifest["child_context_paths"], [])
+
+    def test_pg12_registry_partition_preserves_exact_bytes_and_path(self):
+        path = REGISTRY_PATH.replace("pg18", "pg12")
+        rows = [{"oid": str(index + 1), "detail": "x" * 96} for index in range(60)]
+        self.write(path, json.dumps({"postgres_major": 12, "source_image": "postgres:12",
+                                   "tables": {"pg_type": rows}}, separators=(",", ":")))
+        self.commit_changes()
+        partition = self.build()
+        self.assertEqual(b"".join(child.diff_bytes for child in partition.children),
+                         partition.root_package.diff_bytes)
+        spans = [span for child in partition.manifest["children"] for span in child["ranges"]
+                 if span["kind"] == "registry-records"]
+        self.assertTrue(spans, "PG12 registry must split only at complete catalog records")
+        self.assertEqual({span["path"] for span in spans}, {path})
+        self.assertEqual(sum(record["count"] for span in spans for record in span["records"]), 60)
+        self.assertEqual(load_partition(partition.root_package.path, root=self.root).manifest_sha256,
+                         partition.manifest_sha256)
         for child in partition.children:
             self.assertNotIn(
                 "docs/integration-contract.md",

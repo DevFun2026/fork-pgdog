@@ -20,7 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / "applications/pgdog"
 FIXTURES = APPLICATION / "integration/strict_read"
 BASELINE_BINARY = ROOT / ".agent/.runs/strict-read/pgdog-baseline"
-PIN_SOURCE = ROOT / "tests/artifacts/kubernetes/postgres.yaml"
+PIN_SOURCES = {
+    12: ROOT / "tests/artifacts/kubernetes/postgres-pg12.yaml",
+    18: ROOT / "tests/artifacts/kubernetes/postgres.yaml",
+}
+SUPPORTED_MAJORS = (12, 18)
 
 
 def new_resource_name() -> str:
@@ -106,20 +110,30 @@ def required_tools(postgres_mode: str = "docker") -> dict[str, str]:
     return paths
 
 
-def verify_native_postgres_version(tools: dict[str, str]) -> None:
+def verify_native_postgres_version(tools: dict[str, str], postgres_major: int = 18) -> None:
+    if isinstance(postgres_major, bool) or postgres_major not in SUPPORTED_MAJORS:
+        raise ValueError("PostgreSQL major must be 12 or 18")
     for name in ("initdb", "postgres", "psql", "pg_isready"):
         version = run_checked([tools[name], "--version"]).stdout.strip()
         match = re.search(r"PostgreSQL\)\s+(\d+)(?:\.|\b)", version)
-        if not match or match.group(1) != "18":
-            raise RuntimeError(f"native fixture requires PostgreSQL 18 {name}; found: {version}")
+        if not match or match.group(1) != str(postgres_major):
+            raise RuntimeError(f"native fixture requires PostgreSQL {postgres_major} {name}; found: {version}")
 
 
-def pinned_postgres_image() -> str:
-    content = PIN_SOURCE.read_text()
-    match = re.search(r"image:\s*(postgres:18@sha256:[0-9a-f]{64})\b", content)
-    if not match:
-        raise RuntimeError("could not resolve the pinned PostgreSQL 18 image")
-    return match.group(1)
+def pinned_postgres_image(postgres_major: int = 18) -> str:
+    if isinstance(postgres_major, bool) or postgres_major not in SUPPORTED_MAJORS:
+        raise ValueError("PostgreSQL major must be 12 or 18")
+    content = PIN_SOURCES[postgres_major].read_text(encoding="utf-8")
+    image_lines = re.findall(r"(?m)^\s*image:\s*(postgres:[^\s#]+)", content)
+    matching = [image for image in image_lines
+                if re.match(rf"^postgres:{postgres_major}(?:[.@-])", image)]
+    if len(matching) > 1:
+        raise RuntimeError(f"repository PostgreSQL {postgres_major} image pin is ambiguous")
+    if len(matching) != 1 or not re.fullmatch(
+            rf"postgres:{postgres_major}(?:\.[0-9]+)?(?:-[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{{64}}",
+            matching[0]):
+        raise RuntimeError(f"repository PostgreSQL {postgres_major} immutable image pin is missing or malformed")
+    return matching[0]
 
 
 def run_checked(command: list[str], *, env=None, **kwargs) -> subprocess.CompletedProcess:
@@ -177,14 +191,14 @@ def render_file(source: Path, target: Path, substitutions: dict[str, str]) -> No
 
 
 def start_fixture(resources: OwnedResources, temp: Path, env: dict[str, str], app_password: str,
-                  owner_password: str) -> int:
+                  owner_password: str, postgres_major: int = 18) -> int:
     bootstrap = (FIXTURES / "bootstrap.sql").read_text().replace("__APP_PASSWORD__", app_password)
     cidfile = temp / "postgres.cid"
     command = [
         "docker", "run", "--pull=never", "--detach", "--name", new_resource_name(), "--cidfile", str(cidfile),
         "--publish", "127.0.0.1::5432", "--env", "POSTGRES_USER=fixture_owner",
         "--env", f"POSTGRES_PASSWORD={owner_password}", "--env", "POSTGRES_DB=app",
-        pinned_postgres_image(),
+        pinned_postgres_image(postgres_major),
     ]
     created = subprocess.run(command, env=env, text=True, capture_output=True, check=False)
     if cidfile.exists():
@@ -343,10 +357,12 @@ def run_tests(root: Path, package: str, target_args: list[str], selection: str,
 
 def execute(pgdog_bin: Path, phase: str, pooler_mode: str = "session",
             query_parser: str = "auto", prepared_statements: str = "extended",
-            postgres_mode: str = "docker") -> int:
+            postgres_mode: str = "docker", postgres_major: int = 18) -> int:
+    if isinstance(postgres_major, bool) or postgres_major not in SUPPORTED_MAJORS:
+        raise ValueError("PostgreSQL major must be 12 or 18")
     tools = required_tools(postgres_mode)
     if postgres_mode == "native":
-        verify_native_postgres_version(tools)
+        verify_native_postgres_version(tools, postgres_major)
     if not pgdog_bin.is_file() or not os.access(pgdog_bin, os.X_OK):
         raise RuntimeError(f"PgDog binary is missing or not executable: {pgdog_bin}")
     base_env = child_environment(dict(os.environ), "{}")
@@ -366,7 +382,7 @@ def execute(pgdog_bin: Path, phase: str, pooler_mode: str = "session",
                                                  owner_password, tools)
         else:
             postgres_port = start_fixture(resources, temp, base_env, app_password,
-                                          owner_password)
+                                          owner_password, postgres_major)
 
         ports = []
         while len(ports) < 4:
@@ -454,9 +470,12 @@ def main() -> int:
     parser.add_argument("--query-parser", choices=("auto", "off"), default="auto")
     parser.add_argument("--prepared-statements", choices=("extended", "extended_anonymous", "full", "disabled"), default="extended")
     parser.add_argument("--postgres-mode", choices=("docker", "native"), default="docker")
+    parser.add_argument("--postgres-major", type=int, choices=SUPPORTED_MAJORS, default=18,
+                        help="fixture PostgreSQL major (default: 18)")
     args = parser.parse_args()
     return execute(args.pgdog_bin.expanduser().resolve(), args.phase, args.pooler_mode,
-                   args.query_parser, args.prepared_statements, args.postgres_mode)
+                   args.query_parser, args.prepared_statements, args.postgres_mode,
+                   args.postgres_major)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: strict-read-kubernetes-smoke-${{ matrix.arch }}
-          path: ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}/strict-read-helm-smoke.json
+          path: ${{ runner.temp }}/fork-artifacts-${{ matrix.arch }}/strict-read-helm-smoke*.json
           if-no-files-found: ignore
           retention-days: 7

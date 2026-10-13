@@ -2,11 +2,35 @@
 
 ## Strict read endpoint delta
 
+### PostgreSQL 12 compatibility delta
+
+This change adds a separately captured, digest-pinned PG12 reference catalog and
+fixed PG12 catalog SQL. It keeps the existing narrow SQL/function surface and
+PgDog-owned READ ONLY transaction boundary. The registry is immutable and selected
+from the actual protected backend identity for each snapshot; it is carried into
+column checks, dependency checks and typed resolution. Unsupported versions,
+malformed registry data and exact catalog mismatches deny.
+
+| Threat | Required control and verification | Owner |
+| --- | --- | --- |
+| PG18 proof or resolver metadata reused on PG12 | Per-snapshot registry context and backend/transaction-bound proof; mixed-major isolation and stale identity negatives | Proxy maintainer |
+| Missing PG12 catalog field silently treated as safe | Fixed version-specific SQL and complete real-row comparisons; live least-privilege PG12 query/closure tests | Proxy maintainer |
+| Registry learned from compromised application schema | Offline pinned official reference, major/digest/provenance validation and complete dependency closure; generator negatives | Build maintainer |
+| Supporting PG12 widens functions or hidden execution paths | Existing SQL admission/type/function/role/object denials retained; side-effect canaries and data/schema/sequence snapshots on both majors | Proxy maintainer |
+| Release tested only on PG18 | Both strict profiles on PG12 and PG18 plus native paired Kind smoke before artifact publication | Release maintainer |
+
+Actual managed PG12 catalog and application SQL are unverified until operator
+staging checks pass. This proxy compatibility change does not extend upstream
+PostgreSQL 12 maintenance or remove trust in the server binary/DBAs. Read traffic
+must remain stopped or denied on a catalog mismatch; never bypass a proof or
+route the read Service to the unrestricted writer. Controls authored here are
+requirements, not assertions that tests or publication have passed.
+
 Assets are database rows/schema/sequences, application credentials, query results,
 the immutable read manifest and protected backend transactions. The attacker is an
 authenticated DML-capable application using the read endpoint, including arbitrary
 SQL and PostgreSQL wire messages. The read and unrestricted write processes are
-separate trust boundaries. DBAs, the PostgreSQL 18 binary/built-ins and the drained,
+separate trust boundaries. DBAs, the selected PostgreSQL 12/18 binary/built-ins and the drained,
 reviewed schema epoch are trusted; native extension effects and malicious DBA
 changes are outside this boundary.
 

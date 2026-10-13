@@ -32,7 +32,11 @@ git archive "$baseline_source_sha" | tar -x -C "$baseline_dir/source"
 STRICT_READ_BASELINE_BIN="$baseline_dir/target/release/pgdog" \
 STRICT_READ_BASELINE_SOURCE_SHA="$baseline_source_sha" \
 STRICT_READ_SMOKE_REPORT="$artifact_dir/strict-read-helm-smoke.json" \
-  bash scripts/strict-read-helm-smoke.sh --image fork-pgdog:local
+  bash scripts/strict-read-helm-smoke.sh --image fork-pgdog:local --postgres-major 18
+STRICT_READ_BASELINE_BIN="$baseline_dir/target/release/pgdog" \
+STRICT_READ_BASELINE_SOURCE_SHA="$baseline_source_sha" \
+STRICT_READ_SMOKE_REPORT="$artifact_dir/strict-read-helm-smoke-pg12.json" \
+  bash scripts/strict-read-helm-smoke.sh --image fork-pgdog:local --postgres-major 12
 python3 scripts/verify-artifacts prepare-scan --image fork-pgdog:local
 python3 scripts/verify-artifacts scan --scanner iac
 python3 scripts/verify-artifacts scan --scanner container

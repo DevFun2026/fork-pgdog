@@ -1,0 +1,20 @@
+{
+  "namespace": "database",
+  "kube_context": "<REQUIRED_KUBECONFIG_CONTEXT>",
+  "postgres_major_version": 12,
+  "database_name": "icondo",
+  "database_alias": "icondo",
+  "protected_relations": [
+    "<REQUIRED_SCHEMA>.<REQUIRED_ORDINARY_TABLE>"
+  ],
+  "schema_revision": "<REQUIRED_CONTROLLED_MIGRATION_EPOCH>",
+  "image_repository": "ghcr.io/devfun2026/fork-pgdog",
+  "image_digest": "<REQUIRED_0.2.1_IMAGE_DIGEST>",
+  "users_secret": "pgdog-users",
+  "client_tls_secret": "pgdog-client-tls",
+  "backend_ca_filename": "<REQUIRED_BACKEND_CA_KEY_FILENAME>",
+  "read_policy_configmap": "pgdog-read-policy",
+  "backend_host": "staging-postgres.database.svc.cluster.local",
+  "backend_port": 5432,
+  "image_pull_secret": null
+}

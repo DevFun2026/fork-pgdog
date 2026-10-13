@@ -95,6 +95,36 @@ class StrictReadFixtureIsolationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "PostgreSQL 18"):
                 fixture.verify_native_postgres_version(paths)
 
+    def test_fixture_major_selection_uses_exact_native_major_and_pg12_immutable_pin(self):
+        fixture = load_helper()
+        with patch.object(fixture.shutil, "which", side_effect=lambda name: "/pg/bin/" + name):
+            paths = fixture.required_tools("native")
+        with patch.object(fixture, "run_checked", side_effect=[
+            subprocess.CompletedProcess([], 0, stdout="initdb (PostgreSQL) 12.22\n"),
+            subprocess.CompletedProcess([], 0, stdout="postgres (PostgreSQL) 12.22\n"),
+            subprocess.CompletedProcess([], 0, stdout="psql (PostgreSQL) 12.22\n"),
+            subprocess.CompletedProcess([], 0, stdout="pg_isready (PostgreSQL) 12.22\n"),
+        ]):
+            fixture.verify_native_postgres_version(paths, 12)
+        self.assertEqual(
+            fixture.pinned_postgres_image(12),
+            "postgres:12.22-bookworm@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c",
+        )
+        for major in (13, 17, 19):
+            with self.subTest(major=major), self.assertRaisesRegex(ValueError, "12 or 18"):
+                fixture.pinned_postgres_image(major)
+
+    def test_pg12_kind_fixture_keeps_owned_resource_names_and_selector(self):
+        original = (ROOT / "tests/artifacts/kubernetes/postgres.yaml").read_text()
+        pg12 = (ROOT / "tests/artifacts/kubernetes/postgres-pg12.yaml").read_text()
+        for marker in ("metadata:\n  name: postgres", "selector: {app: postgres-fixture}",
+                       "matchLabels: {app: postgres-fixture}",
+                       "labels: {app: postgres-fixture}"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, original)
+                self.assertIn(marker, pg12)
+        self.assertIn("postgres:12.22-bookworm@sha256:", pg12)
+
     def test_native_fixture_starts_only_owned_loopback_postgres_and_bootstraps_app(self):
         fixture = load_helper()
         resources = fixture.OwnedResources()
@@ -163,7 +193,11 @@ class StrictReadFixtureIsolationTests(unittest.TestCase):
     def test_verify_gate_propagates_the_selected_fixture_mode(self):
         gate = (ROOT / "scripts/verify-pgdog").read_text()
         self.assertIn("PGDOG_STRICT_POSTGRES_MODE", gate)
+        self.assertIn("for postgres_major in 18 12", gate)
+        self.assertEqual(gate.count("--postgres-major"), 2)
         self.assertEqual(gate.count("--postgres-mode"), 2)
+        self.assertIn('if [[ "$postgres_mode" == native && "$postgres_major" == 18 ]]', gate)
+        self.assertIn('fixture_mode=docker', gate)
 
     def test_verify_gate_rejects_unknown_fixture_mode_before_database_probe(self):
         env = dict(os.environ, PGDOG_STRICT_POSTGRES_MODE="ambient")

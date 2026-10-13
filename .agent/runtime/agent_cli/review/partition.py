@@ -33,6 +33,7 @@ PARTITION_REVIEW_GUIDANCE = (
 REGISTRY_PATH = (
     "applications/pgdog/pgdog/src/backend/schema/read_policy/registry-pg18.json"
 )
+REGISTRY_PATHS = frozenset({REGISTRY_PATH, REGISTRY_PATH.replace("pg18", "pg12")})
 _ALLOWED_OUTPUTS = frozenset({"audit.jsonl", "findings.json"})
 _ROOT_ALLOWED_OUTPUTS = _ALLOWED_OUTPUTS | frozenset({"partition-results.json"})
 
@@ -137,14 +138,16 @@ def _array_items(text: str, start: int, decoder: json.JSONDecoder):
         raise ReviewPackageBlocked("pinned PG18 registry has invalid JSON")
 
 
-def _registry_records(section: bytes, section_start: int) -> list[dict[str, object]]:
+def _registry_records(section: bytes, section_start: int,
+                      registry_path: str = REGISTRY_PATH) -> list[dict[str, object]]:
     if (
-        b"new file mode " not in section
+        registry_path not in REGISTRY_PATHS
+        or b"new file mode " not in section
         or b"\n--- /dev/null\n" not in section
-        or f"\n+++ b/{REGISTRY_PATH}\n".encode() not in section
+        or f"\n+++ b/{registry_path}\n".encode() not in section
     ):
         raise ReviewPackageBlocked(
-            "only a newly added pinned PG18 registry can be record-split"
+            "only a newly added pinned PG12 or PG18 registry can be record-split"
         )
     lines = section.splitlines(keepends=True)
     offset = section_start
@@ -230,9 +233,10 @@ def _compact_record_spans(records: list[dict[str, object]]) -> list[dict[str, ob
 
 
 def _registry_fragments(
-    section: bytes, start: int, end: int, target_bytes: int
+    section: bytes, start: int, end: int, target_bytes: int,
+    registry_path: str = REGISTRY_PATH,
 ) -> list[dict[str, object]]:
-    records = _registry_records(section, start)
+    records = _registry_records(section, start, registry_path)
     groups: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
     cursor = start
@@ -278,7 +282,7 @@ def _registry_fragments(
                 "start": cursor,
                 "end": fragment_end,
                 "kind": "registry-records",
-                "path": REGISTRY_PATH,
+                "path": registry_path,
                 "records": _compact_record_spans(group),
                 "record_start": int(group[0]["start"]),
                 "record_end": int(group[-1]["end"]),
@@ -302,10 +306,12 @@ def _registry_fragments(
 def _atoms(diff: bytes, target_bytes: int) -> list[dict[str, object]]:
     atoms = []
     for start, end, section in _diff_sections(diff):
+        registry_path = next((path for path in sorted(REGISTRY_PATHS)
+                              if section.startswith(f"diff --git a/{path} b/{path}\n".encode())), None)
         if end - start <= target_bytes:
             atoms.append({"start": start, "end": end, "kind": "patch"})
-        elif f"a/{REGISTRY_PATH} b/{REGISTRY_PATH}".encode() in section:
-            atoms.extend(_registry_fragments(section, start, end, target_bytes))
+        elif registry_path is not None:
+            atoms.extend(_registry_fragments(section, start, end, target_bytes, registry_path))
         else:
             raise ReviewPackageBlocked(
                 "ordinary changed-file patch is indivisible and exceeds the shard target"

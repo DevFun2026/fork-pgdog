@@ -1,5 +1,5 @@
 //! Conservative local type resolution. No client SQL is prepared to obtain this proof.
-use super::{CatalogSnapshot, registry};
+use super::CatalogSnapshot;
 use crate::frontend::read_policy::session::MAX_DECLARED_PARAMETERS;
 use crate::frontend::read_policy::{AdmittedSql, PolicyError, ReadAction};
 use pg_raw_parse::{ConstValue, Node, nodes};
@@ -38,7 +38,7 @@ pub(super) fn prove(
     if declared.len() > MAX_DECLARED_PARAMETERS
         || declared
             .iter()
-            .any(|oid| *oid != 0 && !registry::scalar_type(*oid))
+            .any(|oid| *oid != 0 && !catalog.registry.scalar_type(*oid))
     {
         return Err(PolicyError::unsupported());
     }
@@ -60,7 +60,7 @@ pub(super) fn prove(
     let mut parameters = vec![None; highest.max(declared.len())];
     for (index, oid) in declared.iter().enumerate() {
         if *oid != 0 {
-            if !registry::scalar_type(*oid) {
+            if !catalog.registry.scalar_type(*oid) {
                 return Err(PolicyError::unsupported());
             }
             parameters[index] = Some(*oid);
@@ -97,7 +97,7 @@ impl Resolver<'_> {
         }
     }
     fn constrain(&mut self, ty: Ty, target: u32, implicit: bool) -> Result<u32> {
-        if !registry::scalar_type(target) {
+        if !self.catalog.registry.scalar_type(target) {
             return Err(PolicyError::unsupported());
         }
         match ty {
@@ -108,7 +108,8 @@ impl Resolver<'_> {
             _ => match self.known(ty) {
                 None if ty == Ty::Unknown => Ok(target),
                 Some(source)
-                    if source == target || registry::cast_allowed(source, target, implicit) =>
+                    if source == target
+                        || self.catalog.registry.cast_allowed(source, target, implicit) =>
                 {
                     Ok(target)
                 }
@@ -118,7 +119,7 @@ impl Resolver<'_> {
     }
     fn output(&mut self, ty: Ty) -> Result<u32> {
         match self.known(ty) {
-            Some(oid) if registry::scalar_type(oid) => Ok(oid),
+            Some(oid) if self.catalog.registry.scalar_type(oid) => Ok(oid),
             None if ty == Ty::Unknown => Ok(25),
             _ => Err(PolicyError::unsupported()),
         }
@@ -146,7 +147,7 @@ impl Resolver<'_> {
             l.ok_or_else(PolicyError::unsupported)?,
             r.ok_or_else(PolicyError::unsupported)?,
         );
-        if let Some(result) = registry::operator_result(name, Some(l), r) {
+        if let Some(result) = self.catalog.registry.operator_result(name, Some(l), r) {
             return Ok(result);
         }
         // varchar is binary-coercible to text; no function executes in this step.
@@ -155,10 +156,13 @@ impl Resolver<'_> {
             if r == 1043 { 25 } else { r },
         );
         if (l, r) != (new_l, new_r)
-            && (l == new_l || registry::cast_allowed(l, new_l, true))
-            && (r == new_r || registry::cast_allowed(r, new_r, true))
+            && (l == new_l || self.catalog.registry.cast_allowed(l, new_l, true))
+            && (r == new_r || self.catalog.registry.cast_allowed(r, new_r, true))
         {
-            return registry::operator_result(name, Some(new_l), new_r)
+            return self
+                .catalog
+                .registry
+                .operator_result(name, Some(new_l), new_r)
                 .ok_or_else(PolicyError::unsupported);
         }
         Err(PolicyError::unsupported())
@@ -247,7 +251,11 @@ impl Resolver<'_> {
                     [name] | ["pg_catalog", name] => *name,
                     _ => return Err(PolicyError::unsupported()),
                 };
-                let target = registry::type_oid(name).ok_or_else(PolicyError::unsupported)?;
+                let target = self
+                    .catalog
+                    .registry
+                    .type_oid(name)
+                    .ok_or_else(PolicyError::unsupported)?;
                 let source = self.expression(cast.arg(), scope)?;
                 self.constrain(source, target, false)?
             }
@@ -260,7 +268,9 @@ impl Resolver<'_> {
                 let right = self.expression(expr.rexpr(), scope)?;
                 if matches!(expr.lexpr(), Node::None) {
                     let right = self.output(right)?;
-                    registry::operator_result(name, None, right)
+                    self.catalog
+                        .registry
+                        .operator_result(name, None, right)
                         .ok_or_else(PolicyError::unsupported)?
                 } else {
                     let left = self.expression(expr.lexpr(), scope)?;
@@ -272,7 +282,11 @@ impl Resolver<'_> {
                         let left = self.known(left).or_else(|| self.known(right)).unwrap_or(25);
                         let right = self.known(right).unwrap_or(left);
                         if left == 1043
-                            && registry::operator_result(name, Some(left), right).is_none()
+                            && self
+                                .catalog
+                                .registry
+                                .operator_result(name, Some(left), right)
+                                .is_none()
                         {
                             25
                         } else {
@@ -300,7 +314,9 @@ impl Resolver<'_> {
                     let ty = self.expression(arg, scope)?;
                     arguments.push(self.output(ty)?);
                 }
-                registry::aggregate_result(name, &arguments, function.agg_star)
+                self.catalog
+                    .registry
+                    .aggregate_result(name, &arguments, function.agg_star)
                     .ok_or_else(PolicyError::unsupported)?
             }
             Node::BoolExpr(expr) => {
@@ -372,7 +388,7 @@ impl Resolver<'_> {
             }
             _ => return Err(PolicyError::unsupported()),
         };
-        if !registry::scalar_type(oid) {
+        if !self.catalog.registry.scalar_type(oid) {
             return Err(PolicyError::unsupported());
         }
         Ok(Ty::Known(oid))
@@ -656,7 +672,7 @@ mod tests {
     use crate::frontend::read_policy::admit_sql;
     fn catalog() -> CatalogSnapshot {
         CatalogSnapshot {
-            server_major: 18,
+            registry: super::super::registry::ReadRegistry::for_major(18).unwrap(),
             transaction_generation: 1,
             database_oid: 1,
             role_oid: 2,

@@ -1,5 +1,20 @@
 use super::{rows::RelationRow, rows::RoleRow};
 
+#[test]
+fn fixed_catalog_queries_parse_for_each_supported_major() {
+    for major in [12, 18] {
+        let registry = super::registry::ReadRegistry::for_major(major).unwrap();
+        for index in 0..9 {
+            let query = super::catalog_query(&registry, index);
+            assert!(!query.is_empty(), "missing PG{major} catalog query {index}");
+            assert!(
+                pg_raw_parse::parse(query).is_ok(),
+                "fixed PG{major} catalog query {index} does not parse"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn strict_read_catalog_gate_proves_ordinary_table_and_denies_role_or_visible_overload() {
     use crate::{
@@ -66,28 +81,47 @@ async fn strict_read_catalog_gate_proves_ordinary_table_and_denies_role_or_visib
         {
             return false;
         }
-        let verified =
-            match super::CatalogSnapshot::load(server, &admitted.catalog, generation).await {
-                Ok(snapshot) => match snapshot.identity(policy, "app", generation) {
-                    Ok(identity) => {
-                        match super::verify_parse(policy, &admitted, &snapshot, identity, &[]) {
-                            Ok(_) => true,
-                            Err(error) => {
-                                eprintln!("strict catalog verify denied: {}", error.reason());
-                                false
-                            }
+        let verified = match super::CatalogSnapshot::load(server, &admitted.catalog, generation)
+            .await
+        {
+            Ok(snapshot) => match snapshot.identity(policy, "app", generation) {
+                Ok(identity) => {
+                    match super::verify_parse(policy, &admitted, &snapshot, identity.clone(), &[]) {
+                        Ok(proof) => {
+                            let wrong_major = if identity.backend_server_major == 12 {
+                                18
+                            } else {
+                                12
+                            };
+                            let mut mismatched_identity = identity.clone();
+                            mismatched_identity.backend_server_major = wrong_major;
+                            proof.matches_identity(&identity)
+                                && !proof.matches_identity(&mismatched_identity)
+                                && super::verify_parse(
+                                    policy,
+                                    &admitted,
+                                    &snapshot,
+                                    mismatched_identity,
+                                    &[],
+                                )
+                                .is_err()
+                        }
+                        Err(error) => {
+                            eprintln!("strict catalog verify denied: {}", error.reason());
+                            false
                         }
                     }
-                    Err(error) => {
-                        eprintln!("strict catalog identity denied: {}", error.reason());
-                        false
-                    }
-                },
+                }
                 Err(error) => {
-                    eprintln!("strict catalog load denied: {}", error.reason());
+                    eprintln!("strict catalog identity denied: {}", error.reason());
                     false
                 }
-            };
+            },
+            Err(error) => {
+                eprintln!("strict catalog load denied: {}", error.reason());
+                false
+            }
+        };
         let finish = transaction.finish(server, false).await;
         verified && finish.is_ok() && transaction.state == ReadTxState::Idle
     }

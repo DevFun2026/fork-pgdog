@@ -1,6 +1,6 @@
 # PgDog fork: system architecture
 
-Generated: 2026-10-12T16:35:55+07:00 | Commit: 7777863464e5
+Generated: 2026-10-13T08:39:56+07:00 | Commit: 66832bfa7bf8
 
 ## Components
 
@@ -14,7 +14,7 @@ Generated: 2026-10-12T16:35:55+07:00 | Commit: 7777863464e5
 - **operator-secrets** — Operator Configuration and Secrets (`external-configuration`): Provides pgdog.toml via one inline/existing ConfigMap/Secret source, required existing users.toml Secret and optional TLS files. External changes/restoration require explicit operator rollout and version management. [boundary: cluster-secret-store]
 - **owner-release-receipt** — Source-bound Owner Release Receipt (`authorization-evidence`): Opt-in schema-3 receipt retains original single/partitioned review identities and Standard assessments; validates source/workflow merged PR parent/tree identity, live main, owner approval and four immutable CI witnesses. Drafts cannot authorize writes; the old signed and first-release paths remain unchanged. [boundary: github-owner-to-protected-ci]
 - **pgdog-proxy** — PgDog Proxy (`rust-service`): Contains the application workspace at applications/pgdog/ and implements PostgreSQL protocol handling, authentication, pooling, routing, and SQL execution forwarding. Existing upstream behavior; no production deployment configured by this import. [boundary: proxy-process]
-- **postgresql** — PostgreSQL (`database`): Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup. [boundary: database-process]
+- **postgresql** — PostgreSQL (`database`): Executes forwarded queries. Strict-read verification requires isolated pinned PostgreSQL 12 and 18 fixtures; production infrastructure and actual icondo catalog compatibility remain operator validation. [boundary: database-process]
 - **project-memory** — Project Memory (`local-storage`): Stores private candidates locally; retrieves fresh canonical summaries with ranked top-k and bounded context. [boundary: local-repository]
 - **provider-adapters** — Provider Adapters (`adapter`): Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles. [boundary: provider-cli-process]
 - **read-manifest** — Reviewed Read Manifest (`external-configuration`): Closed TOML database aliases, exact ordinary-table names and schema revision; loaded and hashed once at process startup from a protected read-only ConfigMap. An upper bound for catalog proof, not permission inferred from names. [boundary: operator-to-read-process]
@@ -22,7 +22,7 @@ Generated: 2026-10-12T16:35:55+07:00 | Commit: 7777863464e5
 - **review-engine** — Cross-Review Engine (`orchestrator`): Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory. [boundary: local-repository]
 - **runtime** — Agent Runtime (`python-cli`): Runs configuration, evidence, workflow, documentation, review, security, and release commands. [boundary: local-repository]
 - **sql-client** — PostgreSQL Client (`client`): Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data. [boundary: client-process]
-- **strict-read-policy** — Strict Read Enforcement (`authorization-boundary`): Opt-in immutable process policy: bounds and admits original SQL, proves the selected PostgreSQL 18 catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/objects deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers. [boundary: untrusted-client-to-protected-backend]
+- **strict-read-policy** — Strict Read Enforcement (`authorization-boundary`): Opt-in immutable process policy: bounds and admits original SQL, selects a pinned PostgreSQL 12 or 18 registry per backend snapshot, proves the complete catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/functions/objects or catalog mismatches deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers. [boundary: untrusted-client-to-protected-backend]
 
 ## Relationships
 

@@ -4,6 +4,7 @@ set -euo pipefail
 umask 077
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 image=''
+postgres_major=18
 chart="$root/charts/fork-pgdog"
 task_dir=''
 cluster=''
@@ -49,9 +50,16 @@ while (($#)); do
   case "$1" in
     --image) image=${2:?}; shift 2 ;;
     --chart) chart=${2:?}; shift 2 ;;
-    *) echo 'Usage: strict-read-helm-smoke.sh --image IMAGE [--chart PATH]' >&2; exit 2 ;;
+    --postgres-major) postgres_major=${2:?}; shift 2 ;;
+    *) echo 'Usage: strict-read-helm-smoke.sh --image IMAGE [--chart PATH] [--postgres-major 12|18]' >&2; exit 2 ;;
   esac
 done
+case "$postgres_major" in
+  12) postgres_fixture="$root/tests/artifacts/kubernetes/postgres-pg12.yaml"; postgres_prefix='postgres:12.22-bookworm' ;;
+  18) postgres_fixture="$root/tests/artifacts/kubernetes/postgres.yaml"; postgres_prefix='postgres:18' ;;
+  *) echo 'Only PostgreSQL 12 and 18 fixtures are supported' >&2; exit 2 ;;
+esac
+postgres_local_tag="postgres:${postgres_major}-strict-read-smoke"
 [[ -n "$image" && "$image" != -* && "$image" != *@* && "$image" == *:* ]] || {
   echo 'A local tagged image is required' >&2; exit 2;
 }
@@ -84,17 +92,17 @@ export KUBECONFIG="$config"
 k() { kubectl --kubeconfig "$config" --context "$context" --namespace "$namespace" "$@"; }
 h() { helm --kubeconfig "$config" --kube-context "$context" --namespace "$namespace" "$@"; }
 
-postgres_pinned=$(python3 - "$root/tests/artifacts/kubernetes/postgres.yaml" <<'PY'
+postgres_pinned=$(python3 - "$postgres_fixture" <<'PY'
 import sys, yaml
 documents = list(yaml.safe_load_all(open(sys.argv[1])))
 deployment = next(d for d in documents if d.get("kind") == "Deployment")
 print(deployment["spec"]["template"]["spec"]["containers"][0]["image"])
 PY
 )
-[[ "$postgres_pinned" == postgres:18@sha256:* ]] || { echo 'PostgreSQL fixture image is not digest-pinned' >&2; exit 1; }
+[[ "$postgres_pinned" == "$postgres_prefix"@sha256:* ]] || { echo 'PostgreSQL fixture image is not digest-pinned for the selected major' >&2; exit 1; }
 docker pull "$postgres_pinned" >/dev/null
 postgres_image_id=$(docker image inspect --format '{{.Id}}' "$postgres_pinned")
-docker tag "$postgres_image_id" postgres:18-strict-read-smoke
+docker tag "$postgres_image_id" "$postgres_local_tag"
 
 kind create cluster --name "$cluster" --kubeconfig "$config" \
   --config "$root/tests/artifacts/kubernetes/kind.yaml" \
@@ -102,7 +110,7 @@ kind create cluster --name "$cluster" --kubeconfig "$config" \
 # Kind handles its own failed-create cleanup. Our trap owns only a successfully
 # created cluster; a collision or refused create must never delete another one.
 cluster_owned=true
-kind load docker-image "$image" postgres:18-strict-read-smoke --name "$cluster"
+kind load docker-image "$image" "$postgres_local_tag" --name "$cluster"
 k apply -f - <<YAML
 apiVersion: v1
 kind: Namespace
@@ -110,12 +118,12 @@ metadata:
   name: $namespace
   labels: {app.kubernetes.io/part-of: fork-pgdog-strict-read-smoke}
 YAML
-python3 - "$root/tests/artifacts/kubernetes/postgres.yaml" "$task_dir/postgres.yaml" <<'PY'
+python3 - "$postgres_fixture" "$task_dir/postgres.yaml" "$postgres_local_tag" <<'PY'
 import sys, yaml
 documents = list(yaml.safe_load_all(open(sys.argv[1])))
 for document in documents:
     if document.get("kind") == "Deployment":
-        document["spec"]["template"]["spec"]["containers"][0]["image"] = "postgres:18-strict-read-smoke"
+        document["spec"]["template"]["spec"]["containers"][0]["image"] = sys.argv[3]
 with open(sys.argv[2], "w") as stream:
     yaml.safe_dump_all(documents, stream, sort_keys=False)
 PY
@@ -350,6 +358,6 @@ for p in pods:
  assert len(runtime)==1 and runtime[0].get("ready") is True and runtime[0].get("restartCount",0)==0, "PgDog is missing, not ready or restarted"'
 
 mkdir -p "$(dirname "$smoke_report")"
-printf '{"status":"passed","cluster":"%s","baseline_source_sha":"%s","baseline_evidence":"source_binary_rejected_strict_cli","strict_read":"read_only","write_endpoint":"dml_succeeded","manifest":"explicit_restart_only","selectors":"disjoint"}\n' \
-  "$cluster" "$baseline_source_sha" > "$smoke_report"
+printf '{"status":"passed","cluster":"%s","postgres_major":%s,"postgres_image":"%s","baseline_source_sha":"%s","baseline_evidence":"source_binary_rejected_strict_cli","strict_read":"read_only","write_endpoint":"dml_succeeded","manifest":"explicit_restart_only","selectors":"disjoint"}\n' \
+  "$cluster" "$postgres_major" "$postgres_pinned" "$baseline_source_sha" > "$smoke_report"
 echo 'PASS paired strict-read/unrestricted Services, DML-capable role, backend snapshots, immutable manifest restart and configcheck failure'

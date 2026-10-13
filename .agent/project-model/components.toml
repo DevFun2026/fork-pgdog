@@ -70,7 +70,7 @@ trust_boundary = "proxy-process"
 id = "strict-read-policy"
 name = "Strict Read Enforcement"
 kind = "authorization-boundary"
-responsibility = "Opt-in immutable process policy: bounds and admits original SQL, proves the selected PostgreSQL 18 catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/objects deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers."
+responsibility = "Opt-in immutable process policy: bounds and admits original SQL, selects a pinned PostgreSQL 12 or 18 registry per backend snapshot, proves the complete catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/functions/objects or catalog mismatches deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers."
 trust_boundary = "untrusted-client-to-protected-backend"
 
 [[components]]
@@ -84,7 +84,7 @@ trust_boundary = "operator-to-read-process"
 id = "postgresql"
 name = "PostgreSQL"
 kind = "database"
-responsibility = "Executes forwarded queries. Verification uses isolated PostgreSQL 18 fixtures; production infrastructure is outside this repository setup."
+responsibility = "Executes forwarded queries. Strict-read verification requires isolated pinned PostgreSQL 12 and 18 fixtures; production infrastructure and actual icondo catalog compatibility remain operator validation."
 trust_boundary = "database-process"
 
 [[components]]

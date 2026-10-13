@@ -17,6 +17,7 @@ use self::rows::{ColumnRow, RelationRow, RoleRow};
 pub(crate) struct CatalogIdentity {
     pub(crate) backend_database_oid: u32,
     pub(crate) backend_role_oid: u32,
+    pub(crate) backend_server_major: u32,
     pub(crate) connection: crate::net::messages::BackendPid,
     pub(crate) transaction_generation: u64,
     pub(crate) manifest_digest: [u8; 32],
@@ -30,6 +31,7 @@ impl CatalogIdentity {
         Self {
             backend_database_oid: 1,
             backend_role_oid: 2,
+            backend_server_major: 18,
             connection: crate::net::messages::BackendPid::for_test(3),
             transaction_generation,
             manifest_digest: [4; 32],
@@ -50,7 +52,7 @@ struct CatalogRelation {
 pub(crate) struct CatalogSnapshot {
     database_oid: u32,
     role_oid: u32,
-    server_major: u32,
+    registry: registry::ReadRegistry,
     connection: crate::net::messages::BackendPid,
     transaction_generation: u64,
     search_path: Vec<String>,
@@ -126,7 +128,10 @@ impl CatalogSnapshot {
         }
 
         let path_rows = server
-            .fetch_all::<String>(ServerRequest::strict_internal(catalog_query(0), &[]))
+            .fetch_all::<String>(ServerRequest::strict_internal(
+                preselection_catalog_query(0),
+                &[],
+            ))
             .await
             .map_err(|_| PolicyError::unsupported())?;
         let search_path = path_rows
@@ -141,16 +146,18 @@ impl CatalogSnapshot {
             return Err(PolicyError::unsupported());
         }
         let identity_rows = server
-            .fetch_all::<IdentityRow>(ServerRequest::strict_internal(catalog_query(1), &[]))
+            .fetch_all::<IdentityRow>(ServerRequest::strict_internal(
+                preselection_catalog_query(1),
+                &[],
+            ))
             .await
             .map_err(|_| PolicyError::unsupported())?;
         let identity = identity_rows
             .first()
             .filter(|row| row.valid)
             .ok_or_else(PolicyError::unsupported)?;
-        if registry::server_major() != Some(identity.server_major) {
-            return Err(PolicyError::unsupported());
-        }
+        let registry = registry::ReadRegistry::for_major(identity.server_major)
+            .ok_or_else(PolicyError::unsupported)?;
 
         let function_names = names_csv(&requirements.functions);
         let operator_names = names_csv(&requirements.operators);
@@ -158,12 +165,14 @@ impl CatalogSnapshot {
             BindParameter::new(function_names.as_bytes()),
             BindParameter::new(operator_names.as_bytes()),
             BindParameter::new(
-                registry::candidate_oids_csv("pg_proc", &requirements.functions)
+                registry
+                    .candidate_oids_csv("pg_proc", &requirements.functions)
                     .ok_or_else(PolicyError::unsupported)?
                     .as_bytes(),
             ),
             BindParameter::new(
-                registry::candidate_oids_csv("pg_operator", &requirements.operators)
+                registry
+                    .candidate_oids_csv("pg_operator", &requirements.operators)
                     .ok_or_else(PolicyError::unsupported)?
                     .as_bytes(),
             ),
@@ -183,7 +192,7 @@ impl CatalogSnapshot {
         // chooses a trusted pg_catalog signature.
         let overload_rows = server
             .fetch_all::<BoolRow>(ServerRequest::strict_internal(
-                catalog_query(6),
+                catalog_query(&registry, 6),
                 &overload_params,
             ))
             .await
@@ -197,30 +206,35 @@ impl CatalogSnapshot {
             return Err(PolicyError::unsupported());
         }
 
-        let operator_family_oids =
-            registry::expected_oids_csv("pg_opfamily").ok_or_else(PolicyError::unsupported)?;
-        let amop_oids =
-            registry::expected_oids_csv("pg_amop").ok_or_else(PolicyError::unsupported)?;
-        let amproc_oids =
-            registry::expected_oids_csv("pg_amproc").ok_or_else(PolicyError::unsupported)?;
-        let cast_oids =
-            registry::expected_oids_csv("pg_cast").ok_or_else(PolicyError::unsupported)?;
+        let operator_family_oids = registry
+            .expected_oids_csv("pg_opfamily")
+            .ok_or_else(PolicyError::unsupported)?;
+        let amop_oids = registry
+            .expected_oids_csv("pg_amop")
+            .ok_or_else(PolicyError::unsupported)?;
+        let amproc_oids = registry
+            .expected_oids_csv("pg_amproc")
+            .ok_or_else(PolicyError::unsupported)?;
+        let cast_oids = registry
+            .expected_oids_csv("pg_cast")
+            .ok_or_else(PolicyError::unsupported)?;
         let dependency_params = [
-            BindParameter::new(registry::scalar_oids_csv().as_bytes()),
+            BindParameter::new(registry.scalar_oids_csv().as_bytes()),
             BindParameter::new(
-                registry::expected_oids_csv("pg_opclass")
+                registry
+                    .expected_oids_csv("pg_opclass")
                     .ok_or_else(PolicyError::unsupported)?
                     .as_bytes(),
             ),
             BindParameter::new(operator_family_oids.as_bytes()),
             BindParameter::new(amop_oids.as_bytes()),
             BindParameter::new(amproc_oids.as_bytes()),
-            BindParameter::new(registry::scalar_oids_csv().as_bytes()),
+            BindParameter::new(registry.scalar_oids_csv().as_bytes()),
             BindParameter::new(cast_oids.as_bytes()),
         ];
         let dependency_rows = server
             .fetch_all::<DependencyRow>(ServerRequest::strict_internal(
-                catalog_query(8),
+                catalog_query(&registry, 8),
                 &dependency_params,
             ))
             .await
@@ -239,14 +253,21 @@ impl CatalogSnapshot {
         // dependency registry before allowing its resolver entries to be used.
         let oid_lists = registry::CATALOG_TABLES
             .iter()
-            .map(|table| registry::expected_oids_csv(table).ok_or_else(PolicyError::unsupported))
+            .map(|table| {
+                registry
+                    .expected_oids_csv(table)
+                    .ok_or_else(PolicyError::unsupported)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let params = oid_lists
             .iter()
             .map(|ids| BindParameter::new(ids.as_bytes()))
             .collect::<Vec<_>>();
         let actual_rows = server
-            .fetch_all::<RegistryRow>(ServerRequest::strict_internal(catalog_query(7), &params))
+            .fetch_all::<RegistryRow>(ServerRequest::strict_internal(
+                catalog_query(&registry, 7),
+                &params,
+            ))
             .await
             .map_err(|_| PolicyError::unsupported())?;
         let mut actual_counts = BTreeMap::<String, usize>::new();
@@ -269,13 +290,13 @@ impl CatalogSnapshot {
                     .or_default()
                     .push(actual.clone());
             }
-            if !registry::exact_catalog_record(&row.table, row.oid, &actual) {
+            if !registry.exact_catalog_record(&row.table, row.oid, &actual) {
                 #[cfg(test)]
                 eprintln!(
                     "strict catalog mismatch table={} oid={} fields={:?}",
                     row.table,
                     row.oid,
-                    registry::catalog_record_mismatch_fields(&row.table, row.oid, &actual),
+                    registry.catalog_record_mismatch_fields(&row.table, row.oid, &actual),
                 );
                 registry_matches = false;
             }
@@ -284,8 +305,8 @@ impl CatalogSnapshot {
         #[cfg(test)]
         if capture_live_rows {
             let root = serde_json::json!({
-                "postgres_major": registry::server_major().unwrap_or_default(),
-                "source_image": registry::source_image().unwrap_or_default(),
+                "postgres_major": registry.major(),
+                "source_image": registry.source_image().unwrap_or_default(),
                 "tables": live_rows,
             });
             let path = std::env::var_os("STRICT_READ_CAPTURE_REGISTRY")
@@ -297,7 +318,7 @@ impl CatalogSnapshot {
             .expect("write disposable live catalog capture");
         }
         for table in registry::CATALOG_TABLES {
-            if actual_counts.get(*table).copied() != registry::expected_count(table) {
+            if actual_counts.get(*table).copied() != registry.expected_count(table) {
                 registry_matches = false;
             }
         }
@@ -306,7 +327,10 @@ impl CatalogSnapshot {
         }
 
         let role_rows = server
-            .fetch_all::<RoleRow>(ServerRequest::strict_internal(catalog_query(5), &[]))
+            .fetch_all::<RoleRow>(ServerRequest::strict_internal(
+                catalog_query(&registry, 5),
+                &[],
+            ))
             .await
             .map_err(|_| PolicyError::unsupported())?;
         let role = role_rows
@@ -325,7 +349,10 @@ impl CatalogSnapshot {
             }
             let params = [BindParameter::new(requested.as_bytes())];
             let relation_rows = server
-                .fetch_all::<RelationRow>(ServerRequest::strict_internal(catalog_query(2), &params))
+                .fetch_all::<RelationRow>(ServerRequest::strict_internal(
+                    catalog_query(&registry, 2),
+                    &params,
+                ))
                 .await
                 .map_err(|_| PolicyError::unsupported())?;
             let relation = relation_rows
@@ -339,23 +366,24 @@ impl CatalogSnapshot {
             let relation_id = BindParameter::new(relation.oid.to_string().as_bytes());
             let columns = server
                 .fetch_all::<ColumnRow>(ServerRequest::strict_internal(
-                    catalog_query(3),
+                    catalog_query(&registry, 3),
                     std::slice::from_ref(&relation_id),
                 ))
                 .await
                 .map_err(|_| PolicyError::unsupported())?;
-            if columns.is_empty() || columns.iter().any(|column| !column.is_supported()) {
+            if columns.is_empty() || columns.iter().any(|column| !column.is_supported(&registry)) {
                 return Err(PolicyError::unsupported());
             }
-            let opclass_ids =
-                registry::expected_opclass_oids_csv().ok_or_else(PolicyError::unsupported)?;
+            let opclass_ids = registry
+                .expected_opclass_oids_csv()
+                .ok_or_else(PolicyError::unsupported)?;
             let index_params = [
                 relation_id.clone(),
                 BindParameter::new(opclass_ids.as_bytes()),
             ];
             let indexes = server
                 .fetch_all::<BoolRow>(ServerRequest::strict_internal(
-                    catalog_query(4),
+                    catalog_query(&registry, 4),
                     &index_params,
                 ))
                 .await
@@ -377,7 +405,7 @@ impl CatalogSnapshot {
         Ok(Self {
             database_oid: identity.database_oid,
             role_oid: identity.role_oid,
-            server_major: identity.server_major,
+            registry,
             connection: server.id(),
             transaction_generation,
             search_path,
@@ -401,6 +429,7 @@ impl CatalogSnapshot {
         Ok(CatalogIdentity {
             backend_database_oid: self.database_oid,
             backend_role_oid: self.role_oid,
+            backend_server_major: self.registry.major(),
             connection: self.connection,
             transaction_generation: {
                 if transaction_generation != self.transaction_generation {
@@ -424,6 +453,7 @@ pub(crate) fn verify_parse(
 ) -> Result<CatalogProof, PolicyError> {
     if identity.backend_database_oid != catalog.database_oid
         || identity.backend_role_oid != catalog.role_oid
+        || identity.backend_server_major != catalog.registry.major()
         || identity.connection != catalog.connection
         || identity.transaction_generation != catalog.transaction_generation
         || identity.manifest_digest != policy.digest().0
@@ -465,7 +495,11 @@ pub(crate) fn verify_parse(
         }
         // Every column is checked, not just referenced columns: row/tuple
         // expansion and planner dependency paths cannot hide custom types.
-        if relation.columns.iter().any(|column| !column.is_supported()) {
+        if relation
+            .columns
+            .iter()
+            .any(|column| !column.is_supported(&catalog.registry))
+        {
             return Err(PolicyError::unsupported());
         }
     }
@@ -581,8 +615,17 @@ impl From<DataRow> for RegistryRow {
 }
 
 const CATALOG_SQL: &str = include_str!("catalog.sql");
-fn catalog_query(index: usize) -> &'static str {
+fn preselection_catalog_query(index: usize) -> &'static str {
     CATALOG_SQL.split(';').nth(index).unwrap_or_default().trim()
+}
+
+fn catalog_query(registry: &registry::ReadRegistry, index: usize) -> &'static str {
+    let sql = match registry.major() {
+        12 => include_str!("catalog-pg12.sql"),
+        18 => CATALOG_SQL,
+        _ => return "",
+    };
+    sql.split(';').nth(index).unwrap_or_default().trim()
 }
 
 fn parse_pg_array(value: &str) -> Option<Vec<String>> {
