@@ -178,8 +178,7 @@ impl ReadRegistry {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .filter(|key| {
-                expected.get(key.as_str()).map(normalize)
-                    != actual.get(key.as_str()).map(normalize)
+                expected.get(key.as_str()).map(normalize) != actual.get(key.as_str()).map(normalize)
             })
             .map(|key| key.to_string())
             .collect()

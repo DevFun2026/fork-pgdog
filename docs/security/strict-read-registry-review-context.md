@@ -24,7 +24,7 @@ exact excerpt bytes, so any source change requires refreshing this context.
 [
   {
     "path": "applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs",
-    "sha256": "29dc7909ca705f8da10d985473b9e14bad3f606f3a3ac6eb6d22240ecd435190",
+    "sha256": "4132a80e4a4edf26456ea4d327c1c9b832ec27440052b2ff5b714a3212dffe02",
     "ranges": [
       {
         "start": 31,
