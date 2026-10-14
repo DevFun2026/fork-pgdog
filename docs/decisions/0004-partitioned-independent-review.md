@@ -27,3 +27,24 @@ Rollback disables partition_enabled; old single-package evidence remains valid.
 Specification: ../superpowers/specs/2026-10-05-partitioned-cross-review.md.
 Plan: ../superpowers/plans/2026-10-05-partitioned-cross-review.md.
 Threat-model delta: ../security/partitioned-review-threat-model.md.
+
+## 2026-10-14: Full-read v2 dependency profiles
+
+The repository owner approved complete review infrastructure for all eight
+PG12/PG18 v2 dependency-profile envelopes. The larger artifacts cannot fit the
+previous 2.5 MB aggregate budget, including after record deduplication. Extend
+only the exact profile paths with strict envelope/provenance/selector validation
+and complete catalog-record splitting; do not introduce generic JSON splitting.
+
+The explicit project aggregate limits become 30,000,000 bytes and 8,000,000
+estimated tokens. Per invocation remains 500,000 bytes / 96,000 estimated tokens,
+with a 250,000-byte child target. Conservative runtime defaults stay unchanged.
+The infrastructure must be independently reviewed and enter the trusted base
+before feature review; design approval alone cannot expand feature authority.
+
+Whole source diff reconstruction, child and integration approvals, independent
+provider validation and all normal security/CI/merge gates remain mandatory.
+The tradeoff is more provider invocations and potentially greater cost; estimates
+are not billed usage. Unknown formats and indivisible oversized records block.
+
+Plan: ../superpowers/plans/2026-10-14-fullread-review-infrastructure.md.

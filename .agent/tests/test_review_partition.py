@@ -19,6 +19,16 @@ from agent_cli.review.partition import (
 REGISTRY_PATH = (
     "applications/pgdog/pgdog/src/backend/schema/read_policy/registry-pg18.json"
 )
+PROFILE_PATH = (
+    "applications/pgdog/pgdog/src/backend/schema/read_policy/profiles/"
+    "dependency-pg18-core.json"
+)
+CATALOGS = (
+    "pg_aggregate", "pg_am", "pg_amop", "pg_amproc", "pg_cast",
+    "pg_collation", "pg_enum", "pg_extension", "pg_namespace", "pg_opclass",
+    "pg_operator", "pg_opfamily", "pg_proc", "pg_range", "pg_ts_config",
+    "pg_ts_config_map", "pg_ts_dict", "pg_ts_parser", "pg_ts_template", "pg_type",
+)
 
 
 class PartitionedReviewTests(unittest.TestCase):
@@ -48,6 +58,47 @@ class PartitionedReviewTests(unittest.TestCase):
     def commit_changes(self):
         self.git("add", ".")
         self.git("commit", "-m", "change")
+
+    def dependency_profile(self, *, major=18, extensions=(), rows=None, **overrides):
+        document = {
+            "format": "pgdog-read-dependency-profile/v2",
+            "provenance": {
+                "postgres_major": major,
+                "source_image": {
+                    12: "postgres:12.22-bookworm@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c",
+                    18: "postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722",
+                }[major],
+                "server_version": "12.22" if major == 12 else "18.6",
+                "server_version_num": 120_022 if major == 12 else 180_006,
+                "platform": "linux/arm64",
+                "capture_id": f"fixture-pg{major}",
+            },
+            "enabled_extensions": list(extensions),
+            "catalog": {table: [] for table in CATALOGS},
+            "roots": [],
+            "extensions": [
+                {
+                    "name": name,
+                    "version": (
+                        "1.4" if major == 12 and name == "pg_trgm" else
+                        "1.5" if major == 12 else
+                        "1.6" if name == "pg_trgm" else "1.8"
+                    ),
+                    "namespace": "public",
+                    "members": [],
+                    "derived_members": [],
+                    "fields": {},
+                }
+                for name in extensions
+            ],
+            "module_sha256": {name: "a" * 64 for name in extensions},
+            "client_functions": [],
+            "projection_types": [],
+            "namespace_authority": "actor-namespace-authority/v1",
+        }
+        document["catalog"]["pg_type"] = rows if rows is not None else []
+        document.update(overrides)
+        return json.dumps(document, separators=(",", ":"))
 
     def request(self, **changes):
         values = {
@@ -272,6 +323,159 @@ class PartitionedReviewTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ReviewPackageBlocked, "indivisible"):
             self.build()
+
+    def test_v2_dependency_profile_splits_at_catalog_records_and_reconstructs_exactly(self):
+        rows = [
+            {"identity": index, "fields": {"typname": "type-" + str(index), "padding": "x" * 200}}
+            for index in sorted(range(1, 71), key=str)
+        ]
+        path = PROFILE_PATH
+        self.write(path, self.dependency_profile(rows=rows))
+        self.commit_changes()
+
+        partition = self.build(target_bytes=10_000)
+
+        self.assertGreater(len(partition.children), 1)
+        self.assertEqual(b"".join(child.diff_bytes for child in partition.children), partition.root_package.diff_bytes)
+        spans = [
+            span for entry in partition.manifest["children"] for span in entry["ranges"]
+            if span["kind"] == "profile-catalog-records"
+        ]
+        self.assertTrue(spans)
+        self.assertEqual({span["path"] for span in spans}, {path})
+        records = [record for span in spans for record in span["records"]]
+        self.assertEqual(sum(record["count"] for record in records), len(rows))
+        self.assertEqual({record["table"] for record in records}, {"pg_type"})
+        for child in partition.children:
+            self.assertLessEqual(package_usage(child)["bytes"], 10_000)
+        self.assertEqual(
+            load_partition(partition.root_package.path, root=self.root).manifest,
+            partition.manifest,
+        )
+
+    def test_only_eight_exact_dependency_profile_names_can_be_split(self):
+        cases = (
+            (12, "core", ()),
+            (12, "pg-trgm", ("pg_trgm",)),
+            (12, "btree-gist", ("btree_gist",)),
+            (12, "both", ("btree_gist", "pg_trgm")),
+            (18, "core", ()),
+            (18, "pg-trgm", ("pg_trgm",)),
+            (18, "btree-gist", ("btree_gist",)),
+            (18, "both", ("btree_gist", "pg_trgm")),
+        )
+        for major, selector, extensions in cases:
+            with self.subTest(major=major, selector=selector):
+                self.write("README.md", "initial\n")
+                path = (
+                    "applications/pgdog/pgdog/src/backend/schema/read_policy/profiles/"
+                    f"dependency-pg{major}-{selector}.json"
+                )
+                rows = [{"identity": i, "fields": {"padding": "x" * 200}} for i in sorted(range(1, 71), key=str)]
+                self.write(path, self.dependency_profile(major=major, extensions=extensions, rows=rows))
+                self.commit_changes()
+                partition = self.build(target_bytes=10_000)
+                self.assertEqual(b"".join(child.diff_bytes for child in partition.children), partition.root_package.diff_bytes)
+                self.assertTrue(any(
+                    span["kind"] == "profile-catalog-records"
+                    for child in partition.manifest["children"] for span in child["ranges"]
+                ))
+
+    def test_near_match_dependency_profile_path_is_not_record_split(self):
+        path = PROFILE_PATH.replace("dependency-pg18-core.json", "dependency-pg18-core-copy.json")
+        rows = [{"identity": 1, "fields": {"padding": "x" * 8_000}}]
+        self.write(path, self.dependency_profile(rows=rows))
+        self.commit_changes()
+        with self.assertRaisesRegex(ReviewPackageBlocked, "ordinary changed-file patch"):
+            self.build()
+
+    def test_malformed_profile_envelope_provenance_selector_and_schema_are_not_split(self):
+        valid_rows = [{"identity": 1, "fields": {"padding": "x" * 8_000}}]
+        cases = (
+            ("format", self.dependency_profile(rows=valid_rows, format="pgdog-read-dependency-profile/v1")),
+            ("provenance", self.dependency_profile(rows=valid_rows, provenance={"postgres_major": 12})),
+            (
+                "image-major-prefix-collision",
+                self.dependency_profile(
+                    rows=valid_rows,
+                    provenance={
+                        "postgres_major": 18,
+                        "source_image": "postgres:180@sha256:" + "a" * 64,
+                        "server_version": "18.6",
+                        "server_version_num": 180_006,
+                        "platform": "linux/arm64",
+                        "capture_id": "fixture-pg18",
+                    },
+                ),
+            ),
+            ("selector", self.dependency_profile(rows=valid_rows, enabled_extensions=["pg_trgm"])),
+            ("schema", self.dependency_profile(rows=[{"identity": 1, "fields": "bad"}])),
+            (
+                "unhashable-root-catalog",
+                self.dependency_profile(
+                    rows=valid_rows,
+                    roots=[{"catalog": [], "identity": 1}],
+                ),
+            ),
+            (
+                "unhashable-platform",
+                self.dependency_profile(
+                    rows=valid_rows,
+                    provenance={
+                        "postgres_major": 18,
+                        "source_image": "postgres:18@sha256:" + "a" * 64,
+                        "server_version": "18.6",
+                        "server_version_num": 180_006,
+                        "platform": {},
+                        "capture_id": "fixture-pg18",
+                    },
+                ),
+            ),
+            (
+                "nonstandard-json-number",
+                self.dependency_profile(
+                    rows=[{"identity": 1, "fields": {"name": "ok"}}]
+                ).replace('"name":"ok"', '"name":NaN'),
+            ),
+        )
+        for label, payload in cases:
+            with self.subTest(label=label):
+                self.write(PROFILE_PATH, payload)
+                self.commit_changes()
+                with self.assertRaises(ReviewPackageBlocked):
+                    self.build()
+
+    def test_small_dependency_profile_is_still_schema_validated(self):
+        invalid = self.dependency_profile(
+            rows=[{"identity": 1, "fields": {"name": "ok"}}],
+            format="pgdog-read-dependency-profile/v1",
+        )
+        self.write(PROFILE_PATH, invalid)
+        self.commit_changes()
+        with self.assertRaisesRegex(ReviewPackageBlocked, "v2 envelope"):
+            self.build()
+
+    def test_dependency_profile_with_oversized_single_record_is_blocked(self):
+        self.write(
+            PROFILE_PATH,
+            self.dependency_profile(rows=[{"identity": 1, "fields": {"padding": "x" * 8_000}}]),
+        )
+        self.commit_changes()
+        with self.assertRaisesRegex(ReviewPackageBlocked, "indivisible.*record|record.*exceeds"):
+            self.build()
+
+    def test_dependency_profile_split_ranges_reject_tampering(self):
+        rows = [{"identity": i, "fields": {"padding": "x" * 200}} for i in sorted(range(1, 71), key=str)]
+        self.write(PROFILE_PATH, self.dependency_profile(rows=rows))
+        self.commit_changes()
+        partition = self.build(target_bytes=10_000)
+        manifest_path = partition.root_package.path / "partition.json"
+        original = manifest_path.read_bytes()
+        changed = json.loads(original)
+        changed["children"][0]["ranges"][0]["records"][0]["start"] += 1
+        manifest_path.write_text(json.dumps(changed), encoding="utf-8")
+        with self.assertRaises(ReviewPackageBlocked):
+            load_partition(partition.root_package.path, root=self.root)
 
     def test_oversized_indivisible_registry_record_is_blocked(self):
         self.write(

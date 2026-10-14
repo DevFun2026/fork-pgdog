@@ -201,7 +201,7 @@ The Rust client matrix runs serially and without fail-fast so every case runs.
 Partitioned independent review is opt-in via `agent review --partitioned` and
 requires explicit `--integration-context <path>` contracts. Per-call limits stay
 500,000 bytes / 96,000 estimated tokens; the target is 250,000 bytes, with a
-2,500,000-byte / 800,000-estimated-token aggregate ceiling. These are estimates,
+30,000,000-byte / 8,000,000-estimated-token aggregate ceiling. These are estimates,
 not billed usage. Missing trusted-base `partition_enabled` means disabled.
 
 Preview and approve the exact root manifest for child reviews. Resume with
