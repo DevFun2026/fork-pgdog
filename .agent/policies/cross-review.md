@@ -65,3 +65,14 @@ results block. Integration cannot override a failed child or a confirmed High or
 Critical finding. Reload all constituent evidence at merge, preserving existing
 finding adjudication requirements. This does not authorize provider egress or
 trusted-base integration merely because local packaging succeeds.
+
+## Separately approved terminal retry
+
+Only a supervised exit-0 invocation with unchanged inputs and no valid verdict
+is eligible. Exact retry-manifest approval authorizes one fresh invocation,
+not clearance. All earlier artifacts and markers remain retained; a separately
+validated selected-attempt receipt is required for integration and merge.
+Up to two retry attempts are permitted within the original trusted aggregate
+budgets. Timeout, interruption, missing process-group termination proof and
+valid fail results remain blocked. No automatic audit reset, permission bypass
+or host-authentication fallback is permitted.
