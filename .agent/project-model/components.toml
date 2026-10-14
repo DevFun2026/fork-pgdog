@@ -42,14 +42,14 @@ trust_boundary = "local-repository"
 id = "provider-adapters"
 name = "Provider Adapters"
 kind = "adapter"
-responsibility = "Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model, validates terminal schema output, and uses disposable API-key-mode settings without host profiles."
+responsibility = "Shares generated skills across Claude, Codex, and Gemini via agy; runs bounded review packages inside a fail-closed OS read sandbox. AGY pins a Gemini model and validates terminal schema output using a disposable sandbox environment; an explicitly authorized native host transport can use logged-in authentication with supervised process groups and immutable terminal retry evidence. It does not change global provider permissions."
 trust_boundary = "provider-cli-process"
 
 [[components]]
 id = "review-engine"
 name = "Cross-Review Engine"
 kind = "orchestrator"
-responsibility = "Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations split validated pinned registries and the eight PG12/PG18 v2 dependency profiles at record boundaries, reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory."
+responsibility = "Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations split validated pinned registries and the eight PG12/PG18 v2 dependency profiles at record boundaries, reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory. Separately hash-approved terminal retries retain original evidence, supervise native process groups, pin transport identity, count retry payloads against aggregate budgets and select validated append-only attempt receipts before integration/clearance. Historical ambiguous invocations remain pending."
 trust_boundary = "local-repository"
 
 [[components]]

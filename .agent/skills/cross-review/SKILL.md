@@ -44,3 +44,23 @@ Independence and exact manifest approval are mandatory.
 ## Failure behavior
 
 - Missing CLI/OS sandbox, timeout, quota, invalid output, or mismatch is `review_pending`, never approval.
+
+## Terminal child retries
+
+An incomplete invocation is not a PASS. Never delete its marker or overwrite
+its audit/output to make it dispatchable. An explicitly supervised invocation
+that ended with exit 0 but without a valid verdict may produce a terminal
+receipt. Preview a separate retry manifest binding that receipt, the original
+child artifacts, complete input inventory, transport prompt/argv/executable/model
+identities, attempt limit and root/base/head. Obtain its exact hash approval
+before probing or dispatching the new attempt. The root operation lock protects
+retry and normal dispatch alike.
+
+Retain the original package and use a new clone and attempt record. Integration
+and clearance reload the selected attempt, its approval/receipt and every prior
+binding. Retry payloads count toward existing aggregate budgets; passing children
+are retained unchanged. A valid fail verdict, timeout, interrupted/unknown
+invocation, changed evidence or missing terminal receipt cannot use this retry
+path. Historical native audits without process supervision stay pending. Native
+host execution needs explicit human authorization and never implies OS isolation
+or permission to enable provider tools.
