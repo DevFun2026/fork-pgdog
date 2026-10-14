@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>fd34918def5d</b></span><span>2026-10-14T01:21:37+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>a71240330b67</b></span><span>2026-10-14T10:50:56+07:00</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV fd34918def5d</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV a71240330b67</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">12</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">20</span><span class="k">relationships</span></div><div class="fact"><span class="v">17</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -896,13 +896,15 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>References: <a href="https://owasp.org/projects/asvs" rel="noreferrer">https://owasp.org/projects/asvs</a>, <a href="https://owaspsamm.org/model/" rel="noreferrer">https://owaspsamm.org/model/</a>, and <a href="https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html" rel="noreferrer">https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html</a>.</p></div></details>
 <details class="document"><summary>Strict Read Registry Review Context</summary><div class="document-body"><h3>Source-bound registry review context</h3>
-<p>This supplemental context links the separately pinned PostgreSQL 12/18 catalog snapshots to the strict endpoint&#x27;s type gates. Catalog rows are not an allowlist for every function or operator they describe. The <code>PUBLIC_SCALARS</code> list excludes <code>inet</code> (OID 869) and <code>tid</code> (OID 27); parameter, cast, result and relation-column checks use the same type gate. The snapshot also retains unsupported geometric and internal catalog rows; those rows are not authorized operations.</p>
-<p>SQL admission checks structured TypeName components against exact built-in names before catalog resolution. A quoted single identifier containing a dot is rejected; two separately qualified pg_catalog/type components remain valid. The resolver helper receives an exact base identifier and does not reparse it. Parameter references are held in a BTreeSet, so last() is the maximum index regardless of AST traversal order.</p>
-<p>The complete implementation remains in the review&#x27;s full diff and child ranges; these excerpts supplement that review rather than replace its source coverage. Each entry below binds a full source file SHA-256 and inclusive line ranges. <code>test_registry_review_context.py</code> checks both the complete source hashes and the exact excerpt bytes, so any source change requires refreshing this context.</p>
+<p>This supplemental context links the separately pinned PostgreSQL 12 and 18 catalog snapshots to strict-read admission, catalog proof, and result handling. Catalog rows provide reference facts; they do not authorize every function or operator they describe. The <code>PUBLIC_SCALARS</code> set remains a narrow client-facing type gate for declared parameter OIDs and scalar cast/constraint resolution. The excerpted scalar-column helper also requires an allowed base type with matching catalog I/O OIDs and collation. The full-table relation proof separately validates complete catalog dependencies for expanded projection types, including JSONB, arrays and enums.</p>
+<p>Projection has a distinct output check. A result type is allowed when it is in <code>PUBLIC_SCALARS</code> or when catalog proof establishes both text and binary output capability. That broader output capability does not widen SQL admission or permit arbitrary catalog functions: admission still restricts type syntax and callable names, and catalog resolution checks the reviewed operator or aggregate implementation.</p>
+<p>For <code>pg_proc</code> record comparison, the embedded reference contains function-source strings while captured catalog rows carry opaque SHA-256 markers. The reference strings are hashed locally as UTF-8; live <code>prosrc</code> and <code>prosqlbody</code> values must already be null or a single-field <code>sha256_utf8</code> marker with 64 lowercase hexadecimal characters. The captured source is validated as a marker and is never re-hashed as though it were function text.</p>
+<p>SQL admission checks structured TypeName components against exact built-in names before catalog resolution. A quoted single identifier containing a dot is rejected; two separately qualified <code>pg_catalog</code> and type components remain valid. The resolver receives an exact base identifier and does not reparse it. Parameter references are held in a <code>BTreeSet</code>, so <code>last()</code> is the maximum index regardless of AST traversal order.</p>
+<p>The snapshots retain unsupported geometric and internal catalog rows; their presence does not authorize those types or operations. The excerpts below supplement the review&#x27;s full source coverage. Each entry binds a complete source-file SHA-256 and inclusive line ranges. <code>test_registry_review_context.py</code> checks the complete hashes and exact excerpt bytes, so any source change requires refreshing this context.</p>
 <pre><code>[
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs&quot;,
-    &quot;sha256&quot;: &quot;4132a80e4a4edf26456ea4d327c1c9b832ec27440052b2ff5b714a3212dffe02&quot;,
+    &quot;sha256&quot;: &quot;4975618c13ca79d0a14d436539f4013ebe804e1cfad1b26e9913d4098f3c7e78&quot;,
     &quot;ranges&quot;: [
       {
         &quot;start&quot;: 31,
@@ -917,22 +919,30 @@ superseded-by: null</pre></details>
         &quot;end&quot;: 73
       },
       {
-        &quot;start&quot;: 192,
-        &quot;end&quot;: 203
+        &quot;start&quot;: 157,
+        &quot;end&quot;: 167
       },
       {
-        &quot;start&quot;: 205,
+        &quot;start&quot;: 204,
         &quot;end&quot;: 215
       },
       {
         &quot;start&quot;: 217,
-        &quot;end&quot;: 226
+        &quot;end&quot;: 227
+      },
+      {
+        &quot;start&quot;: 229,
+        &quot;end&quot;: 238
+      },
+      {
+        &quot;start&quot;: 357,
+        &quot;end&quot;: 406
       }
     ]
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs&quot;,
-    &quot;sha256&quot;: &quot;fec51b7c5708f16c0cece3223d0da0b62fba0ed6c6f17986f7db39078cac8819&quot;,
+    &quot;sha256&quot;: &quot;4fae4cd360a2f053777108d81c9ff4f983492938c9c9c55d79f7d078ffb879b1&quot;,
     &quot;ranges&quot;: [
       {
         &quot;start&quot;: 31,
@@ -950,25 +960,29 @@ superseded-by: null</pre></details>
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs&quot;,
-    &quot;sha256&quot;: &quot;0f874f4e9be0ae8dfbf5a5f9860c90f7164f3aad67f4a040593a3af3494a71c1&quot;,
+    &quot;sha256&quot;: &quot;560319c5a3c11026f570e3819f9f3cff850486362912d5e84cbfc66b57840ce6&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 115,
-        &quot;end&quot;: 135
+        &quot;start&quot;: 216,
+        &quot;end&quot;: 236
       }
     ]
   },
   {
     &quot;path&quot;: &quot;applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs&quot;,
-    &quot;sha256&quot;: &quot;bdb4f958b8b7c20f8e41fabcf00d846b64f5f0962a9dccb1468612328fc04165&quot;,
+    &quot;sha256&quot;: &quot;89ad0d2be46f90cb0ba0d4aaa107e763c0d782de2dc138c1a8dd38361e5ed8b1&quot;,
     &quot;ranges&quot;: [
       {
-        &quot;start&quot;: 417,
-        &quot;end&quot;: 443
+        &quot;start&quot;: 184,
+        &quot;end&quot;: 190
       },
       {
-        &quot;start&quot;: 447,
-        &quot;end&quot;: 467
+        &quot;start&quot;: 584,
+        &quot;end&quot;: 612
+      },
+      {
+        &quot;start&quot;: 614,
+        &quot;end&quot;: 690
       }
     ]
   },
@@ -1028,7 +1042,19 @@ superseded-by: null</pre></details>
                     .is_some_and(|rows| !rows.is_empty())
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:192-203</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:157-167</h4>
+<pre><code>    pub(crate) fn exact_catalog_record(&amp;self, table_name: &amp;str, oid: u32, actual: &amp;Value) -&gt; bool {
+        self.row_by_oid(table_name, oid).is_some_and(|expected| {
+            let Some(expected) = normalize_catalog_record(table_name, expected, true) else {
+                return false;
+            };
+            let Some(actual) = normalize_catalog_record(table_name, actual, false) else {
+                return false;
+            };
+            expected == actual
+        })
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:204-215</h4>
 <pre><code>    pub(crate) fn scalar_type(&amp;self, oid: u32) -&gt; bool {
         const PUBLIC_SCALARS: &amp;[u32] = &amp;[
             16, 17, 20, 21, 23, 25, 700, 701, 1042, 1043, 1082, 1083, 1114, 1184, 1186, 1266, 1700,
@@ -1041,7 +1067,7 @@ superseded-by: null</pre></details>
                     &amp;&amp; field_number(row, &quot;typbasetype&quot;) == Some(0)
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:205-215</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:217-227</h4>
 <pre><code>    pub(crate) fn trusted_type_io(&amp;self, oid: u32, name: &amp;str, io: TypeIo, collation: u32) -&gt; bool {
         self.scalar_type(oid)
             &amp;&amp; self.row_by_oid(&quot;pg_type&quot;, oid).is_some_and(|row| {
@@ -1053,7 +1079,7 @@ superseded-by: null</pre></details>
                     &amp;&amp; field_number(row, &quot;typcollation&quot;) == Some(collation)
             })
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:217-226</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:229-238</h4>
 <pre><code>    pub(crate) fn type_oid(&amp;self, name: &amp;str) -&gt; Option&lt;u32&gt; {
         self.table(&quot;pg_type&quot;)?
             .iter()
@@ -1064,6 +1090,57 @@ superseded-by: null</pre></details>
             })
             .and_then(|row| field_number(row, &quot;oid&quot;))
     }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/registry.rs:357-406</h4>
+<pre><code>/// Normalize only the embedded reference&#x27;s function-source strings. Live rows
+/// must already carry the exact opaque hash marker returned by the catalog SQL.
+fn normalize_catalog_record(table_name: &amp;str, row: &amp;Value, reference: bool) -&gt; Option&lt;Value&gt; {
+    let mut normalized = row.clone();
+    if table_name == &quot;pg_proc&quot; {
+        let fields = normalized.as_object_mut()?;
+        for field in [&quot;prosrc&quot;, &quot;prosqlbody&quot;] {
+            let Some(value) = fields.get(field) else {
+                continue;
+            };
+            let marker = normalize_source_field(value, reference)?;
+            fields.insert(field.to_owned(), marker);
+        }
+    }
+    Some(normalize(&amp;normalized))
+}
+
+fn normalize_source_field(value: &amp;Value, reference: bool) -&gt; Option&lt;Value&gt; {
+    match value {
+        Value::Null =&gt; Some(Value::Null),
+        Value::String(source) if reference =&gt; Some(serde_json::json!({
+            &quot;sha256_utf8&quot;: sha256_hex(source.as_bytes())
+        })),
+        Value::Object(marker) if valid_source_marker(marker) =&gt; Some(value.clone()),
+        _ =&gt; None,
+    }
+}
+
+fn valid_source_marker(marker: &amp;serde_json::Map&lt;String, Value&gt;) -&gt; bool {
+    if marker.len() != 1 {
+        return false;
+    }
+    marker
+        .get(&quot;sha256_utf8&quot;)
+        .and_then(Value::as_str)
+        .is_some_and(|digest| {
+            digest.len() == 64
+                &amp;&amp; digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b&#x27;a&#x27;..=b&#x27;f&#x27;).contains(&amp;byte))
+        })
+}
+
+fn sha256_hex(bytes: &amp;[u8]) -&gt; String {
+    aws_lc_rs::digest::digest(&amp;aws_lc_rs::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!(&quot;{byte:02x}&quot;))
+        .collect()
+}</code></pre>
 <h4>applications/pgdog/pgdog/src/backend/schema/read_policy/resolve.rs:31-89</h4>
 <pre><code>pub(super) fn prove(
     admitted: &amp;AdmittedSql,
@@ -1148,7 +1225,7 @@ superseded-by: null</pre></details>
     }
     fn output(&amp;mut self, ty: Ty) -&gt; Result&lt;u32&gt; {
         match self.known(ty) {
-            Some(oid) if self.catalog.registry.scalar_type(oid) =&gt; Ok(oid),
+            Some(oid) if self.catalog.output_type(oid) =&gt; Ok(oid),
             None if ty == Ty::Unknown =&gt; Ok(25),
             _ =&gt; Err(PolicyError::unsupported()),
         }</code></pre>
@@ -1168,7 +1245,7 @@ superseded-by: null</pre></details>
                     .type_oid(name)
                     .ok_or_else(PolicyError::unsupported)?;
                 let source = self.expression(cast.arg(), scope)?;</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:115-135</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/rows.rs:216-236</h4>
 <pre><code>    pub(crate) fn is_supported(&amp;self, registry: &amp;super::registry::ReadRegistry) -&gt; bool {
         self.valid
             &amp;&amp; !self.name.is_empty()
@@ -1190,7 +1267,15 @@ superseded-by: null</pre></details>
             )
             &amp;&amp; (self.collation_oid == 0 || matches!(self.collation_oid, 100 | 950 | 951))
     }</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:417-443</h4>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:184-190</h4>
+<pre><code>    fn output_type(&amp;self, oid: u32) -&gt; bool {
+        self.registry.scalar_type(oid)
+            || self
+                .proven_types
+                .get(&amp;oid)
+                .is_some_and(|capability| capability.text_output &amp;&amp; capability.binary_output)
+    }</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:584-612</h4>
 <pre><code>    pub(crate) fn identity(
         &amp;self,
         policy: &amp;ProcessPolicy,
@@ -1217,8 +1302,10 @@ superseded-by: null</pre></details>
             manifest_digest: policy.digest().0,
             schema_revision: manifest.schema_revision().to_owned(),
             database_alias: database.name().to_owned(),
-        })</code></pre>
-<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:447-467</h4>
+        })
+    }
+}</code></pre>
+<h4>applications/pgdog/pgdog/src/backend/schema/read_policy/mod.rs:614-690</h4>
 <pre><code>pub(crate) fn verify_parse(
     policy: &amp;ProcessPolicy,
     admitted: &amp;AdmittedSql,
@@ -1239,7 +1326,63 @@ superseded-by: null</pre></details>
                 .schema_revision()
     {
         return Err(PolicyError::unsupported());
-    }</code></pre>
+    }
+    let database = policy
+        .manifest()
+        .and_then(|manifest| {
+            manifest
+                .databases()
+                .iter()
+                .find(|db| db.name() == identity.database_alias)
+        })
+        .ok_or_else(PolicyError::unsupported)?;
+    if !catalog.role.is_safe_application_role()
+        || catalog.search_path.first().map(String::as_str) != Some(&quot;pg_catalog&quot;)
+    {
+        return Err(PolicyError::unsupported());
+    }
+    for name in &amp;admitted.catalog.relations {
+        let relation = catalog
+            .relations
+            .get(name)
+            .ok_or_else(PolicyError::unsupported)?;
+        let fully_proved = catalog
+            .full_relations
+            .get(&amp;relation.relation.oid)
+            .is_some_and(|proof| {
+                proof.matches(&amp;relation.relation, &amp;relation.columns)
+                    &amp;&amp; catalog
+                        .dependency_metadata
+                        .get(&quot;full&quot;)
+                        .is_some_and(|metadata| proof.matches_metadata(metadata))
+            });
+        if (!fully_proved &amp;&amp; !relation.relation.is_supported_base_table())
+            || !relation.indexes_safe
+            || !database.relations().iter().any(|expected| {
+                expected.schema() == relation.relation.schema
+                    &amp;&amp; expected.name() == relation.relation.name
+            })
+        {
+            return Err(PolicyError::unsupported());
+        }
+        // Every column is checked, not just referenced columns: row/tuple
+        // expansion and planner dependency paths cannot hide custom types.
+        if relation
+            .columns
+            .iter()
+            .any(|column| !fully_proved &amp;&amp; !column.is_supported(&amp;catalog.registry))
+        {
+            return Err(PolicyError::unsupported());
+        }
+    }
+    resolve::prove(admitted, catalog, parameter_oids)?;
+    Ok(CatalogProof {
+        fingerprint: admitted.fingerprint,
+        parameter_oids: parameter_oids.to_vec(),
+        identity,
+        metadata_digest: catalog.metadata_digest()?,
+    })
+}</code></pre>
 <h4>applications/pgdog/pgdog/src/frontend/read_policy/admission.rs:38-55</h4>
 <pre><code>pub(crate) struct CatalogRequirements {
     pub(crate) relations: BTreeSet&lt;String&gt;,
@@ -1457,7 +1600,7 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-14T01:21:37+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-14T10:50:56+07:00</span></footer>
 </main>
 </div>
 <script>(() => {
