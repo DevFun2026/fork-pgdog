@@ -97,3 +97,24 @@ TLS, controlled schema epoch and eligible role are still operator requirements.
 On failure stop/deny readers; preserve previous artifacts and never route the read
 Service to the unrestricted writer. No runtime safety claim based only on worker
 success or a coarse metadata screen.
+
+## Post-integration verification repair — 2026-10-14
+
+The full gate exposed stale source-bound review context and workspace proof tests
+that require profile fixtures before the strict-read phases create them. Refresh
+the canonical context hashes and semantic excerpts, keeping the source-byte
+validator, then regenerate the architecture output.
+
+Reuse the existing owned pinned profile producer around the entire workspace
+nextest command in `scripts/workspace_read_tests.py`; update `scripts/verify-pgdog`
+to invoke it. Keep generated references, matrices and variants temporary. Do not
+commit raw captures or skip fixture-backed assertions. Demonstrate lifecycle tests
+RED/GREEN in `.agent/tests/test_workspace_read_tests.py`: preparation precedes
+Cargo, missing required files block it, ambient fixture paths are replaced,
+failure exit codes survive, and temporary files are removed on every exit.
+
+Run the real owned generator and workspace tests, then the complete canonical
+review gate at the final commit. Preserve failed evidence and obtain a fresh
+partition manifest approval; infrastructure clearance still does not clear the
+feature. These repairs change verification orchestration and source context,
+without changing SQL admission or granting additional function capabilities.
