@@ -44,11 +44,15 @@ approximately 433 seconds on PG12 and 472 seconds on PG18 on the local host.
 
 ## Remaining gates
 
-Eight new immutable profile files total 12,150,542 bytes. The trusted review
-policy currently permits 2,500,000 aggregate bytes and its atom splitter supports
-only the historical registry envelopes. No AGY package was sent and no review
-clearance was fabricated. A bounded review-infrastructure proposal is pending
-user design approval before this larger full-scope package can be prepared.
+Eight new immutable profile files total 12,150,542 bytes. The separately approved
+review infrastructure passed native AGY review, the local merge gate and CI,
+then entered trusted main through PR #14 at `97f50b30`. It validates and splits
+the eight v2 profiles at complete record boundaries and reconstructs their exact
+bytes. The explicit project aggregate limits are now 30,000,000 bytes and
+8,000,000 estimated tokens; per-invocation limits remain 500,000 bytes and
+96,000 estimated tokens. No feature AGY package has been sent. Infrastructure
+review does not clear this feature: its complete partition root and later
+integration package still require separate exact manifest approvals and reviews.
 
 The canonical merge/security/CI/release gates have not passed for this revision.
 Keep the controlled schema-epoch drain/restart requirement: ACCESS SHARE and
