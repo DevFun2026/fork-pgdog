@@ -7,7 +7,7 @@ claimed by this local assessment.
 
 | Threat | Control and verification |
 | --- | --- |
-| Dropped/duplicated registry records or changed-file bytes | Recompute full Git projection and deterministic ranges; concatenate exact original bytes; reject gap/overlap/tampering. |
+| Dropped/duplicated registry or v2 dependency-profile records or changed-file bytes | Recompute full Git projection and deterministic ranges; concatenate exact original bytes; reject gap/overlap/tampering. |
 | Feature branch expands its own authority | Read partition enablement and aggregate/per-call caps from resolved trusted ancestor; default disabled. |
 | Probe or egress before user approval | Root exact-hash check precedes child probes; integration has a different exact approval after outputs exist. |
 | Child pass mistaken for whole-change pass | Suppress global artifact publication for children; require all children plus integration; merge reloads every result. |
@@ -22,3 +22,18 @@ Residual risk: model reviews remain fallible; safe byte coverage does not itself
 prove SQL correctness. Integration context selection requires manager judgment,
 and provider findings still need reproduction/adjudication. Unknown or oversized
 record formats deliberately block rather than degrade review completeness.
+
+## Approved v2 profile extension
+
+Only eight exact PG12/PG18 dependency profile paths may use catalog-record
+partitioning. Envelope schema, selector and provenance validation precedes
+splitting. Unsupported layouts and individual records exceeding a child payload
+limit fail closed. Records and metadata remain original diff bytes, with range
+and digest reconstruction revalidated when loading evidence.
+
+The project aggregate ceiling becomes 30 MB / 8 million estimated tokens only
+after the separately reviewed infrastructure is in the trusted base. Runtime
+defaults and per-call caps stay unchanged. Larger aggregate authorization can
+require many invocations; actual repeated context and integration reserve still
+count against the ceiling. Neither approved design nor an infrastructure PASS
+authorizes sending an unapproved feature manifest or grants feature clearance.
