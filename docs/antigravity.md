@@ -138,3 +138,31 @@ size or scope validation. Retain its original files, dispatch markers and audits
 use its original runtime revision for historical inspection. Build a fresh
 package for the changed source and obtain its exact approval before dispatch.
 Do not rewrite old manifests or clear started markers to retry a pending call.
+
+## Supervised native terminal retry
+
+`scripts/native_partition_review.py` is an explicitly opted-in host transport
+(`--native-host`), separate from the default OS-sandboxed adapter. Use it only
+with human authorization for the logged-in host route and exact immutable root
+approval. It supplies every approved UTF-8 byte in length/hash framed inline
+data. File-read and checksum criteria refer to that inline data; the runtime
+checks bindings, and the model assesses the source without shell/file tools.
+The prompt remains guidance, not an enforced provider tool allowlist. It neither
+changes global AGY permissions nor uses `--dangerously-skip-permissions`.
+
+The native supervisor creates private output files once, launches a dedicated
+process group, enforces output/timeout bounds and cleans the owned group. A
+confirmed exit 0 with unchanged inputs but invalid structured output can retain
+a terminal receipt after the canonical incomplete audit is written. The receipt
+binds launch identity, input/prompt, raw output, native audit and canonical audit.
+Process-group supervision does not prove that a malicious process could not
+escape its group; native host access remains an explicit exception.
+
+A retry is previewed separately and requires its own exact manifest hash. It
+clones the original immutable input into a new attempt location and pins actual
+prompt, argv flags, model and executable identities. Earlier results are never
+overwritten. Replay, transport drift, source/evidence drift, missing approval,
+concurrent dispatch and aggregate overflow block before provider launch. All
+children plus separately approved integration still have to pass. Historical
+audits lacking supervised termination proof cannot be converted into receipts
+from their timestamps; they remain pending until separately reconciled.

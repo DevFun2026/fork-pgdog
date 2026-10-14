@@ -28,6 +28,20 @@ class Provider:
         self.invalid_at = None
         self.identity_at = None
         self.available = True
+        self.identity_drift = False
+
+    def retry_transport_identity(self, _package):
+        from hashlib import sha256
+
+        return {
+            "model": "fixture-model" if not self.identity_drift else "changed-model",
+            "executable_sha256": sha256(b"executable").hexdigest(),
+            "prompt_sha256": sha256(b"new prompt").hexdigest(),
+            "argv_sha256": sha256(b"normalized argv").hexdigest(),
+        }
+
+    def bind_retry_transport(self, _package, identity):
+        self.bound_retry_transport = dict(identity)
 
     def detect(self):
         self.probes += 1

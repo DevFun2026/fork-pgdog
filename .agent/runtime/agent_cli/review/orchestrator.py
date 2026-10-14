@@ -55,11 +55,14 @@ class ReviewOrchestrator:
     ) -> ReviewResult:
         package = load_package(package.path, root=request.root)
         usage = package_usage(package)
-        if (usage["bytes"] > request.max_package_bytes
-                or usage["estimated_tokens"] > request.max_estimated_tokens):
+        if (
+            usage["bytes"] > request.max_package_bytes
+            or usage["estimated_tokens"] > request.max_estimated_tokens
+        ):
             raise ReviewPackageBlocked("review package exceeds current context budget")
-        if (package.manifest.base_sha != _resolve_ref(request.root, request.base)
-                or package.manifest.head_sha != _resolve_ref(request.root, request.head)):
+        if package.manifest.base_sha != _resolve_ref(
+            request.root, request.base
+        ) or package.manifest.head_sha != _resolve_ref(request.root, request.head):
             raise ReviewPackageBlocked("request revisions do not match review package")
         if (
             package.manifest.author_provider != request.author_provider
@@ -125,26 +128,44 @@ class ReviewOrchestrator:
             )
             result = provider.review(provider_request)
         if result.provider != request.reviewer_provider:
-            result = ProviderResult.invalid(request.reviewer_provider, "", "review result provider identity differs")
+            result = ProviderResult.invalid(
+                request.reviewer_provider, "", "review result provider identity differs"
+            )
         elif result.status == "completed":
             try:
                 payload = json.loads(result.findings_json or "")
-                checked = validated_result(request.reviewer_provider, payload, result.findings_json or "")
-                if checked.status != "completed" or checked.verdict != result.verdict or result.exit_code != 0:
-                    result = ProviderResult.invalid(request.reviewer_provider, "", "invalid completed review result")
+                checked = validated_result(
+                    request.reviewer_provider, payload, result.findings_json or ""
+                )
+                if (
+                    checked.status != "completed"
+                    or checked.verdict != result.verdict
+                    or result.exit_code != 0
+                ):
+                    result = ProviderResult.invalid(
+                        request.reviewer_provider, "", "invalid completed review result"
+                    )
             except (ValueError, TypeError):
-                result = ProviderResult.invalid(request.reviewer_provider, "", "malformed completed review result")
+                result = ProviderResult.invalid(
+                    request.reviewer_provider, "", "malformed completed review result"
+                )
         audit = {
             "provider": request.reviewer_provider,
             "status": result.status,
             "verdict": result.verdict,
             "manifest_sha256": package.manifest_sha256,
-            "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "recorded_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "stdout_sha256": result.stdout_sha256,
             "exit_code": result.exit_code,
             "error": result.stderr_excerpt or None,
         }
-        atomic_write(package.path / "audit.jsonl", json.dumps(audit, sort_keys=True) + "\n")
+        audit_bytes = (json.dumps(audit, sort_keys=True) + "\n").encode("utf-8")
+        atomic_write(package.path / "audit.jsonl", audit_bytes)
+        terminal_recorder = getattr(provider, "record_terminal_receipt", None)
+        if terminal_recorder is not None:
+            terminal_recorder(package, audit_bytes)
         if result.status != "completed" or result.verdict is None:
             return ReviewResult(
                 "review_pending",
@@ -166,9 +187,9 @@ class ReviewOrchestrator:
             "diff_sha256": package.manifest.diff_sha256,
             "manifest_sha256": package.manifest_sha256,
             "findings_sha256": sha256(findings_payload).hexdigest(),
-            "package_path": package.path.resolve().relative_to(
-                request.root.resolve()
-            ).as_posix(),
+            "package_path": package.path.resolve()
+            .relative_to(request.root.resolve())
+            .as_posix(),
         }
         if publish:
             run_root = request.root / ".agent/.runs"
