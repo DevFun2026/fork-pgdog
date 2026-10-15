@@ -1,6 +1,7 @@
-"""Run workspace nextest with fresh, owned PostgreSQL profile fixtures."""
+"""Run workspace tests with fresh, owned PostgreSQL profile fixtures."""
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import stat
@@ -23,6 +24,11 @@ VARIANT_NAMES = ("core", "pg-trgm", "btree-gist", "both")
 NEXTEST_COMMAND = (
     "cargo", "nextest", "run", "--locked", "--workspace", "--no-fail-fast",
     "--test-threads=1",
+)
+COVERAGE_COMMAND = (
+    "cargo", "llvm-cov", "nextest", "--lcov", "--output-path", "lcov.info",
+    "--no-fail-fast", "--test-threads=1", "--filter-expr",
+    "package(pgdog) | package(pgdog-config) | package(pgdog-vector) | package(pgdog-stats) | package(pgdog-postgres-types)",
 )
 
 
@@ -67,8 +73,11 @@ def validate_owned_fixture_set(profile_dir: Path, temporary_root: Path) -> None:
 
 
 def run_workspace_tests(parent_env: dict[str, str] | None = None, *,
-                        prepare=None, run=None, temp_parent: Path | None = None) -> int:
-    """Generate private fixtures, run the fixed nextest command, and clean up."""
+                        prepare=None, run=None, temp_parent: Path | None = None,
+                        coverage: bool = False) -> int:
+    """Generate private fixtures, run a fixed Cargo test command, and clean up."""
+    if type(coverage) is not bool:
+        raise ValueError("coverage selector must be a boolean")
     env = dict(os.environ if parent_env is None else parent_env)
     prepare_fixtures = prepare or FIXTURE_MODULE.prepare_profile_fixtures
     run_child = run or subprocess.run
@@ -78,15 +87,23 @@ def run_workspace_tests(parent_env: dict[str, str] | None = None, *,
         profile_dir = prepare_fixtures(temporary_root, env)
         validate_owned_fixture_set(profile_dir, temporary_root)
         test_env = FIXTURE_MODULE.core_test_environment(env, profile_dir)
-        result = run_child(NEXTEST_COMMAND, cwd=APPLICATION, env=test_env, check=False)
+        command = COVERAGE_COMMAND if coverage else NEXTEST_COMMAND
+        result = run_child(command, cwd=APPLICATION, env=test_env, check=False)
         return int(result.returncode)
 
 
 def main() -> int:
     try:
-        return run_workspace_tests()
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument(
+            "--coverage",
+            action="store_true",
+            help="run the repository's fixed llvm-cov nextest command",
+        )
+        args = parser.parse_args()
+        return run_workspace_tests(coverage=args.coverage)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-        print(f"FAIL: workspace profile fixture setup or nextest execution: {error}", file=sys.stderr)
+        print(f"FAIL: workspace profile fixture setup or test execution: {error}", file=sys.stderr)
         return 1
 
 

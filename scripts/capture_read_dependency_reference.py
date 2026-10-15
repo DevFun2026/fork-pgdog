@@ -269,7 +269,10 @@ def capture_major(major: int, output_dir: Path, *, matrix_only: bool = False) ->
                 '--env-file',str(env_file),image,
             ]).strip()
         for _ in range(120):
-            if subprocess.run(['docker','exec',container_id,'pg_isready','-U','postgres'],
+            # The official entrypoint's temporary init server accepts only
+            # Unix sockets. Wait for the final server's loopback TCP listener
+            # so catalog capture cannot race the temporary server shutdown.
+            if subprocess.run(['docker','exec',container_id,'pg_isready','-h','127.0.0.1','-U','postgres'],
                               capture_output=True,timeout=10,check=False).returncode == 0:
                 break
             time.sleep(0.5)

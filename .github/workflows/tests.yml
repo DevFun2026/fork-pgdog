@@ -29,12 +29,16 @@ jobs:
           prefix-key: "v1" # Change this when updating tooling
       - name: Setup PostgreSQL
         run: bash integration/ci/setup.sh --with-toxi
+      - name: Pull pinned PostgreSQL 18 profile fixture
+        run: docker pull postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+      - name: Pull pinned PostgreSQL 12 profile fixture
+        run: docker pull postgres:12.22-bookworm@sha256:2f2a8c2a7d10862e7fba2602e304523554f9df8244c632dafe2628ccb398fb5c
       - name: Run tests with coverage
         env:
           RUSTFLAGS: "--cfg tokio_unstable -C link-dead-code"
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov nextest --lcov --output-path lcov.info --no-fail-fast --test-threads=1 --filter-expr "package(pgdog) | package(pgdog-config) | package(pgdog-vector) | package(pgdog-stats) | package(pgdog-postgres-types)"
+          python3 ../../scripts/workspace_read_tests.py --coverage
       - name: Run documentation tests
         run: cargo test --doc
       # Requires CODECOV_TOKEN secret for upload

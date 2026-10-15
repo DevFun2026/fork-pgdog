@@ -66,6 +66,70 @@ class WorkspaceReadTestsLifecycleTests(unittest.TestCase):
         self.assertEqual(observed["cwd"], runner.APPLICATION)
         self.assertFalse(Path(observed["env"]["PGDOG_PROFILE_TEST_FIXTURE_DIR"]).exists())
 
+    def test_coverage_uses_fixed_llvm_cov_command_with_live_owned_fixtures(self):
+        observed = {}
+
+        def child(command, *, cwd, env, check):
+            observed.update(command=command, cwd=cwd, env=env, check=check)
+            fixture_dir = Path(env["PGDOG_PROFILE_TEST_FIXTURE_DIR"])
+            observed["fixture_dir"] = fixture_dir
+            self.assertTrue(fixture_dir.is_dir())
+            self.assertTrue(all(path.is_file() for path in self.paths))
+            self.assertEqual(cwd, runner.APPLICATION)
+            return mock.Mock(returncode=0)
+
+        status = runner.run_workspace_tests(
+            {"PATH": "/usr/bin"},
+            prepare=self.prepare,
+            run=child,
+            temp_parent=Path(self.temp.name),
+            coverage=True,
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(observed["command"], runner.COVERAGE_COMMAND)
+        self.assertEqual(
+            observed["command"],
+            (
+                "cargo", "llvm-cov", "nextest", "--lcov", "--output-path", "lcov.info",
+                "--no-fail-fast", "--test-threads=1", "--filter-expr",
+                "package(pgdog) | package(pgdog-config) | package(pgdog-vector) | package(pgdog-stats) | package(pgdog-postgres-types)",
+            ),
+        )
+        self.assertEqual(observed["env"]["PGDOG_PROFILE_TEST_FIXTURE_DIR"], str(observed["fixture_dir"]))
+        self.assertFalse(observed["fixture_dir"].exists())
+
+    def test_coverage_failure_preserves_status_and_cleans_owned_fixtures(self):
+        observed = {}
+
+        def child(_command, *, env, **_kwargs):
+            observed["fixture_dir"] = env["PGDOG_PROFILE_TEST_FIXTURE_DIR"]
+            self.assertTrue(Path(observed["fixture_dir"]).is_dir())
+            return mock.Mock(returncode=19)
+
+        status = runner.run_workspace_tests(
+            {}, prepare=self.prepare, run=child, temp_parent=Path(self.temp.name), coverage=True
+        )
+
+        self.assertEqual(status, 19)
+        self.assertFalse(Path(observed["fixture_dir"]).exists())
+
+    def test_coverage_exception_cleans_owned_fixtures(self):
+        observed = {}
+
+        def child(_command, *, env, **_kwargs):
+            observed["fixture_dir"] = Path(env["PGDOG_PROFILE_TEST_FIXTURE_DIR"])
+            self.assertTrue(observed["fixture_dir"].is_dir())
+            raise OSError("llvm-cov could not start")
+
+        with self.assertRaisesRegex(OSError, "llvm-cov could not start"):
+            runner.run_workspace_tests(
+                {}, prepare=self.prepare, run=child,
+                temp_parent=Path(self.temp.name), coverage=True,
+            )
+
+        self.assertFalse(observed["fixture_dir"].exists())
+
     def test_owned_fixtures_are_cleaned_after_child_failure_and_status_is_preserved(self):
         observed = {}
 
