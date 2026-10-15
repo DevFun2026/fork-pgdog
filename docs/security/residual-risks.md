@@ -2,7 +2,7 @@
 
 ## Strict read endpoint delta
 
-- Owner: database operator. Only the reviewed PostgreSQL 18 catalog/binary and
+- Owner: database operator. Only the reviewed PostgreSQL 12/18 catalogs/binaries and
   controlled schema epoch are supported. DBA/catalog/native extension compromise
   and concurrent uncontrolled DDL are outside the contract. Drain readers before
   schema or role changes, review and restart; a revision label alone is not proof.

@@ -109,6 +109,62 @@ accepts at most 1,024 declared parameters, and inferred parameter references
 cannot exceed `$1024`. These limits
 may reject otherwise valid application queries.
 
+## Full-table proof development
+
+The approved full-table contract is recorded in
+[the icondo specification](../superpowers/specs/2026-10-13-icondo-full-read-proof.md).
+Local owned acceptance has passed for all 282 inventory shapes on PG12 and PG18,
+including output and mutation/function canaries. Independent review, CI and merge
+clearance remain pending. See the [local verification report](../verification/2026-10-14-icondo-full-read-local.md).
+The existing published artifact must not be described as supporting all 282
+inventory tables on this basis.
+
+The full-proof path replaces category exclusions with exact dependency checks.
+It separates JSONB, reviewed arrays and data-only enum output from client function,
+parameter, comparison, ordering and grouping permissions. It checks every
+planner-visible CHECK and index expression/predicate, index support, foreign-key
+reference support, exclusion operators, and inherited descendants. Both the
+requested table and every scanned descendant must be in the manifest. Internal
+callbacks from reviewed index profiles never authorize a client function call.
+Unsupported nodes, missing or changed metadata, unknown extension versions or
+members, and callbacks outside the pinned profile continue to deny before Parse.
+A NOT VALID CHECK or foreign key still requires a complete dependency proof;
+its flag is retained in the metadata digest.
+A read of a single foreign-key table also captures and proves the exact
+primary/unique constraint supporting its referenced index; unrelated constraints
+never acquire permission through this dependency. Identical overlapping captures
+merge, while conflicting rows deny. PG18 constraint rows include the exact
+`conenforced`, `confdelsetcols` and `conperiod` fields. Data-only NOT NULL requires
+one matching not-null column and no expression or callback; unenforced or temporal
+constraints remain unsupported. FK delete-set columns must match the FK key and
+its SET NULL/DEFAULT action.
+Attribute capture retains the missing-value presence flag and declared type,
+without converting the polymorphic `attmissingval` data. This prevents catalog
+inspection from invoking unproved type output or cast-to-JSON callbacks.
+
+Reference dependency profiles are selected by backend major and the exact known
+module set: core, pg_trgm, btree_gist, or both. The offline
+`scripts/capture_read_dependency_reference.py` and `scripts/read_policy_profiles.py`
+tools use owned immutable fixtures, never application catalog captures to create
+trust. Unknown installed extensions gain no permission from their presence.
+Private application metadata stays outside public fixtures and external review.
+
+Migrations and all changes to proven dependencies require an operator-controlled
+schema epoch: stop admitting reads, drain readers and their prepared statements
+and portals, perform the migration, review the manifest and dependency changes,
+then start readers with the new revision. Concurrent DDL is prohibited during
+admitted read traffic. READ COMMITTED and ACCESS SHARE do not freeze index or
+function metadata. The manifest revision is an operator declaration, not a
+PostgreSQL-enforced lock. Revalidation and bound metadata digests cannot replace
+this operational requirement. No deployment is ready until the eligible role,
+controlled epoch and verified backend/frontend TLS requirements are satisfied.
+
+The completion gate is exhaustive owned reproduction: 282 proofs and 282 actual
+supported SELECTs, with PG12/PG18 protocol, output-format and mutation/function
+canaries passing. Capturing 282 catalog entries or passing a subset of unit tests
+does not satisfy that gate. New artifacts require fresh review and release
+evidence; published 0.2.1 artifacts remain immutable.
+
 ## Kubernetes installation
 
 Use the examples under `charts/fork-pgdog/examples/strict-read/`. Replace the image

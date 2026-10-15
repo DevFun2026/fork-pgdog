@@ -47,6 +47,14 @@ The full script checks agent-runtime tests/adapters/docs/skills/notices, Rust
 unit/doc tests and Rust PostgreSQL client integration tests. A test failure is
 retained while other independent test phases continue. It needs prepared database
 fixtures and builds/starts a local PgDog process for client integration tests.
+Workspace nextest runs through `scripts/workspace_read_tests.py`, which captures
+the public synthetic profile fixtures from the pinned PG12/PG18 images before
+starting Cargo. It keeps the references, index-attribute matrices and all eight
+profile variants alive for the entire workspace run, passes their temporary
+directory explicitly, and removes it afterward. Clean checkout and CI runs do
+not depend on an operator's private fixture directory. Generation or validation
+failure prevents the workspace test command from starting; failed tests retain
+their exit status.
 `merge` additionally requires current documentation and independent review
 artifacts bound to the exact trusted default branch, HEAD and working-tree digest.
 
@@ -56,7 +64,7 @@ reported separately; local Rust tests do not establish that matrix passed.
 
 ## Strict read endpoints
 
-`scripts/strict-read-tests.sh` owns a separate, disposable PostgreSQL 18 fixture
+`scripts/strict-read-tests.sh` owns a separate, disposable PostgreSQL 12 or 18 fixture
 with loopback ports and DML-capable application credentials. It never uses the
 legacy fixture's fixed database or an ambient connection string. Run `--phase
 all` against a freshly built binary, then repeat `--phase protocol --pooler-mode

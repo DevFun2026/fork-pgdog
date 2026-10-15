@@ -119,7 +119,7 @@ impl Resolver<'_> {
     }
     fn output(&mut self, ty: Ty) -> Result<u32> {
         match self.known(ty) {
-            Some(oid) if self.catalog.registry.scalar_type(oid) => Ok(oid),
+            Some(oid) if self.catalog.output_type(oid) => Ok(oid),
             None if ty == Ty::Unknown => Ok(25),
             _ => Err(PolicyError::unsupported()),
         }
@@ -388,7 +388,7 @@ impl Resolver<'_> {
             }
             _ => return Err(PolicyError::unsupported()),
         };
-        if !self.catalog.registry.scalar_type(oid) {
+        if !self.catalog.output_type(oid) {
             return Err(PolicyError::unsupported());
         }
         Ok(Ty::Known(oid))
@@ -589,11 +589,16 @@ impl Resolver<'_> {
                 }
             }
             for group in select.group_clause().iter() {
-                self.sort_expression(group, &scope, &output, false)?;
+                self.sort_expression(group, &scope, &output, false, false)?;
             }
             for distinct in select.distinct_clause().iter() {
                 if !matches!(distinct, Node::None) {
-                    self.sort_expression(distinct, &scope, &output, true)?;
+                    self.sort_expression(distinct, &scope, &output, true, false)?;
+                } else if output
+                    .iter()
+                    .any(|(_, oid)| !self.catalog.set_operation_type(*oid, false))
+                {
+                    return Err(PolicyError::unsupported());
                 }
             }
         }
@@ -601,13 +606,19 @@ impl Resolver<'_> {
             if !sort.use_op().is_empty() {
                 return Err(PolicyError::unsupported());
             }
-            self.sort_expression(sort.node(), &scope, &output, true)?;
+            self.sort_expression(sort.node(), &scope, &output, true, true)?;
         }
         for limit in [select.limit_offset(), select.limit_count()] {
             if !matches!(limit, Node::None) {
                 let ty = self.expression(limit, &scope)?;
                 self.constrain(ty, 20, true)?;
             }
+        }
+        if output
+            .iter()
+            .any(|(_, oid)| !self.catalog.output_type(*oid))
+        {
+            return Err(PolicyError::unsupported());
         }
         Ok(output)
     }
@@ -617,12 +628,17 @@ impl Resolver<'_> {
         scope: &Scope,
         output: &[(String, u32)],
         prefer_output: bool,
+        ordering: bool,
     ) -> Result<()> {
         if let Node::A_Const(constant) = node
             && let Some(ConstValue::Integer(index)) = constant.val()
         {
             if index > 0 && index as usize <= output.len() {
-                return Ok(());
+                return self
+                    .catalog
+                    .set_operation_type(output[index as usize - 1].1, ordering)
+                    .then_some(())
+                    .ok_or_else(PolicyError::unsupported);
             }
             return Err(PolicyError::unsupported());
         }
@@ -635,7 +651,11 @@ impl Resolver<'_> {
                     .collect();
                 if prefer_output || self.column(column, scope).is_err() {
                     if candidates.len() == 1 {
-                        return Ok(());
+                        return self
+                            .catalog
+                            .set_operation_type(candidates[0].1, ordering)
+                            .then_some(())
+                            .ok_or_else(PolicyError::unsupported);
                     }
                     if candidates.len() > 1 {
                         return Err(PolicyError::unsupported());
@@ -644,8 +664,11 @@ impl Resolver<'_> {
             }
         }
         let ty = self.expression(node, scope)?;
-        self.output(ty)?;
-        Ok(())
+        let oid = self.output(ty)?;
+        self.catalog
+            .set_operation_type(oid, ordering)
+            .then_some(())
+            .ok_or_else(PolicyError::unsupported)
     }
 }
 fn quote(name: &str) -> String {
@@ -680,7 +703,62 @@ mod tests {
             search_path: vec!["pg_catalog".into(), "public".into()],
             role: super::super::rows::RoleRow::from(crate::net::DataRow::new()),
             relations: BTreeMap::new(),
+            proven_types: BTreeMap::new(),
+            dependency_metadata: serde_json::Value::Null,
+            full_relations: BTreeMap::new(),
         }
+    }
+    #[test]
+    fn catalog_digest_binds_complete_dependency_metadata_and_actor_facts() {
+        let mut snapshot = catalog();
+        let original = snapshot.metadata_digest().unwrap();
+        snapshot.dependency_metadata = serde_json::json!({"support_oid": "12345"});
+        assert_ne!(original, snapshot.metadata_digest().unwrap());
+        let previous = snapshot.metadata_digest().unwrap();
+        snapshot.role.has_memberships = !snapshot.role.has_memberships;
+        assert_ne!(previous, snapshot.metadata_digest().unwrap());
+    }
+    #[test]
+    fn projection_capability_does_not_implicitly_grant_cast_or_parameter_operations() {
+        let mut catalog = catalog();
+        catalog.proven_types.insert(
+            1009,
+            super::super::type_proof::TypeCapabilities {
+                text_output: true,
+                binary_output: true,
+                ..Default::default()
+            },
+        );
+        let mut resolver = Resolver {
+            catalog: &catalog,
+            parameters: vec![None],
+        };
+        assert_eq!(resolver.output(Ty::Known(1009)).unwrap(), 1009);
+        assert!(resolver.constrain(Ty::Parameter(0), 1009, true).is_err());
+        assert!(
+            resolver
+                .comparison("=", Ty::Known(1009), Ty::Known(1009))
+                .is_err()
+        );
+        assert!(prove(&admit_sql("SELECT $1").unwrap(), &catalog, &[1009]).is_err());
+        assert!(!catalog.output_type(99999));
+        let parsed = pg_raw_parse::parse("SELECT 1 ORDER BY 1").unwrap();
+        let Node::SelectStmt(select) = parsed.stmts().next().unwrap() else {
+            panic!()
+        };
+        let sort = select.sort_clause().iter().next().unwrap();
+        assert!(
+            resolver
+                .sort_expression(
+                    sort.node(),
+                    &Scope::default(),
+                    &[("payload".into(), 1009)],
+                    true,
+                    true
+                )
+                .is_err(),
+            "projection-only type must not acquire sort support through an ordinal"
+        );
     }
     #[test]
     fn strict_read_typed_resolution_accepts_closed_scalar_operations_and_scopes() {

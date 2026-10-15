@@ -3,7 +3,7 @@ use pgdog_postgres_types::Oid;
 
 /// Catalog facts used by the strict-read proof. Every OID is read from the
 /// protected backend and retained alongside its qualified name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct RelationRow {
     pub(crate) valid: bool,
     pub(crate) oid: u32,
@@ -91,7 +91,7 @@ impl From<DataRow> for RelationRow {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct ColumnRow {
     pub(crate) valid: bool,
     pub(crate) relation_oid: u32,
@@ -109,9 +109,110 @@ pub(crate) struct ColumnRow {
     pub(crate) generated: String,
     pub(crate) identity: String,
     pub(crate) collation_oid: u32,
+    attribute_number: i16,
+    type_modifier: i32,
+    array_dimensions: i16,
 }
 
 impl ColumnRow {
+    /// Decode metadata only; this does not grant a type or I/O capability.
+    pub(crate) fn from_catalog_metadata(
+        attribute: &serde_json::Value,
+        ty: &serde_json::Value,
+        schema: &str,
+    ) -> Result<Self, ()> {
+        use serde_json::Value;
+        fn oid(row: &Value, field: &str, zero: bool) -> Result<u32, ()> {
+            let value = row.get(field).ok_or(())?;
+            let parsed = if let Some(text) = value.as_str() {
+                if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(());
+                }
+                text.parse::<u32>().map_err(|_| ())?
+            } else {
+                u32::try_from(value.as_u64().ok_or(())?).map_err(|_| ())?
+            };
+            if parsed == 0 && !zero {
+                Err(())
+            } else {
+                Ok(parsed)
+            }
+        }
+        fn text(row: &Value, field: &str) -> Result<String, ()> {
+            let value = row.get(field).and_then(Value::as_str).ok_or(())?;
+            if value.len() > 63 || value.contains('\0') {
+                return Err(());
+            }
+            Ok(value.to_owned())
+        }
+        if schema.is_empty()
+            || schema.len() > 63
+            || schema.contains('\0')
+            || attribute.get("attisdropped").and_then(Value::as_bool) != Some(false)
+        {
+            return Err(());
+        }
+        let type_oid = oid(attribute, "atttypid", false)?;
+        if oid(ty, "oid", false)? != type_oid {
+            return Err(());
+        }
+        let number = oid(attribute, "attnum", false)?;
+        if number > 1600 {
+            return Err(());
+        }
+        let type_modifier = attribute
+            .get("atttypmod")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .filter(|value| *value >= -1)
+            .ok_or(())?;
+        let array_dimensions = attribute
+            .get("attndims")
+            .and_then(Value::as_i64)
+            .and_then(|value| i16::try_from(value).ok())
+            .filter(|value| (0..=6).contains(value))
+            .ok_or(())?;
+        let name = text(attribute, "attname")?;
+        let type_name = text(ty, "typname")?;
+        let type_kind = text(ty, "typtype")?;
+        if name.is_empty() || type_name.is_empty() || type_kind.len() != 1 {
+            return Err(());
+        }
+        Ok(Self {
+            valid: true,
+            relation_oid: oid(attribute, "attrelid", false)?,
+            name,
+            type_oid,
+            type_schema: schema.to_owned(),
+            type_name,
+            type_kind,
+            base_type_oid: oid(ty, "typbasetype", true)?,
+            type_input_oid: oid(ty, "typinput", true)?,
+            type_output_oid: oid(ty, "typoutput", true)?,
+            type_receive_oid: oid(ty, "typreceive", true)?,
+            type_send_oid: oid(ty, "typsend", true)?,
+            not_null: attribute
+                .get("attnotnull")
+                .and_then(Value::as_bool)
+                .ok_or(())?,
+            generated: text(attribute, "attgenerated")?,
+            identity: text(attribute, "attidentity")?,
+            collation_oid: oid(attribute, "attcollation", true)?,
+            attribute_number: number as i16,
+            type_modifier,
+            array_dimensions,
+        })
+    }
+    pub(crate) fn type_modifier(&self) -> Option<i32> {
+        (self.valid && self.type_modifier >= -1).then_some(self.type_modifier)
+    }
+    pub(crate) fn array_dimensions(&self) -> Option<i16> {
+        (self.valid && (0..=6).contains(&self.array_dimensions)).then_some(self.array_dimensions)
+    }
+    pub(crate) fn attribute_number(&self) -> Option<i16> {
+        (self.valid && self.attribute_number > 0).then_some(self.attribute_number)
+    }
+
     pub(crate) fn is_supported(&self, registry: &super::registry::ReadRegistry) -> bool {
         self.valid
             && !self.name.is_empty()
@@ -135,6 +236,133 @@ impl ColumnRow {
     }
 }
 
+#[cfg(test)]
+mod attribute_tests {
+    use super::*;
+    fn column(number: &str) -> ColumnRow {
+        ColumnRow::from(DataRow::from_columns(vec![
+            "100",
+            "value",
+            "23",
+            "pg_catalog",
+            "int4",
+            "b",
+            "0",
+            "42",
+            "43",
+            "44",
+            "45",
+            "f",
+            "",
+            "",
+            "0",
+            number,
+            "-1",
+            "0",
+        ]))
+    }
+    #[test]
+    fn full_catalog_column_decoder_binds_type_and_real_attribute_identity() {
+        use serde_json::json;
+        let attribute = json!({"attrelid":"100","attnum":3,"attname":"value",
+            "atttypid":"23","attcollation":"0","attnotnull":false,
+            "attgenerated":"","attidentity":"","attisdropped":false,"atttypmod":-1,"attndims":0});
+        let ty = json!({"oid":"23","typname":"int4","typtype":"b","typbasetype":"0",
+            "typinput":"42","typoutput":"43","typreceive":"44","typsend":"45"});
+        let actual = ColumnRow::from_catalog_metadata(&attribute, &ty, "pg_catalog").unwrap();
+        assert_eq!(actual, column("3"));
+        let mut wrong = attribute.clone();
+        wrong["atttypid"] = json!("25");
+        assert!(ColumnRow::from_catalog_metadata(&wrong, &ty, "pg_catalog").is_err());
+        wrong = attribute.clone();
+        wrong["attisdropped"] = json!(true);
+        assert!(ColumnRow::from_catalog_metadata(&wrong, &ty, "pg_catalog").is_err());
+        assert!(ColumnRow::from_catalog_metadata(&attribute, &ty, "").is_err());
+    }
+    #[test]
+    fn full_column_decoder_rejects_missing_or_invalid_modifiers() {
+        use serde_json::json;
+        let attribute = json!({"attrelid":"100","attnum":3,"attname":"value",
+            "atttypid":"23","attcollation":"0","attnotnull":false,
+            "attgenerated":"","attidentity":"","attisdropped":false,
+            "atttypmod":-1,"attndims":0});
+        let ty = json!({"oid":"23","typname":"int4","typtype":"b","typbasetype":"0",
+            "typinput":"42","typoutput":"43","typreceive":"44","typsend":"45"});
+        for field in ["atttypmod", "attndims"] {
+            let mut missing = attribute.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(ColumnRow::from_catalog_metadata(&missing, &ty, "pg_catalog").is_err());
+        }
+        for (field, value) in [
+            ("atttypmod", json!(-2)),
+            ("attndims", json!(7)),
+            ("attndims", json!(-1)),
+        ] {
+            let mut wrong = attribute.clone();
+            wrong[field] = value;
+            assert!(ColumnRow::from_catalog_metadata(&wrong, &ty, "pg_catalog").is_err());
+        }
+    }
+    #[test]
+    fn column_decoder_retains_modifiers_and_array_dimensions() {
+        for (modifier, dimensions) in [(40, 0), (259, 0), (524294, 2)] {
+            let modifier_text = modifier.to_string();
+            let dimensions_text = dimensions.to_string();
+            let decoded = ColumnRow::from(DataRow::from_columns(vec![
+                "100",
+                "value",
+                "23",
+                "pg_catalog",
+                "int4",
+                "b",
+                "0",
+                "42",
+                "43",
+                "44",
+                "45",
+                "f",
+                "",
+                "",
+                "0",
+                "3",
+                &modifier_text,
+                &dimensions_text,
+            ]));
+            assert_eq!(decoded.type_modifier(), Some(modifier));
+            assert_eq!(decoded.array_dimensions(), Some(dimensions));
+        }
+        let missing = ColumnRow::from(DataRow::from_columns(vec![
+            "100",
+            "value",
+            "23",
+            "pg_catalog",
+            "int4",
+            "b",
+            "0",
+            "42",
+            "43",
+            "44",
+            "45",
+            "f",
+            "",
+            "",
+            "0",
+            "3",
+        ]));
+        assert!(!missing.valid);
+        assert_eq!(missing.type_modifier(), None);
+        assert_eq!(missing.array_dimensions(), None);
+    }
+    #[test]
+    fn stored_expression_var_uses_real_attnum_after_dropped_column_holes() {
+        assert_eq!(column("3").attribute_number(), Some(3));
+        assert!(column("0").attribute_number().is_none());
+        assert!(column("-1").attribute_number().is_none());
+        assert!(column("32768").attribute_number().is_none());
+        assert!(column("invalid").attribute_number().is_none());
+    }
+}
+
 impl From<DataRow> for ColumnRow {
     fn from(row: DataRow) -> Self {
         let relation_oid = row.get::<Oid>(0, Format::Text).map(Oid::get);
@@ -152,6 +380,15 @@ impl From<DataRow> for ColumnRow {
         let generated = row.get_text(12);
         let identity = row.get_text(13);
         let collation_oid = row.get::<Oid>(14, Format::Text).map(Oid::get);
+        let attribute_number = row
+            .get::<i16>(15, Format::Text)
+            .filter(|number| (1..=1600).contains(number));
+        let type_modifier = row
+            .get::<i32>(16, Format::Text)
+            .filter(|value| *value >= -1);
+        let array_dimensions = row
+            .get::<i16>(17, Format::Text)
+            .filter(|value| (0..=6).contains(value));
         let valid = [
             relation_oid.is_some(),
             name.is_some(),
@@ -168,6 +405,9 @@ impl From<DataRow> for ColumnRow {
             generated.is_some(),
             identity.is_some(),
             collation_oid.is_some(),
+            attribute_number.is_some(),
+            type_modifier.is_some(),
+            array_dimensions.is_some(),
         ]
         .into_iter()
         .all(|value| value);
@@ -188,11 +428,14 @@ impl From<DataRow> for ColumnRow {
             generated: generated.unwrap_or_default(),
             identity: identity.unwrap_or_default(),
             collation_oid: collation_oid.unwrap_or_default(),
+            attribute_number: attribute_number.unwrap_or_default(),
+            type_modifier: type_modifier.unwrap_or(-1),
+            array_dimensions: array_dimensions.unwrap_or_default(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct RoleRow {
     pub(crate) valid: bool,
     pub(crate) oid: u32,

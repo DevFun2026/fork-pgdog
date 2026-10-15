@@ -227,6 +227,11 @@ fi
 ${PGDOG_BIN} --config "${PGDOG_CONFIG}" --users "${PGDOG_USERS}" \
     schema-sync --from-database source --to-database destination --publication pgdog --cutover
 
+# Diagnostic-only snapshot at the quiescent 0 -> 2 boundary. These counts locate
+# a later mismatch without printing row contents; final assertions below stay intact.
+read -r -a SHARDED_TABLES_ARR <<< "${SHARDED_TABLES}"
+bash "${SCRIPT_DIR}/count_snapshot.sh" "${SRC_DB}" "${DST_DB1}" "${DST_DB2}" "${SHARDED_TABLES_ARR[@]}"
+
 #
 # 2 --> 2
 #

@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import signal
 import sys
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
@@ -31,6 +34,169 @@ SEGMENT_SIZES = (
     ("16mb", 16 * 1024 * 1024),
 )
 PREPARED_QUERY = "SELECT count(*) FROM pg_prepared_xacts WHERE gid LIKE '__pgdog_2pc_%'"
+RECOVERY_DIAGNOSTIC_GRACE_SECONDS = 5.0
+RECOVERY_DIAGNOSTIC_POLL_SECONDS = 0.1
+RECOVERY_DIAGNOSTIC_QUERY_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class RecoveryDiagnostic:
+    status: str
+    observations: tuple[dict[str, int], ...]
+    after_shutdown: dict[str, int] | None
+
+
+class RecoveryTimeoutError(TimeoutError):
+    """The original 15-second failure plus optional bounded diagnostics."""
+
+    def __init__(
+        self,
+        counts: dict[str, int],
+        diagnostic: RecoveryDiagnostic | None = None,
+    ) -> None:
+        self.counts = {shard: counts[shard] for shard in SHARDS}
+        self.diagnostic = diagnostic
+        message = f"recovery left prepared transactions on shards: {self.counts}"
+        if diagnostic is not None:
+            message += (
+                f"; bounded diagnostic: status={diagnostic.status}, "
+                f"observations={diagnostic.observations}, "
+                f"after_shutdown={diagnostic.after_shutdown}"
+            )
+        super().__init__(message)
+
+
+def _fixed_shard_counts(counts: dict[str, int]) -> dict[str, int]:
+    """Keep diagnostic output to known shard labels and integer counts."""
+    result = {}
+    for shard in SHARDS:
+        value = counts[shard]
+        if type(value) is not int or value < 0:
+            raise ValueError("prepared transaction count was not a nonnegative integer")
+        result[shard] = value
+    return result
+
+
+async def _observe_recovery_after_timeout(
+    count_prepared: Callable[[], Awaitable[dict[str, int]]],
+    stop_pgdog: Callable[[], Awaitable[None]],
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    grace_seconds: float = RECOVERY_DIAGNOSTIC_GRACE_SECONDS,
+    poll_interval: float = RECOVERY_DIAGNOSTIC_POLL_SECONDS,
+    query_timeout: float = RECOVERY_DIAGNOSTIC_QUERY_TIMEOUT_SECONDS,
+) -> RecoveryDiagnostic:
+    if (
+        not math.isfinite(grace_seconds)
+        or grace_seconds < 0
+        or not math.isfinite(poll_interval)
+        or poll_interval <= 0
+        or not math.isfinite(query_timeout)
+        or query_timeout <= 0
+    ):
+        raise ValueError("diagnostic time bounds must be finite and positive")
+
+    observations: list[dict[str, int]] = []
+    status = "grace_expired"
+    deadline = monotonic() + grace_seconds
+    while monotonic() < deadline:
+        remaining = deadline - monotonic()
+        try:
+            counts = await asyncio.wait_for(
+                count_prepared(), timeout=min(remaining, query_timeout)
+            )
+            observation = _fixed_shard_counts(counts)
+        except asyncio.TimeoutError:
+            status = "live_observation_timeout"
+            break
+        except (
+            asyncpg.PostgresError,
+            OSError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+        ):
+            # Do not put exception text in test output; it could carry query or
+            # connection details. The original recovery timeout remains primary.
+            status = "live_observation_error"
+            break
+
+        observations.append(observation)
+        if not any(observation.values()):
+            status = "drained_while_running"
+            break
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        await sleep(min(poll_interval, remaining))
+
+    shutdown_failed = False
+    try:
+        # Uses the existing owned-process graceful stop, which itself has a
+        # bounded wait and force-kill fallback.
+        await stop_pgdog()
+    except (OSError, RuntimeError, TimeoutError):
+        shutdown_failed = True
+
+    try:
+        after_shutdown = _fixed_shard_counts(
+            await asyncio.wait_for(count_prepared(), timeout=query_timeout)
+        )
+    except asyncio.TimeoutError:
+        after_shutdown = None
+        status = "post_shutdown_count_timeout"
+    except (
+        asyncpg.PostgresError,
+        OSError,
+        ValueError,
+        KeyError,
+        RuntimeError,
+    ):
+        after_shutdown = None
+        status = "post_shutdown_count_error"
+    else:
+        if shutdown_failed:
+            status = "shutdown_error"
+        elif status not in ("live_observation_error", "live_observation_timeout"):
+            if any(after_shutdown.values()):
+                status = "still_prepared_after_shutdown"
+            elif status != "drained_while_running":
+                status = "cleared_after_shutdown"
+
+    return RecoveryDiagnostic(
+        status=status,
+        observations=tuple(observations),
+        after_shutdown=after_shutdown,
+    )
+
+
+async def wait_for_recovery_with_diagnostics(
+    wait_for_recovery: Callable[[], Awaitable[None]],
+    count_prepared: Callable[[], Awaitable[dict[str, int]]],
+    stop_pgdog: Callable[[], Awaitable[None]],
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    grace_seconds: float = RECOVERY_DIAGNOSTIC_GRACE_SECONDS,
+    poll_interval: float = RECOVERY_DIAGNOSTIC_POLL_SECONDS,
+    query_timeout: float = RECOVERY_DIAGNOSTIC_QUERY_TIMEOUT_SECONDS,
+) -> None:
+    try:
+        await wait_for_recovery()
+    except RecoveryTimeoutError as original:
+        diagnostic = await _observe_recovery_after_timeout(
+            count_prepared,
+            stop_pgdog,
+            monotonic=monotonic,
+            sleep=sleep,
+            grace_seconds=grace_seconds,
+            poll_interval=poll_interval,
+            query_timeout=query_timeout,
+        )
+        # Always re-raise the 15-second timeout. Diagnostic recovery progress
+        # cannot turn the original failure into a pass.
+        raise RecoveryTimeoutError(original.counts, diagnostic) from original
 
 
 async def connect(database: str, port: int) -> asyncpg.Connection:
@@ -234,7 +400,7 @@ async def wait_for_recovery(timeout: float = 15.0) -> None:
         if not any(last.values()):
             return
         await asyncio.sleep(0.1)
-    raise TimeoutError(f"recovery left prepared transactions on shards: {last}")
+    raise RecoveryTimeoutError(_fixed_shard_counts(last))
 
 
 async def run_test() -> None:
@@ -272,7 +438,11 @@ async def run_test() -> None:
                     recoveries_needed += int(needed_recovery)
 
                     pgdog = await start_pgdog(binary, log, segment_size)
-                    await wait_for_recovery()
+                    await wait_for_recovery_with_diagnostics(
+                        wait_for_recovery,
+                        shard_prepared_transactions,
+                        lambda process=pgdog: stop_process(process),
+                    )
 
                     after_recovery = await shard_prepared_transactions()
                     if any(after_recovery.values()):

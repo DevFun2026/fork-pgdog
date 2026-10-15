@@ -265,6 +265,32 @@ impl StrictSession {
         Ok(statement)
     }
 
+    pub(crate) fn statement_for_proof(
+        &self,
+        name: &str,
+        identity: &CatalogIdentity,
+        fresh: &CatalogProof,
+    ) -> Result<&Statement, PolicyError> {
+        let statement = self.statement_for_identity(name, identity)?;
+        if statement.proof.as_ref() != Some(fresh) {
+            return Err(PolicyError::stale_statement());
+        }
+        Ok(statement)
+    }
+
+    pub(crate) fn portal_for_proof(
+        &self,
+        name: &str,
+        identity: &CatalogIdentity,
+        fresh: &CatalogProof,
+    ) -> Result<&Portal, PolicyError> {
+        let portal = self.portal(name, identity)?;
+        if portal.statement.proof.as_ref() != Some(fresh) {
+            return Err(PolicyError::stale_portal());
+        }
+        Ok(portal)
+    }
+
     pub(crate) fn bind(
         &mut self,
         portal_name: &str,
@@ -420,6 +446,37 @@ mod tests {
                 proof,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn unchanged_transaction_identity_does_not_reuse_changed_dependency_proof() {
+        let mut session = StrictSession::default();
+        prepare_committed(&mut session, "named", 1);
+        let statement = session.statement("named").unwrap().clone();
+        let original = statement.proof.clone().unwrap();
+        let changed = original.clone().with_test_metadata([8; 32]);
+        assert!(
+            session
+                .statement_for_proof("named", &identity(1), &original)
+                .is_ok()
+        );
+        assert!(
+            session
+                .statement_for_proof("named", &identity(1), &changed)
+                .is_err()
+        );
+        session.bind("portal", "named", &identity(1)).unwrap();
+        session.close_statement("named").unwrap();
+        assert!(
+            session
+                .portal_for_proof("portal", &identity(1), &original)
+                .is_ok()
+        );
+        assert!(
+            session
+                .portal_for_proof("portal", &identity(1), &changed)
+                .is_err()
+        );
     }
 
     #[test]

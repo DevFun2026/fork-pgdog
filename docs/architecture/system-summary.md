@@ -1,6 +1,6 @@
 # PgDog fork: system architecture
 
-Generated: 2026-10-14T10:45:54+07:00 | Commit: 97f50b30a81c
+Generated: 2026-10-14T11:11:04+07:00 | Commit: 4e44d0ec02d8
 
 ## Components
 
@@ -22,7 +22,7 @@ Generated: 2026-10-14T10:45:54+07:00 | Commit: 97f50b30a81c
 - **review-engine** — Cross-Review Engine (`orchestrator`): Builds budgeted review packages with proven generated-copy deduplication, verified unchanged-rename path tables and full Git change binding. Recomputes blob/mode proofs before egress; changed sensitive files stay blocked. Enforces reviewer independence and validates findings. Opt-in partition operations split validated pinned registries and the eight PG12/PG18 v2 dependency profiles at record boundaries, reconstruct every projected diff byte, keep per-call and aggregate budgets, require root plus integration manifest approval, and publish clearance only after all child and cross-boundary integration reviews pass. Trusted-base enablement remains mandatory. Separately hash-approved terminal retries retain original evidence, supervise native process groups, pin transport identity, count retry payloads against aggregate budgets and select validated append-only attempt receipts before integration/clearance. Historical ambiguous invocations remain pending. [boundary: local-repository]
 - **runtime** — Agent Runtime (`python-cli`): Runs configuration, evidence, workflow, documentation, review, security, and release commands. [boundary: local-repository]
 - **sql-client** — PostgreSQL Client (`client`): Sends PostgreSQL protocol messages and credentials; integration tests use synthetic users and data. [boundary: client-process]
-- **strict-read-policy** — Strict Read Enforcement (`authorization-boundary`): Opt-in immutable process policy: bounds and admits original SQL, selects a pinned PostgreSQL 12 or 18 registry per backend snapshot, proves the complete catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/functions/objects or catalog mismatches deny. Separate read/write Helm releases retain passthrough credentials; schema changes require draining and restarting readers. [boundary: untrusted-client-to-protected-backend]
+- **strict-read-policy** — Strict Read Enforcement (`authorization-boundary`): Opt-in immutable process policy: bounds and admits original SQL, selects a pinned PostgreSQL 12 or 18 registry per backend snapshot, proves the complete catalog and role, owns READ ONLY transactions, and keeps per-client statement/portal identities before backend forwarding. Unsupported SQL/functions/objects or catalog mismatches deny. The full-table proof separates projection capabilities from client function grants and validates complete planner/index/constraint/inheritance dependencies using major/module-specific owned profiles. Local owned PG12/PG18 acceptance covers all 282 inventory shapes; independent review and release remain pending. Separate read/write Helm releases retain passthrough credentials; controlled schema epochs require draining and restarting readers, with no concurrent DDL. [boundary: untrusted-client-to-protected-backend]
 
 ## Relationships
 

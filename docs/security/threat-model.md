@@ -2,6 +2,34 @@
 
 ## Strict read endpoint delta
 
+### Full-table proof delta (verification pending)
+
+The [approved full-table specification](../superpowers/specs/2026-10-13-icondo-full-read-proof.md)
+replaces coarse table exclusions with closed type, planner-expression, index,
+constraint and inheritance proofs. Projection capability is separate from client
+SQL function/input/operation permission. Unknown callbacks remain denied.
+
+| Threat | Required control and verification | Owner |
+| --- | --- | --- |
+| Unused CHECK, index expression or predicate invokes an unsafe function during planning | Strict major-aware node-tree parsing and complete typed dependency proof before client Parse; malicious planning canaries on both majors | Proxy maintainer |
+| Expression statistics enter the full-proof fallback | PG18 identifier-only statistics capture for the complete relation closure; nonempty or missing proof denies before client planning; PG12 never references absent stxexprs | Proxy maintainer |
+| Inherited child or FK reference escapes the manifest/proof | Bounded recursive closure, exact scanned-table manifest coverage and complete reference/index/operator checks | Proxy maintainer |
+| Extension-local OID or enum label change reuses an old proof | Exact normalized major/module profile, reviewed binary provenance, namespace authority and dynamic enum/dependency digests | Proxy maintainer |
+| Catalog inspection itself invokes unproved output code | Scalar-only attribute projection; bind type and missing-value presence without converting polymorphic attmissingval data; custom-type inspection canary | Proxy maintainer |
+| Partial or stale metadata grants a prepared/portal execution | Relation/dependency digest binding, required revalidation, table locks and final capture comparison; controlled DDL drain/epoch/restart remains mandatory | Proxy maintainer and database operator |
+| Private application schema enters external review or public fixtures | Private local catalog artifacts and synthetic owned reproduction; exact separate hash approval before any review egress | Review maintainer |
+
+ACCESS SHARE and final comparisons detect relevant drift but do not freeze index
+creation or prevent a malicious DBA from changing implementations after a check.
+Concurrent DDL is prohibited during admitted traffic. Missing-value bytes are data,
+not authorization metadata: bind their presence and declared type without executing
+their output/cast callbacks during capture. Defaults and writer triggers are not
+executed by an ordinary SELECT and are not reproduced as writer-equivalence claims.
+
+These are implementation and verification requirements. Completion requires all
+282 owned shapes to pass actual reads and both-major negative canaries; no local
+unit-test subset, metadata inventory or prior release review establishes that.
+
 ### PostgreSQL 12 compatibility delta
 
 This change adds a separately captured, digest-pinned PG12 reference catalog and

@@ -133,7 +133,14 @@ impl QueryEngine {
         let generation = self.strict.transaction.generation;
         let database = self.backend.cluster()?.identifier().database.clone();
         let server = self.strict_server()?;
-        let snapshot = CatalogSnapshot::load(server, &admitted.catalog, generation).await?;
+        let snapshot = CatalogSnapshot::load_for_policy(
+            server,
+            &admitted.catalog,
+            generation,
+            &policy,
+            &database,
+        )
+        .await?;
         let identity = snapshot.identity(&policy, &database, generation)?;
         if self
             .strict
@@ -480,7 +487,7 @@ impl QueryEngine {
             .strict_session
             .as_deref()
             .unwrap()
-            .statement_for_identity(name, &identity)
+            .statement_for_proof(name, &identity, &proof)
             .is_ok()
         {
             return Ok(true);
@@ -506,6 +513,35 @@ impl QueryEngine {
             .unwrap()
             .commit_revalidation(name, statement.generation, backend_name, identity, proof)?;
         Ok(true)
+    }
+
+    /// A portal is an immutable bound plan. Metadata drift invalidates it;
+    /// re-preparing its statement cannot silently replace a suspended portal.
+    async fn strict_validate_portal(
+        &mut self,
+        context: &QueryEngineContext<'_>,
+        name: &str,
+    ) -> Result<(), Error> {
+        let identity = self
+            .strict
+            .identity
+            .as_ref()
+            .ok_or_else(PolicyError::stale_portal)?;
+        let portal = context
+            .strict_session
+            .as_deref()
+            .ok_or_else(PolicyError::protocol)?
+            .portal(name, identity)?
+            .clone();
+        let (identity, proof) = self
+            .strict_prove(&portal.statement.admitted, &portal.statement.parameter_oids)
+            .await?;
+        context
+            .strict_session
+            .as_deref()
+            .unwrap()
+            .portal_for_proof(name, &identity, &proof)?;
+        Ok(())
     }
 
     async fn strict_extended(
@@ -601,30 +637,14 @@ impl QueryEngine {
                 self.strict_exchange(context, describe.into(), true).await?;
             }
             ProtocolMessage::Describe(describe) if describe.is_portal() => {
-                let identity = self
-                    .strict
-                    .identity
-                    .as_ref()
-                    .ok_or_else(PolicyError::stale_portal)?;
-                context
-                    .strict_session
-                    .as_deref()
-                    .unwrap()
-                    .portal(describe.statement(), identity)?;
+                self.strict_validate_portal(context, describe.statement())
+                    .await?;
                 self.strict_exchange(context, describe.clone().into(), true)
                     .await?;
             }
             ProtocolMessage::Execute(execute) => {
-                let identity = self
-                    .strict
-                    .identity
-                    .as_ref()
-                    .ok_or_else(PolicyError::portal_not_found)?;
-                context
-                    .strict_session
-                    .as_deref()
-                    .unwrap()
-                    .portal(execute.portal(), identity)?;
+                self.strict_validate_portal(context, execute.portal())
+                    .await?;
                 self.strict_exchange(context, execute.clone().into(), true)
                     .await?;
             }
