@@ -477,6 +477,35 @@ pub async fn strict_wire_extended_controls_and_idle_commit() {
     }
 }
 
+pub async fn strict_wire_simple_query_destroys_unnamed_control_portal() {
+    let mut wire = connect().await;
+    let begin = wire.query("BEGIN").await.unwrap();
+    assert_eq!(ready_status(begin.last().unwrap()), b'T');
+    // Bind an unnamed COMMIT portal without executing it.
+    wire.send(b'P', &parse("", "COMMIT")).await.unwrap();
+    wire.send(b'B', &bind("", "")).await.unwrap();
+    wire.send(b'S', &[]).await.unwrap();
+    let bound = wire.receive_until_ready().await.unwrap();
+    assert!(!bound.iter().any(|m| m.code == b'E'), "{bound:?}");
+    assert_eq!(ready_status(bound.last().unwrap()), b'T');
+    // PostgreSQL destroys the unnamed statement and portal on simple Query.
+    let select = wire.query("SELECT 1").await.unwrap();
+    assert!(!select.iter().any(|m| m.code == b'E'), "{select:?}");
+    assert_eq!(ready_status(select.last().unwrap()), b'T');
+    wire.send(b'E', &execute("", 0)).await.unwrap();
+    wire.send(b'S', &[]).await.unwrap();
+    let stale = wire.receive_until_ready().await.unwrap();
+    assert!(
+        !stale
+            .iter()
+            .any(|m| m.code == b'C' && m.payload.as_ref() == b"COMMIT\0"),
+        "stale unnamed COMMIT portal executed: {stale:?}"
+    );
+    assert!(stale.iter().any(|m| m.code == b'E'), "{stale:?}");
+    let rollback = wire.query("ROLLBACK").await.unwrap();
+    assert_eq!(ready_status(rollback.last().unwrap()), b'I');
+}
+
 pub async fn strict_wire_partial_packets_and_unfinished_message_budget() {
     let mut wire = connect().await;
     let mut query = BytesMut::new();

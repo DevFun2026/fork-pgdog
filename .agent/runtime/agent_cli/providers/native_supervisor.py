@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _EXIT_TIMEOUT = 124
+# Shell convention for a process terminated by SIGXFSZ.
+_EXIT_OUTPUT_LIMIT = 128 + int(signal.SIGXFSZ)
 _TERM_GRACE_SECONDS = 0.5
 _KILL_GRACE_SECONDS = 0.5
 _REAP_GRACE_SECONDS = 0.5
@@ -41,9 +43,11 @@ def _timestamp() -> str:
 
 
 def _set_file_size_limit(max_output_bytes: int) -> None:
-    resource.setrlimit(
-        resource.RLIMIT_FSIZE, (max_output_bytes, max_output_bytes)
-    )
+    # One byte of headroom makes an overflow observable as a file larger than
+    # the allowed maximum; children that ignore SIGXFSZ (CPython does) would
+    # otherwise exit 0 with output silently truncated at exactly the limit.
+    limit = max_output_bytes + 1
+    resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
 
 
 def _open_private_output(path: Path) -> tuple[int, tuple[int, int]]:
@@ -210,6 +214,11 @@ def run_native(
                     _terminate_owned_group(process)
                     raise
                 group_ended = _terminate_owned_group(process)
+        if (
+            exit_code == 0
+            and os.stat(stdout_path, follow_symlinks=False).st_size > max_output_bytes
+        ):
+            exit_code = _EXIT_OUTPUT_LIMIT
         return InvocationOutcome(
             exit_code=exit_code,
             pid=process.pid,

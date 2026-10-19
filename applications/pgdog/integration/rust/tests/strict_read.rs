@@ -96,6 +96,11 @@ async fn strict_read_wire_denies_fastpath_and_orphan_copy() {
 }
 
 #[tokio::test]
+async fn strict_read_wire_simple_query_destroys_unnamed_control_portal() {
+    strict_read_support::protocol::strict_wire_simple_query_destroys_unnamed_control_portal().await;
+}
+
+#[tokio::test]
 async fn strict_read_wire_unknown_close_is_idempotent() {
     strict_read_support::protocol::strict_wire_unknown_close_is_idempotent().await;
 }

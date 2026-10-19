@@ -283,12 +283,16 @@ impl QueryEngine {
         if self.strict.transaction.state == ReadTxState::Implicit {
             return Err(PolicyError::protocol().into());
         }
-        let _ = context
+        // A simple Query destroys the unnamed prepared statement and the
+        // unnamed portal, including an unnamed control portal.
+        let session = context
             .strict_session
             .as_deref_mut()
-            .ok_or_else(PolicyError::protocol)?
-            .close_statement("");
+            .ok_or_else(PolicyError::protocol)?;
+        let _ = session.close_statement("");
+        let _ = session.close_portal("");
         self.strict.control_statements.remove("");
+        self.strict.control_portals.remove("");
         let admitted = admit_sql(query.query())?;
         if self.strict.transaction.state == ReadTxState::FailedExplicit
             && !matches!(

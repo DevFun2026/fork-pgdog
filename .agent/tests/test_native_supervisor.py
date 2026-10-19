@@ -108,7 +108,22 @@ class NativeSupervisorTests(unittest.TestCase):
 
         self.assertNotEqual(outcome.exit_code, 0)
         self.assertTrue(outcome.owned_process_group_ended)
-        self.assertLessEqual(self.stdout.stat().st_size, 128)
+        # One byte of headroom makes overflow observable to callers that
+        # compare against the maximum; the write is still bounded.
+        self.assertEqual(self.stdout.stat().st_size, 129)
+
+    def test_output_exactly_at_limit_is_not_reported_as_overflow(self):
+        outcome = run_native(
+            (sys.executable, "-c", "import sys; sys.stdout.write('x' * 128)"),
+            cwd=self.root,
+            stdout_path=self.stdout,
+            stderr_path=self.stderr,
+            timeout=5,
+            max_output_bytes=128,
+        )
+
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(self.stdout.stat().st_size, 128)
 
     def test_threaded_launch_is_rejected_before_output_creation(self):
         errors = []

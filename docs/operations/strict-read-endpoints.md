@@ -103,7 +103,10 @@ that send startup options or SET commands need compatible configuration.
 
 SQL text is limited to 1 MiB per admitted request; retained statement and portal
 snapshots share an 8 MiB SQL budget per client. A buffered protocol cycle is
-limited to 8 MiB and 4,096 messages. Prepared statement/portal names have a
+limited to 8 MiB and 4,096 messages. Any single client message whose declared
+length exceeds the strict size cap (8 MiB, or a lower configured
+`query_size_limit` block) is rejected from its header, before the body is
+buffered, and the connection is closed. Prepared statement/portal names have a
 1,024-byte limit and each registry accepts at most 1,024 entries. A statement
 accepts at most 1,024 declared parameters, and inferred parameter references
 cannot exceed `$1024`. These limits
