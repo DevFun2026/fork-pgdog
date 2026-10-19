@@ -1,2 +1,3 @@
 # Add trusted SSH public keys in an isolated governance change before using
 # signed security clearance. Format: identity namespaces="agent-security-approval" ssh-ed25519 KEY
+hoangld@stageit.app namespaces="agent-security-approval" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIoXYw+Hlyl4kYunBRCzKlvZ3vpxIQ6CSfzJGilhf6Ky
