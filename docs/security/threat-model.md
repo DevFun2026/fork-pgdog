@@ -213,3 +213,18 @@ by owner and no claim of a canonical signed release gate. Compromised owner/CI,
 host evidence tampering and external registry writers remain trust risks. It is
 not an SSH key enrollment or a production-cluster authorization. See the
 [approved contract](../superpowers/specs/2026-10-12-github-owner-release.md).
+
+### Owner release author provider delta (2026-10-19)
+
+Schema 3 now accepts reviews authored by `claude` as well as `codex`; the
+reviewer must still be `gemini` (AGY), so author and reviewer stay distinct.
+
+- Self-review: Gemini is not an accepted author, so a Gemini-authored change
+  cannot be cleared by a Gemini review. Unknown providers are rejected.
+- Label forgery: the provider names come from the immutable review manifest and
+  audit bound by hash; relabelling a package changes its manifest digest.
+- Scope creep: the schema-2 first-release exception keeps its codex-only check
+  through the default `review_metadata` argument.
+
+Owner: release maintainer. Provider labels are self-reported by the local
+runtime; independence relies on the reviewer CLI actually being Gemini.

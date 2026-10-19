@@ -12,6 +12,9 @@ REPOSITORY = "DevFun2026/fork-pgdog"
 OWNER_ID = 107181711
 OWNER = "simonle251289"
 METHOD = "github-owner-reviewed-release"
+# Gemini (AGY) is the independent reviewer, so it can never be the author.
+AUTHOR_PROVIDERS = frozenset({"claude", "codex"})
+REVIEWER_PROVIDER = "gemini"
 REVIEW_FIELDS = {
     "status", "verdict", "author_provider", "reviewer_provider", "head_sha",
     "base_sha", "diff_sha256", "manifest_sha256", "findings_sha256",
@@ -143,7 +146,7 @@ def parse_owner_receipt(payload, source_sha, allow_unapproved=False):
         review = reviews[role]
         if (not isinstance(review, dict) or set(review) != REVIEW_FIELDS
                 or review["status"] != "passed" or review["verdict"] != "pass"
-                or review["author_provider"] != "codex" or review["reviewer_provider"] != "gemini"
+                or review["author_provider"] not in AUTHOR_PROVIDERS or review["reviewer_provider"] != REVIEWER_PROVIDER
                 or not _is_sha(review["head_sha"]) or not _is_sha(review["base_sha"])
                 or any(not _is_hash(review[key]) for key in ("diff_sha256", "manifest_sha256", "findings_sha256", "audit_sha256"))
                 or type(review["partitioned"]) is not bool):

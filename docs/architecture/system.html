@@ -433,14 +433,14 @@ blockquote{border-left:3px solid var(--line-strong);margin-left:0;padding-left:1
 <div class="wordmark">PgDog fork<small>Architecture reference</small></div>
 <button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="contents">Contents</button>
 <nav aria-label="Contents" id="contents"><ol><li><a href="#overview"><span class="n">01</span>System context</a></li><li><a href="#relationships"><span class="n">02</span>Component diagrams</a></li><li><a href="#components"><span class="n">03</span>Component responsibilities</a></li><li><a href="#data-flows"><span class="n">04</span>Data &amp; trust boundaries</a></li><li><a href="#environments"><span class="n">05</span>Deployment environments</a></li><li><a href="#architecture-docs"><span class="n">06</span>Focused architecture documents</a></li><li><a href="#contracts"><span class="n">07</span>Interfaces and contracts</a></li><li><a href="#adr-index"><span class="n">08</span>Architecture decision records</a></li><li><a href="#security"><span class="n">09</span>Security model and controls</a></li><li><a href="#operations"><span class="n">10</span>Operations, observability, and recovery</a></li><li><a href="#traceability"><span class="n">11</span>Requirement traceability</a></li><li><a href="#governance"><span class="n">12</span>Governance &amp; source</a></li></ol></nav>
-<div class="meta"><span>Revision <b>97f50b30a81c</b></span><span>2026-10-14T10:45:54+07:00</span><span>Canonical model + focused docs</span></div>
+<div class="meta"><span>Revision <b>dbdde80ef48d</b></span><span>2026-10-19T04:52:59Z</span><span>Canonical model + focused docs</span></div>
 <button class="theme-toggle" id="theme-toggle" type="button">Theme: system</button>
 </aside>
 <main id="main">
 <header class="masthead">
 <div class="masthead-grid">
 <div><span class="eyebrow">Source architecture reference</span><h1>PgDog fork: system architecture</h1><p class="tagline">Fork of PgDog (https://github.com/pgdogdev/pgdog), reusing the PostgreSQL proxy to add an LLM agent layer. PgDog is the current runtime; the LLM agent and the EKS audit deployment are planned. This reference covers implemented components, database traffic, repository quality gates and documentation publishing.</p></div>
-<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV 97f50b30a81c</span><span>COMPILED FROM MODEL</span></div>
+<div class="drawing-tag"><b>SYSTEM / ARCH</b><span>REV dbdde80ef48d</span><span>COMPILED FROM MODEL</span></div>
 </div>
 <div class="fact-row"><div class="fact"><span class="v">12</span><span class="k">product components</span></div><div class="fact"><span class="v">7</span><span class="k">tooling components</span></div><div class="fact"><span class="v">20</span><span class="k">relationships</span></div><div class="fact"><span class="v">17</span><span class="k">data flows</span></div></div>
 <div class="search-bar"><label for="search">Search architecture</label><input id="search" type="search" placeholder="Filter sections"><span id="search-status" role="status" aria-live="polite"></span></div>
@@ -891,6 +891,13 @@ superseded-by: null</pre></details>
 <li>Owner: deployment operator. External config/users/TLS changes require rollout and separate rollback/version management. Chart history does not back up them. Production TLS, ingress/NetworkPolicy and Secret/RBAC controls remain external.</li>
 <li>Owner: workload operator. Arm64 CPUs must support LSE. Default resource limits need measured sizing. Force deletion bypasses drain. Stateless Pods provide no durable per-replica 2PC WAL; dedicated storage/recovery design is required.</li>
 <li>Owner: supply-chain maintainer. OS package repositories remain dynamic; image digest pinning is not a hermetic build or full dependency-provenance assertion. FIPS feature runtime and full upstream language/TLS/COPY/fault matrices are separate verification scopes. Scanners can miss issues beyond selected rules.</li>
+</ul>
+<h4>0.3.0 release delta</h4>
+<ul>
+<li>Owner: release maintainer. Schema-3 now accepts Claude-authored changes with Gemini review. Provider labels are recorded by the local runtime; independence depends on the reviewer CLI genuinely being Gemini.</li>
+<li>Owner: release maintainer. Gemini reviews for 0.3.0 ran through the explicitly authorized native AGY host route (owner login, no OS sandbox). The package was approved by exact manifest hash, but the reviewer process had host access.</li>
+<li>Owner: agent maintainer. The native supervisor flags stdout overflow only; stderr truncated at its limit still exits 0, and the size check reads the path rather than the open descriptor. Diagnostics may be silently shortened.</li>
+<li>Owner: release maintainer. Local merge-gate evidence for the source change came from the CI verification job on the same commit because the host&#x27;s port 5432 belongs to another project.</li>
 </ul></div></details>
 <details class="document"><summary>Security Controls</summary><div class="document-body"><h3>Security Controls</h3>
 <p>The runtime provides immutable configuration, argument-array process execution, path containment, symlink rejection, atomic owner-only writes, output limits, secret and private-block redaction, manifest-bound review packages, structured provider output validation, evidence checksums, progressive gates, and reviewed memory promotion.</p>
@@ -1412,7 +1419,15 @@ superseded-by: null</pre></details>
 <li>Forged evidence or profile downgrade: exporter checks complete ordinary or runtime-validated partition/integration evidence, actual Git diffs/contexts, all eight assessment lenses and committed profile configuration. Unknown fields, mismatched audit hashes, weaker assessments or incomplete CI fail closed.</li>
 <li>Stale CI/rebuild substitution: preserve required full-suite/scanner/native job names and immutable attempts. Existing native build/archive import, signature, digest-preserving publication and chart pull-back checks remain mandatory.</li>
 </ul>
-<p>Owner: release maintainer. The new mode explicitly records SSH clearance waived by owner and no claim of a canonical signed release gate. Compromised owner/CI, host evidence tampering and external registry writers remain trust risks. It is not an SSH key enrollment or a production-cluster authorization. See the approved contract (../superpowers/specs/2026-10-12-github-owner-release.md).</p></div></details></section>
+<p>Owner: release maintainer. The new mode explicitly records SSH clearance waived by owner and no claim of a canonical signed release gate. Compromised owner/CI, host evidence tampering and external registry writers remain trust risks. It is not an SSH key enrollment or a production-cluster authorization. See the approved contract (../superpowers/specs/2026-10-12-github-owner-release.md).</p>
+<h5>Owner release author provider delta (2026-10-19)</h5>
+<p>Schema 3 now accepts reviews authored by <code>claude</code> as well as <code>codex</code>; the reviewer must still be <code>gemini</code> (AGY), so author and reviewer stay distinct.</p>
+<ul>
+<li>Self-review: Gemini is not an accepted author, so a Gemini-authored change cannot be cleared by a Gemini review. Unknown providers are rejected.</li>
+<li>Label forgery: the provider names come from the immutable review manifest and audit bound by hash; relabelling a package changes its manifest digest.</li>
+<li>Scope creep: the schema-2 first-release exception keeps its codex-only check through the default <code>review_metadata</code> argument.</li>
+</ul>
+<p>Owner: release maintainer. Provider labels are self-reported by the local runtime; independence relies on the reviewer CLI actually being Gemini.</p></div></details></section>
 <section class="sheet" id="operations"><div class="sheet-head"><h2><span class="section-number">10</span> Operations, observability, and recovery</h2><span class="sheet-num">docs/operations</span></div><details class="document"><summary>Observability</summary><div class="document-body"><h3>Observability</h3>
 <p>The template records deterministic command evidence, review manifests and checksums, provider audit events, documentation-impact decisions, security scope, adjudication dispositions, and release-gate results.</p>
 <p>Operators should monitor:</p>
@@ -1455,7 +1470,7 @@ superseded-by: null</pre></details>
 </tbody></table></div>
 <p>The acceptance report must distinguish deterministic local evidence, real provider evidence, and hosted-CI evidence. Missing external evidence remains pending; it is never inferred from local tests.</p></div></details></section>
 <section class="sheet" id="governance"><div class="sheet-head"><h2><span class="section-number">12</span> Governance &amp; source</h2><span class="sheet-num">documentation-sync</span></div><p>Generated from canonical TOML and focused Markdown using <code>./scripts/agent docs build</code>. Check drift with <code>./scripts/agent docs check</code>.</p><p>Review evidence stays local under <code>.agent/.runs/</code>. This page contains documentation, not live query data or a production security certification.</p></section>
-<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-14T10:45:54+07:00</span></footer>
+<footer><span>Canonical sources · reproducible build · offline reference</span><span>Generated 2026-10-19T04:52:59Z</span></footer>
 </main>
 </div>
 <script>(() => {

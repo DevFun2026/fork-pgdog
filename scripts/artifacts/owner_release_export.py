@@ -17,6 +17,7 @@ from pathlib import Path
 
 from artifacts import owner_approval
 from artifacts.owner_approval import REPOSITORY, review_metadata
+from artifacts.owner_release import AUTHOR_PROVIDERS, REVIEWER_PROVIDER
 
 QUALITY = owner_approval.QUALITY
 ARTIFACTS = owner_approval.ARTIFACTS
@@ -229,15 +230,17 @@ def _review(root: Path, package: Path, head: str, base: str) -> dict[str, object
     if (package / "partition.json").exists():
         metadata = _partition_metadata(root, package, head, base)
     else:
-        metadata, audit_hash = review_metadata(root, package, head, base)
+        metadata, audit_hash = review_metadata(
+            root, package, head, base, author_providers=AUTHOR_PROVIDERS
+        )
         metadata = {**metadata, "partitioned": False, "audit_sha256": audit_hash}
     if (
         metadata.get("head_sha") != head
         or metadata.get("base_sha") != base
         or metadata.get("status") != "passed"
         or metadata.get("verdict") != "pass"
-        or metadata.get("author_provider") != "codex"
-        or metadata.get("reviewer_provider") != "gemini"
+        or metadata.get("author_provider") not in AUTHOR_PROVIDERS
+        or metadata.get("reviewer_provider") != REVIEWER_PROVIDER
         or not HASH_RE.fullmatch(str(metadata.get("diff_sha256", "")))
         or not HASH_RE.fullmatch(str(metadata.get("manifest_sha256", "")))
         or not HASH_RE.fullmatch(str(metadata.get("findings_sha256", "")))

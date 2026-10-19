@@ -72,7 +72,7 @@ def graph(root, *, security_profile="standard"):
             "workflow_head": workflow_head, "workflow_merge": workflow_merge}
 
 
-def review_package(root, name, head, base):
+def review_package(root, name, head, base, *, author="codex"):
     from artifacts.release_receipt import canonical
 
     package = root / ".agent/.runs" / name
@@ -81,7 +81,7 @@ def review_package(root, name, head, base):
                           capture_output=True, check=True).stdout
     scope = git(root, "diff", "--name-only", base, head).splitlines()
     manifest = {
-        "head_sha": head, "base_sha": base, "author_provider": "codex",
+        "head_sha": head, "base_sha": base, "author_provider": author,
         "reviewer_provider": "gemini", "diff_sha256": hashlib.sha256(diff).hexdigest(),
         "full_diff_sha256": hashlib.sha256(diff).hexdigest(), "scope": scope,
         "files": [],
@@ -228,6 +228,20 @@ class OwnerReleaseExportTests(unittest.TestCase):
                     image_version="0.2.0", chart_version="0.2.0",
                 )
             self.assertEqual(output.read_text(), "keep")
+
+    def test_review_accepts_claude_or_codex_author_with_independent_gemini(self):
+        exporter = importlib.import_module("artifacts.owner_release_export")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            history = graph(root)
+            head, base = history["source_head"], history["base"]
+            for author in ("claude", "codex"):
+                package = review_package(root, f"review-{author}", head, base, author=author)
+                self.assertEqual(exporter._review(root, package, head, base)["author_provider"], author)
+            for author in ("gemini", "openai"):
+                package = review_package(root, f"review-{author}", head, base, author=author)
+                with self.subTest(author=author), self.assertRaises(ValueError):
+                    exporter._review(root, package, head, base)
 
     def test_exports_review_bound_draft_and_captures_ci_attempts(self):
         exporter = importlib.import_module("artifacts.owner_release_export")
