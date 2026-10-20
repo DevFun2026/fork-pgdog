@@ -70,3 +70,18 @@ trust boundaries, dependencies, infrastructure, or recovery design changes.
   digest pinning is not a hermetic build or full dependency-provenance assertion.
   FIPS feature runtime and full upstream language/TLS/COPY/fault matrices are
   separate verification scopes. Scanners can miss issues beyond selected rules.
+
+## 0.3.0 release delta
+
+- Owner: release maintainer. Schema-3 now accepts Claude-authored changes with
+  Gemini review. Provider labels are recorded by the local runtime; independence
+  depends on the reviewer CLI genuinely being Gemini.
+- Owner: release maintainer. Gemini reviews for 0.3.0 ran through the explicitly
+  authorized native AGY host route (owner login, no OS sandbox). The package was
+  approved by exact manifest hash, but the reviewer process had host access.
+- Owner: agent maintainer. The native supervisor flags stdout overflow only;
+  stderr truncated at its limit still exits 0, and the size check reads the path
+  rather than the open descriptor. Diagnostics may be silently shortened.
+- Owner: release maintainer. Local merge-gate evidence for the source change
+  came from the CI verification job on the same commit because the host's port
+  5432 belongs to another project.

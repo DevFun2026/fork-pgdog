@@ -153,6 +153,13 @@ class OwnerApprovalTests(unittest.TestCase):
             with patch.object(mod, "_git", side_effect=git):
                 metadata, _ = mod.review_metadata(root, package, SOURCE, mod.SOURCE_BASE)
                 self.assertEqual(metadata["head_sha"], SOURCE)
+                # The fixed schema-2 first release keeps its codex-only author binding.
+                claude = receipt_mod.canonical(dict(manifest, author_provider="claude"))
+                (package / "manifest.json").write_bytes(claude)
+                (package / "audit.jsonl").write_text(json.dumps({"manifest_sha256": hashlib.sha256(claude).hexdigest(), "status": "completed", "provider": "gemini", "verdict": "pass", "exit_code": 0, "stdout_sha256": "f" * 64}))
+                with self.assertRaises(ValueError): mod.review_metadata(root, package, SOURCE, mod.SOURCE_BASE)
+                (package / "manifest.json").write_bytes(receipt_mod.canonical(manifest))
+                (package / "audit.jsonl").write_text(json.dumps({"manifest_sha256": manifest_hash, "status": "completed", "provider": "gemini", "verdict": "pass", "exit_code": 0, "stdout_sha256": "f" * 64}))
                 (package / "diff.patch").write_text("tampered")
                 with self.assertRaises(ValueError): mod.review_metadata(root, package, SOURCE, mod.SOURCE_BASE)
 

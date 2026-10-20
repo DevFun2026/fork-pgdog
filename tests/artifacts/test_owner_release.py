@@ -156,6 +156,28 @@ class OwnerReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.mod.parse_owner_receipt(legacy, graph["source_merge"])
 
+    def test_parse_accepts_claude_or_codex_author_but_requires_independent_gemini(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = git_fixture(Path(directory))
+            payload = self.valid_receipt(graph)
+            def rebind(receipt):
+                receipt["authorization"]["comment_body_sha256"] = hashlib.sha256(
+                    self.mod.approval_body(receipt).encode()).hexdigest()
+                return receipt
+
+            for author in ("claude", "codex"):
+                accepted = copy.deepcopy(payload)
+                accepted["reviews"]["source"]["author_provider"] = author
+                rebind(accepted)
+                self.assertEqual(self.mod.parse_owner_receipt(accepted, graph["source_merge"]), accepted)
+            for field, value in (("author_provider", "gemini"), ("author_provider", "openai"),
+                                 ("reviewer_provider", "codex"), ("reviewer_provider", "claude")):
+                rejected = copy.deepcopy(payload)
+                rejected["reviews"]["workflow"][field] = value
+                rebind(rejected)
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    self.mod.parse_owner_receipt(rejected, graph["source_merge"])
+
     def test_approval_body_binds_entire_payload_without_comment_cycle(self):
         with tempfile.TemporaryDirectory() as directory:
             graph = git_fixture(Path(directory))

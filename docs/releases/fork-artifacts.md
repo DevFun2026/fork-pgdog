@@ -136,6 +136,17 @@ scanners, protected publishing, signing and pull-back verification. It reports
 SSH clearance as `waived-by-owner` and the canonical release gate as
 `not-claimed`; it does not manufacture signed clearance. Schema 1 and the
 historical schema-2 first-release exception keep their existing requirements.
+Reviews may be authored by Codex or Claude; the reviewer is always Gemini (AGY)
+and Gemini is never an accepted author.
+
+### 0.3.0
+
+Image and chart 0.3.0 carry the strict-read hardening from PR #17: every client
+message above the strict size cap is rejected from its header before buffering,
+a simple Query destroys the unnamed control portal as PostgreSQL does, and
+rustls is updated to 0.23.46 for the published advisories. No configuration,
+schema or chart value changes are required; roll back to 0.2.1 with the
+[rollback runbook](../operations/fork-artifact-rollback.md).
 
 Both the artifact source and publishing workflow must come from merged PRs in
 this repository. Each merge must have exactly the original review base and head

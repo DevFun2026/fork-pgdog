@@ -145,7 +145,7 @@ def _git(root, *args):
     return subprocess.run(["git", *args], cwd=root, text=True, capture_output=True, check=True).stdout
 
 
-def review_metadata(root, package_path, head, base):
+def review_metadata(root, package_path, head, base, *, author_providers=frozenset({"codex"})):
     package = package_path.resolve(strict=True)
     runs = (root / ".agent/.runs").resolve()
     if package.parent != runs or not package.name.startswith("review-") or package_path.is_symlink():
@@ -165,7 +165,7 @@ def review_metadata(root, package_path, head, base):
     diff = _git(root, "diff", "--binary", base, head).encode()
     diff_sha = hashlib.sha256(diff).hexdigest()
     if (manifest.get("head_sha") != head or manifest.get("base_sha") != base
-            or manifest.get("author_provider") != "codex" or manifest.get("reviewer_provider") != "gemini"
+            or manifest.get("author_provider") not in author_providers or manifest.get("reviewer_provider") != "gemini"
             or manifest.get("full_diff_sha256", manifest.get("diff_sha256")) != diff_sha
             or hashlib.sha256(read("diff.patch")).hexdigest() != manifest.get("diff_sha256")
             or audit.get("manifest_sha256") != manifest_sha or audit.get("status") != "completed"
@@ -185,7 +185,7 @@ def review_metadata(root, package_path, head, base):
         data = read("context/" + entry["path"])
         if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise ValueError("Review context changed")
-    return {"status": "passed", "verdict": "pass", "author_provider": "codex", "reviewer_provider": "gemini", "head_sha": head, "base_sha": base,
+    return {"status": "passed", "verdict": "pass", "author_provider": manifest["author_provider"], "reviewer_provider": "gemini", "head_sha": head, "base_sha": base,
             "diff_sha256": diff_sha, "manifest_sha256": manifest_sha, "findings_sha256": hashlib.sha256(findings_bytes).hexdigest()}, hashlib.sha256(read("audit.jsonl")).hexdigest()
 
 
