@@ -66,9 +66,11 @@ impl MessageBuffer {
     ) -> Result<Message, Error> {
         loop {
             if let Some(size) = self.message_size()? {
+                // Strict-read bounds every client message by the cap before
+                // buffering; unrestricted mode only protects the parser.
                 if let Some(limit) = self.size_limit_block
                     && size > limit
-                    && self.is_query_message()
+                    && (strict || self.is_query_message())
                 {
                     let sample = blocked_query_log_sample(self.log_sample(size), strict);
                     error!(
@@ -465,6 +467,38 @@ mod test {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::MessageTooLarge { limit: 3, .. }));
+    }
+
+    #[tokio::test]
+    async fn strict_read_rejects_any_oversized_message_before_buffering_it() {
+        // Only the 5-byte header is available. A declared length above the
+        // strict cap must be rejected from the header alone, for every
+        // message code, instead of reserving and awaiting the whole body.
+        for code in *b"BFdEZ" {
+            let mut header = vec![code];
+            header.extend_from_slice(&2_000_000_000i32.to_be_bytes());
+            let mut buf = MessageBuffer::new(4096, Some(1024));
+            let err = buf
+                .read_internal(&mut Cursor::new(header), true)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::MessageTooLarge { limit: 1024, .. }),
+                "code {} returned {err:?}",
+                code as char
+            );
+            assert!(buf.capacity() < 1_000_000);
+        }
+
+        // Unrestricted mode keeps the historical exemption for non-query
+        // messages (COPY payloads may legitimately exceed the query limit).
+        let copy_msg = CopyData::new(&vec![b'x'; 10_000]).to_bytes();
+        let mut buf = MessageBuffer::new(4096, Some(1024));
+        let msg = buf
+            .read_internal(&mut Cursor::new(copy_msg.to_vec()), false)
+            .await
+            .unwrap();
+        assert_eq!(msg.code(), 'd');
     }
 
     #[test]

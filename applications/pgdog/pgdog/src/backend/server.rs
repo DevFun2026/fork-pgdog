@@ -441,8 +441,11 @@ impl Server {
                         }
                         Authentication::Md5(salt) => {
                             auth_type = AuthType::Md5;
-                            let client =
-                                md5::Client::new_salt(user, &[auth_secret.to_string()], &salt)?;
+                            let client = md5::Client::new_salt(
+                                user,
+                                std::slice::from_ref(&auth_secret.password),
+                                &salt,
+                            )?;
                             stream.send_flush(&client.response()?).await?;
                         }
                     }
